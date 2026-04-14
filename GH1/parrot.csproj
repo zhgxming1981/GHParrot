@@ -1,0 +1,159 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+	
+  <PropertyGroup>
+	<TargetFrameworks>net48</TargetFrameworks>
+    <Version>1.0</Version>
+    <Title>Parrot</Title>
+    <Description>幕墙建模插件，作者张小明</Description>
+    <TargetExt>.gha</TargetExt>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>AnyCPU;x64;x86</Platforms>
+  </PropertyGroup>
+	
+  <ItemGroup>
+    <Compile Remove="Catia\**" />
+    <Compile Remove="Common\**" />
+    <EmbeddedResource Remove="Catia\**" />
+    <EmbeddedResource Remove="Common\**" />
+    <None Remove="Catia\**" />
+    <None Remove="Common\**" />
+  </ItemGroup>
+	
+  <ItemGroup>
+    <Compile Remove="Component\ExcelCAD\CADTxt2Rhino.cs" />
+    <Compile Remove="Component\ExcelCAD\ToSolidWorks.cs" />
+    <Compile Remove="Component\Modeling\MyBake2.cs" />
+    <Compile Remove="Component\Modeling\MyTransform.cs" />
+    <Compile Remove="cpu.cs" />
+    <Compile Remove="Double.cs" />
+    <Compile Remove="GetGuid.cs" />
+    <Compile Remove="GH1Info.cs" />
+    <Compile Remove="HengLiang2.cs" />
+    <Compile Remove="MirrorForTekla.cs" />
+    <Compile Remove="ReplaceObjectWithSameGuid2.cs" />
+    <Compile Remove="RT_Curve.cs" />
+    <Compile Remove="RT_Hardware.cs" />
+    <Compile Remove="RT_Point.cs" />
+    <Compile Remove="RT_Tekla.cs" />
+  </ItemGroup>
+	
+  <ItemGroup>
+    <None Remove="GH1.csproj~RFe7a0fb67.TMP" />
+  </ItemGroup>
+	
+  <ItemGroup>
+    <COMReference Include="Microsoft.Office.Interop.Excel">
+      <WrapperTool>tlbimp</WrapperTool>
+      <VersionMinor>8</VersionMinor>
+      <VersionMajor>1</VersionMajor>
+      <Guid>00020813-0000-0000-c000-000000000046</Guid>
+      <Lcid>0</Lcid>
+      <Isolated>false</Isolated>
+      <EmbedInteropTypes>true</EmbedInteropTypes>
+    </COMReference>
+    <COMReference Include="AutoCAD">
+      <WrapperTool>tlbimp</WrapperTool>
+      <VersionMinor>0</VersionMinor>
+      <VersionMajor>1</VersionMajor>
+      <Guid>e2077cf2-3573-4e66-b1dc-01118675056d</Guid>
+      <Lcid>0</Lcid>
+      <Isolated>false</Isolated>
+      <EmbedInteropTypes>true</EmbedInteropTypes>
+    </COMReference>
+    <COMReference Include="AXDBLib">
+      <WrapperTool>tlbimp</WrapperTool>
+      <VersionMinor>0</VersionMinor>
+      <VersionMajor>1</VersionMajor>
+      <Guid>c5661b4e-34da-4f36-8d82-ab2bfbf4b1f1</Guid>
+      <Lcid>0</Lcid>
+      <Isolated>false</Isolated>
+      <EmbedInteropTypes>true</EmbedInteropTypes>
+    </COMReference>
+    <COMReference Include="INFITF">
+      <WrapperTool>tlbimp</WrapperTool>
+      <VersionMinor>0</VersionMinor>
+      <VersionMajor>0</VersionMajor>
+      <Guid>14f197b2-0771-11d1-a5b1-00a0c9575177</Guid>
+      <Lcid>0</Lcid>
+      <Isolated>false</Isolated>
+      <EmbedInteropTypes>true</EmbedInteropTypes>
+    </COMReference>
+  </ItemGroup>
+	
+  <ItemGroup>
+    <None Include="..\.editorconfig" Link=".editorconfig" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <PackageReference Include="Grasshopper" Version="8.5.24072.13001" />
+    <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="..\AutoCADFunction\AutoCADFunction.vbproj" />
+    <ProjectReference Include="..\CatiaFunction\CatiaFunction.vbproj" />
+    <ProjectReference Include="..\CommonFunction\CommonFunction.csproj" />
+    <ProjectReference Include="..\ExcelFuntion\ExcelFunction.vbproj" />
+    <ProjectReference Include="..\SolidworksFunction\SolidworksFunction.vbproj" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <Reference Include="GH_IO">
+      <HintPath>C:\Program Files\Rhino 8\Plug-ins\Grasshopper\GH_IO.dll</HintPath>
+    </Reference>
+    <Reference Include="Grasshopper">
+      <HintPath>C:\Program Files\Rhino 8\Plug-ins\Grasshopper\Grasshopper.dll</HintPath>
+    </Reference>
+    <Reference Include="GrasshopperTeklaLink">
+      <HintPath>..\GrasshopperTeklaLink2022v1.15 - 副本.dll</HintPath>
+    </Reference>
+    <Reference Include="RhinoCommon">
+      <HintPath>C:\Program Files\Rhino 8\System\RhinoCommon.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Management" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="Tekla.Structures">
+      <HintPath>C:\Program Files\Tekla Structures\2024.0\bin\Tekla.Structures.dll</HintPath>
+    </Reference>
+    <Reference Include="Tekla.Structures.Geometry3d.Compatibility">
+      <HintPath>C:\Program Files\Tekla Structures\2024.0\bin\Tekla.Structures.Geometry3d.Compatibility.dll</HintPath>
+    </Reference>
+    <Reference Include="Tekla.Structures.Model">
+      <HintPath>C:\Program Files\Tekla Structures\2024.0\bin\Tekla.Structures.Model.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  
+  <ItemGroup>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+    <Compile Update="Properties\Settings.Designer.cs">
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Settings.settings</DependentUpon>
+    </Compile>
+  </ItemGroup>
+  
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+  
+  <ItemGroup>
+    <None Update="Properties\Settings.settings">
+      <Generator>SettingsSingleFileGenerator</Generator>
+      <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+    </None>
+  </ItemGroup>
+  
+  <PropertyGroup Condition="$(Configuration) == 'Debug' AND $([MSBuild]::IsOSPlatform(Windows))">
+    <StartProgram>C:\Program Files\Rhino 8\System\Rhino.exe</StartProgram>
+    <StartArguments></StartArguments>
+    <StartAction>Program</StartAction>
+  </PropertyGroup>
+
+</Project>

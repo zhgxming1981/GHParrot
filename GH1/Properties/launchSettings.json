@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Parrot": {
+      "commandName": "Project",
+      "nativeDebugging": true
+    }
+  }
+}
