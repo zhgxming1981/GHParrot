@@ -22,6 +22,8 @@
   <ItemGroup>
     <Compile Remove="Component\ExcelCAD\CADTxt2Rhino.cs" />
     <Compile Remove="Component\ExcelCAD\ToSolidWorks.cs" />
+    <Compile Remove="Component\Library\SectionParams.cs" />
+    <Compile Remove="Component\Library\SectionProperty.cs" />
     <Compile Remove="Component\Modeling\MyBake2.cs" />
     <Compile Remove="Component\Modeling\MyTransform.cs" />
     <Compile Remove="cpu.cs" />

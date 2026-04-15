@@ -15,38 +15,63 @@ namespace NS_Parrot
         /// </summary>
         public GH2ExcelTemplateV2()
           : base("GH2ExcelTemplateV2", "GH2Excel",
-              "套用模板填写Excel表格V2",
+              "套用模板填写Excel表格增强版，可以从指定位置写入，也可以自动找到末尾追加",
               "Parrot", "ExcelCAD")
         {
         }
 
-        /// <summary>
-        /// Registers all the input parameters for this component.
-        /// </summary>
-        protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
+        // ===== 触发控制 =====
+        private bool _triggerRun = false;
+        private static bool _lastWrite = false;
+
+        protected override void RegisterInputParams(GH_InputParamManager p)
         {
-            pManager.AddTextParameter("TemplatePath", "T", "模板路径", GH_ParamAccess.item);
-            pManager.AddTextParameter("TemplateSheet", "TS", "模板Sheet（保留接口）", GH_ParamAccess.item);
-            pManager.AddTextParameter("TargetPath", "P", "输出路径", GH_ParamAccess.item);
-            pManager.AddTextParameter("TargetSheet", "S", "写入Sheet", GH_ParamAccess.item);
-            pManager.AddTextParameter("StartCell", "C", "起始单元格（列有效）", GH_ParamAccess.item);
-            pManager.AddTextParameter("Data", "D", "数据 A|B|C", GH_ParamAccess.list);
-            pManager.AddBooleanParameter("Overwrite", "O", "真为覆盖，假为追加", GH_ParamAccess.item, true);
-            pManager.AddBooleanParameter("Write", "W", "执行写入", GH_ParamAccess.item, false);
+            p.AddTextParameter("TemplatePath", "TP", "模板路径（可空）", GH_ParamAccess.item);
+            p.AddTextParameter("TemplateSheet", "TS", "模板Sheet（可空）", GH_ParamAccess.item);
+            p.AddTextParameter("TargetPath", "DP", "目标路径", GH_ParamAccess.item);
+            p.AddTextParameter("TargetSheet", "DS", "目标Sheet", GH_ParamAccess.item);
+            p.AddTextParameter("StartCell", "SC", "起始单元格", GH_ParamAccess.item);
+            p.AddTextParameter("Data", "D", "数据 A|B|C", GH_ParamAccess.list);
+            p.AddBooleanParameter("Overwrite", "O", "覆盖模式", GH_ParamAccess.item, true);
+            p.AddBooleanParameter("Write", "W", "执行", GH_ParamAccess.item, false);
         }
 
-        /// <summary>
-        /// Registers all the output parameters for this component.
-        /// </summary>
-        protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
+        protected override void RegisterOutputParams(GH_OutputParamManager p)
         {
-            pManager.AddTextParameter("Result", "R", "结果", GH_ParamAccess.item);
+            p.AddTextParameter("Log", "L", "日志", GH_ParamAccess.item);
         }
 
-        /// <summary>
-        /// This is the method that actually does the work.
-        /// </summary>
-        /// <param name="DA">The DA object is used to retrieve from inputs and store in outputs.</param>
+        // ===== 右键菜单 =====
+        public  override void AppendAdditionalMenuItems(System.Windows.Forms.ToolStripDropDown menu)
+        {
+            base.AppendAdditionalMenuItems(menu);
+
+            Menu_AppendItem(menu, "运行 Run", OnRunClicked);
+            Menu_AppendItem(menu, "显示 Excel", OnShowExcelClicked);
+        }
+
+        private void OnRunClicked(object sender, EventArgs e)
+        {
+            _triggerRun = true;
+            ExpireSolution(true);
+        }
+
+        private void OnShowExcelClicked(object sender, EventArgs e)
+        {
+            try
+            {
+                var app = (Excel.Application)Marshal.GetActiveObject("Excel.Application");
+                app.Visible = true;
+                app.WindowState = Excel.XlWindowState.xlMaximized;
+                app.ActiveWorkbook?.Activate();
+                app.ActiveWindow?.Activate();
+            }
+            catch
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "未找到Excel实例");
+            }
+        }
+
         protected override void SolveInstance(IGH_DataAccess DA)
         {
             string templatePath = "";
@@ -56,136 +81,211 @@ namespace NS_Parrot
             string startCell = "";
             List<string> data = new List<string>();
             bool overwrite = true;
-            bool write = false;
+            bool writeInput = false;
 
             if (!DA.GetData(0, ref templatePath)) return;
-            if (!DA.GetData(1, ref templateSheet)) return;
+            DA.GetData(1, ref templateSheet);
             if (!DA.GetData(2, ref targetPath)) return;
             if (!DA.GetData(3, ref targetSheet)) return;
             if (!DA.GetData(4, ref startCell)) return;
             if (!DA.GetDataList(5, data)) return;
             DA.GetData(6, ref overwrite);
-            DA.GetData(7, ref write);
+            DA.GetData(7, ref writeInput);
 
-            if (!write)
+            // ===== 统一触发 =====
+            bool trigger = writeInput || _triggerRun;
+
+            if (!trigger)
             {
-                DA.SetData(0, "Write=false 未执行");
+                DA.SetData(0, "未触发");
                 return;
             }
 
-            if (!File.Exists(templatePath))
+            if (writeInput && _lastWrite)
             {
-                DA.SetData(0, "模板不存在");
+                DA.SetData(0, "等待Write复位");
                 return;
             }
+
+            _lastWrite = writeInput;
+            _triggerRun = false;
 
             Excel.Application app = null;
             Excel.Workbook wb = null;
             Excel.Worksheet ws = null;
+            bool appCreated = false;
 
             try
             {
-                // 1️⃣ 复制模板
-                if (!File.Exists(targetPath))
-                    File.Copy(templatePath, targetPath, true);
-
-                // 2️⃣ 打开Excel
-                app = new Excel.Application();
-                app.Visible = false;
-                app.DisplayAlerts = false;
-
-                wb = app.Workbooks.Open(targetPath);
-                ws = wb.Sheets[targetSheet] as Excel.Worksheet;
-
-                if (ws == null)
+                // ===== 获取Excel实例 =====
+                try
                 {
-                    DA.SetData(0, "Sheet不存在");
-                    return;
+                    app = (Excel.Application)Marshal.GetActiveObject("Excel.Application");
+                }
+                catch
+                {
+                    app = new Excel.Application();
+                    appCreated = true;
                 }
 
-                // 3️⃣ 获取列号（只用列）
-                Excel.Range start = ws.Range[startCell];
+                app.Visible = false;
+                app.DisplayAlerts = false;
+                app.ScreenUpdating = false;
+
+                // ===== 文件处理 =====
+                if (!File.Exists(targetPath))
+                {
+                    if (string.IsNullOrWhiteSpace(templatePath))
+                    {
+                        DA.SetData(0, "目标文件不存在且无模板");
+                        return;
+                    }
+                    File.Copy(templatePath, targetPath, true);
+                }
+
+                // ===== 获取Workbook =====
+                foreach (Excel.Workbook w in app.Workbooks)
+                {
+                    if (string.Equals(w.FullName, targetPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        wb = w;
+                        break;
+                    }
+                }
+
+                if (wb == null)
+                    wb = app.Workbooks.Open(targetPath);
+
+                // ===== 获取Sheet（安全方式）=====
+                ws = GetSheetSafe(wb, targetSheet);
+
+                // ===== Sheet不存在 → 创建或复制 =====
+                if (ws == null)
+                {
+                    Excel.Worksheet tempWs = null;
+
+                    bool sameFile = !string.IsNullOrWhiteSpace(templatePath) &&
+                        string.Equals(Path.GetFullPath(templatePath),
+                                      Path.GetFullPath(targetPath),
+                                      StringComparison.OrdinalIgnoreCase);
+
+                    // ===== 优先模板 =====
+                    if (!string.IsNullOrWhiteSpace(templateSheet))
+                    {
+                        if (sameFile)
+                        {
+                            tempWs = GetSheetSafe(wb, templateSheet);
+                            tempWs?.Copy(After: wb.Sheets[wb.Sheets.Count]);
+                        }
+                        else if (!string.IsNullOrWhiteSpace(templatePath))
+                        {
+                            var tempWb = app.Workbooks.Open(templatePath);
+                            tempWs = tempWb.Sheets[templateSheet] as Excel.Worksheet;
+
+                            tempWs.Copy(After: wb.Sheets[wb.Sheets.Count]);
+
+                            tempWb.Close(false);
+                            Marshal.ReleaseComObject(tempWb);
+                        }
+
+                        if (tempWs != null)
+                            ws = wb.Sheets[wb.Sheets.Count];
+                    }
+
+                    // ===== 没模板 → 新建 =====
+                    if (ws == null)
+                    {
+                        ws = wb.Sheets.Add(After: wb.Sheets[wb.Sheets.Count]);
+                    }
+
+                    // ===== 命名（防重名）=====
+                    string name = targetSheet;
+                    int i = 1;
+
+                    while (SheetExists(wb, name))
+                    {
+                        name = targetSheet + "_" + i;
+                        i++;
+                    }
+
+                    ws.Name = name;
+                }
+
+                // ===== 起始位置 =====
+                var start = ws.Range[startCell];
+                int startRow = start.Row;
                 int startCol = start.Column;
-                int startRow = start.Row; // 覆盖模式才用
                 Marshal.ReleaseComObject(start);
 
                 int writeRow = startRow;
 
-                // 4️⃣ 追加模式（只看一列）
+                // ===== 追加模式 =====
                 if (!overwrite)
                 {
+                    var col = ws.Columns[startCol];
+                    var last = col.Cells[ws.Rows.Count].End(Excel.XlDirection.xlUp);
+
                     int lastRow = 0;
 
-                    Excel.Range colRange = ws.Columns[startCol];
-                    int maxRow = ws.Rows.Count;
-
-                    // 从底往上找（更快）
-                    for (int r = maxRow; r >= 1; r--)
+                    while (last != null)
                     {
-                        Excel.Range cell = ws.Cells[r, startCol] as Excel.Range;
-
-                        if (cell != null && cell.Value2 != null)
+                        if (last.Value2 != null)
                         {
-                            string txt = cell.Value2.ToString().Trim();
-                            if (!string.IsNullOrWhiteSpace(txt))
+                            string v = last.Value2.ToString().Trim();
+                            if (!string.IsNullOrWhiteSpace(v))
                             {
-                                lastRow = r;
-                                Marshal.ReleaseComObject(cell);
+                                lastRow = last.Row;
                                 break;
                             }
                         }
-
-                        if (cell != null) Marshal.ReleaseComObject(cell);
+                        last = last.Offset[-1, 0];
                     }
 
-                    writeRow = lastRow + 1;
+                    writeRow = Math.Max(lastRow + 1, startRow);
+
+                    Marshal.ReleaseComObject(col);
+                    Marshal.ReleaseComObject(last);
                 }
 
-                // 5️⃣ 解析数据 → 二维数组
-                int rowCount = data.Count;
-                int colCount = 0;
-
+                // ===== 数据处理 =====
                 List<string[]> parsed = new List<string[]>();
+                int colCount = 0;
 
                 foreach (var line in data)
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
-
-                    var parts = line.Split('|');
-                    parsed.Add(parts);
-
-                    if (parts.Length > colCount)
-                        colCount = parts.Length;
+                    var p = line.Split('|');
+                    parsed.Add(p);
+                    if (p.Length > colCount) colCount = p.Length;
                 }
 
-                rowCount = parsed.Count;
-
+                int rowCount = parsed.Count;
                 object[,] arr = new object[rowCount, colCount];
 
                 for (int i = 0; i < rowCount; i++)
-                {
                     for (int j = 0; j < parsed[i].Length; j++)
-                    {
-                        string val = parsed[i][j];
-                        if (!string.IsNullOrWhiteSpace(val))
-                            arr[i, j] = val;
-                    }
-                }
+                        arr[i, j] = parsed[i][j];
 
-                // 6️⃣ 一次性写入（核心提速点）
-                Excel.Range writeRange = ws.Range[
+                // ===== 写入 =====
+                var range = ws.Range[
                     ws.Cells[writeRow, startCol],
                     ws.Cells[writeRow + rowCount - 1, startCol + colCount - 1]
                 ];
 
-                writeRange.Value2 = arr;
+                range.ClearContents();
+                range.Value2 = arr;
 
-                Marshal.ReleaseComObject(writeRange);
+                Marshal.ReleaseComObject(range);
 
-                // 7️⃣ 保存
                 wb.Save();
 
-                DA.SetData(0, $"完成：写入 {rowCount} 行，从第 {writeRow} 行");
+                // ===== 显示Excel =====
+                app.Visible = true;
+                app.ScreenUpdating = true;
+                app.ActiveWorkbook?.Activate();
+                app.ActiveWindow?.Activate();
+
+                DA.SetData(0, $"完成：{rowCount}行 × {colCount}列");
             }
             catch (Exception ex)
             {
@@ -193,15 +293,10 @@ namespace NS_Parrot
             }
             finally
             {
-                if (wb != null)
-                {
-                    wb.Close(true);
-                    Marshal.ReleaseComObject(wb);
-                }
-
+                if (wb != null) Marshal.ReleaseComObject(wb);
                 if (ws != null) Marshal.ReleaseComObject(ws);
 
-                if (app != null)
+                if (app != null && appCreated)
                 {
                     app.Quit();
                     Marshal.ReleaseComObject(app);
@@ -211,6 +306,25 @@ namespace NS_Parrot
                 GC.WaitForPendingFinalizers();
             }
         }
+
+        private Excel.Worksheet GetSheetSafe(Excel.Workbook wb, string name)
+        {
+            foreach (Excel.Worksheet s in wb.Sheets)
+            {
+                if (s.Name == name)
+                    return s;
+            }
+            return null;
+        }
+
+        private bool SheetExists(Excel.Workbook wb, string name)
+        {
+            foreach (Excel.Worksheet s in wb.Sheets)
+                if (s.Name == name) return true;
+            return false;
+        }
+
+
 
         /// <summary>
         /// Provides an Icon for the component.

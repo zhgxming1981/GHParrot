@@ -2,8 +2,9 @@
 using Rhino.Geometry;
 using System;
 using System.Collections.Generic;
-using Excel = Microsoft.Office.Interop.Excel;
 using System.IO;
+using System.Runtime.InteropServices;
+using Excel = Microsoft.Office.Interop.Excel;
 namespace NS_Parrot
 {
     public class GH2ExcelMData : GH_Component
@@ -17,6 +18,15 @@ namespace NS_Parrot
               "Parrot", "ExcelCAD")
         {
         }
+
+        // ===== 触发控制 =====
+        private bool _triggerRun = false;
+        private static bool _lastWrite = false;
+
+
+        // ===== 缓存（用于右键）=====
+        private string _lastFilePath = "";
+        private string _lastSheetName = "";
 
         /// <summary>
         /// Registers all the input parameters for this component.
@@ -38,130 +48,268 @@ namespace NS_Parrot
             pManager.AddTextParameter("Log", "L", "日志", GH_ParamAccess.item);
         }
 
-        /// <summary>
-        /// This is the method that actually does the work.
-        /// </summary>
-        /// <param name="DA">The DA object is used to retrieve from inputs and store in outputs.</param>
+
+        // ===== 右键菜单 =====
+        public override void AppendAdditionalMenuItems(System.Windows.Forms.ToolStripDropDown menu)
+        {
+            base.AppendAdditionalMenuItems(menu);
+
+            Menu_AppendItem(menu, "运行 Run", OnRunClicked);
+            Menu_AppendItem(menu, "显示 Excel", OnShowExcelClicked);
+        }
+
+
+        private void OnRunClicked(object sender, EventArgs e)
+        {
+            _triggerRun = true;
+            ExpireSolution(true);
+        }
+
+        private void OnShowExcelClicked(object sender, EventArgs e)
+        {
+            ShowExcelAndActivateSheet(_lastFilePath, _lastSheetName);
+        }
+
         protected override void SolveInstance(IGH_DataAccess DA)
         {
             string filePath = "";
             string sheetName = "";
             List<string> startCells = new List<string>();
             List<string> dataList = new List<string>();
-            bool write = false;
+            bool writeInput = false;
 
             if (!DA.GetData(0, ref filePath)) return;
             if (!DA.GetData(1, ref sheetName)) return;
             if (!DA.GetDataList(2, startCells)) return;
             if (!DA.GetDataList(3, dataList)) return;
-            if (!DA.GetData(4, ref write)) return;
+            DA.GetData(4, ref writeInput);
 
-            if (!write)
+            _lastFilePath = filePath;
+            _lastSheetName = sheetName;
+
+            if (string.IsNullOrWhiteSpace(filePath))
             {
-                DA.SetData(0, "Write = false");
+                DA.SetData(0, "错误：FilePath 不能为空");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(sheetName))
+            {
+                DA.SetData(0, "错误：SheetName 不能为空");
                 return;
             }
 
             if (startCells.Count != dataList.Count)
             {
-                DA.SetData(0, "StartCells 和 DataList 数量不一致");
+                DA.SetData(0, "错误：StartCells 和 DataList 数量不一致");
                 return;
             }
 
-            Excel.Application app = new Excel.Application();
-            app.DisplayAlerts = false;
+            bool trigger = writeInput || _triggerRun;
+
+            if (!trigger)
+            {
+                DA.SetData(0, "未触发");
+                return;
+            }
+
+            if (writeInput && _lastWrite)
+            {
+                DA.SetData(0, "等待 Write 复位");
+                return;
+            }
+
+            _lastWrite = writeInput;
+            _triggerRun = false;
+
+            Excel.Application app = null;
+            Excel.Workbook wb = null;
+            Excel.Worksheet ws = null;
+            bool appCreated = false;
 
             try
             {
-                // ===== 打开或创建文件 =====
-                Excel.Workbook wb;
-
-                if (File.Exists(filePath))
+                // ===== 获取 Excel =====
+                try
                 {
-                    wb = app.Workbooks.Open(filePath);
+                    app = (Excel.Application)Marshal.GetActiveObject("Excel.Application");
                 }
-                else
+                catch
                 {
-                    wb = app.Workbooks.Add();
-                    wb.SaveAs(filePath);
+                    app = new Excel.Application();
+                    appCreated = true;
                 }
 
-                // ===== 获取或创建 Sheet =====
-                Excel.Worksheet ws = null;
+                app.Visible = false;
+                app.DisplayAlerts = false;
+                app.ScreenUpdating = false;
 
-                foreach (Excel.Worksheet s in wb.Worksheets)
+                // ===== 获取 Workbook =====
+                foreach (Excel.Workbook w in app.Workbooks)
                 {
-                    if (s.Name == sheetName)
+                    if (string.Equals(w.FullName, filePath, StringComparison.OrdinalIgnoreCase))
                     {
-                        ws = s;
+                        wb = w;
                         break;
                     }
                 }
 
+                if (wb == null)
+                {
+                    if (File.Exists(filePath))
+                        wb = app.Workbooks.Open(filePath);
+                    else
+                    {
+                        wb = app.Workbooks.Add();
+                        wb.SaveAs(filePath);
+                    }
+                }
+
+                // ===== Sheet =====
+                ws = GetSheetSafe(wb, sheetName);
                 if (ws == null)
                 {
                     ws = wb.Worksheets.Add();
                     ws.Name = sheetName;
                 }
 
-                // ===== 多块写入 =====
+                // ===== 写入 =====
                 for (int i = 0; i < startCells.Count; i++)
                 {
-                    string startCell = startCells[i];
-                    string line = dataList[i];
+                    ParseCell(startCells[i], out int row, out int col);
 
-                    ParseCell(startCell, out int row, out int col);
-
-                    var values = line.Split('|');
-
+                    var values = dataList[i].Split('|');
                     int colCursor = col;
 
                     foreach (var val in values)
                     {
-                        Excel.Range cell = (Excel.Range)ws.Cells[row, colCursor];
+                        Excel.Range cell = ws.Cells[row, colCursor];
 
                         if (cell.MergeCells)
                         {
                             Excel.Range area = cell.MergeArea;
-                            area.Cells[1, 1].Value = val;
-
+                            area.Cells[1, 1].Value2 = val;
                             colCursor += area.Columns.Count;
+                            Marshal.ReleaseComObject(area);
                         }
                         else
                         {
-                            cell.Value = val;
-                            colCursor += 1;
+                            cell.Value2 = val;
+                            colCursor++;
                         }
+
+                        Marshal.ReleaseComObject(cell);
                     }
                 }
 
                 wb.Save();
-                wb.Close();
-                app.Quit();
 
-                DA.SetData(0, "写入完成 ✅（多点写入）");
+                // ⭐ 先显示，再结束（避免空白）
+                ShowExcelAndActivateSheet(filePath, sheetName);
+
+                DA.SetData(0, "写入完成 ✅");
             }
             catch (Exception ex)
             {
-                app.Quit();
-                DA.SetData(0, ex.Message);
+                DA.SetData(0, "错误: " + ex.Message);
+            }
+            finally
+            {
+                // ❗ 不释放 wb / ws（关键修复点）
+
+                if (app != null && appCreated)
+                {
+                    app.Quit();
+                    Marshal.ReleaseComObject(app);
+                }
+
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
             }
         }
 
-        // ===== 单元格解析 =====
+        // ===== 显示Excel并定位Sheet =====
+        private void ShowExcelAndActivateSheet(string filePath, string sheetName)
+        {
+            try
+            {
+                var app = (Excel.Application)Marshal.GetActiveObject("Excel.Application");
+
+                app.Visible = true;
+                app.WindowState = Excel.XlWindowState.xlMaximized;
+
+                Excel.Workbook wb = null;
+
+                foreach (Excel.Workbook w in app.Workbooks)
+                {
+                    if (string.Equals(w.FullName, filePath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        wb = w;
+                        break;
+                    }
+                }
+
+                if (wb == null && File.Exists(filePath))
+                {
+                    wb = app.Workbooks.Open(filePath);
+                }
+
+                if (wb != null)
+                {
+                    wb.Activate();
+
+                    Excel.Worksheet ws = null;
+
+                    foreach (Excel.Worksheet s in wb.Sheets)
+                    {
+                        if (s.Name == sheetName)
+                        {
+                            ws = s;
+                            break;
+                        }
+                    }
+
+                    ws?.Activate();
+                }
+
+                app.ScreenUpdating = true;
+                app.ActiveWindow?.Activate();
+            }
+            catch
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "显示Excel失败");
+            }
+        }
+
+        // ===== 工具函数 =====
+        private Excel.Worksheet GetSheetSafe(Excel.Workbook wb, string name)
+        {
+            foreach (Excel.Worksheet s in wb.Sheets)
+            {
+                if (s.Name == name)
+                    return s;
+            }
+            return null;
+        }
+
         private void ParseCell(string cell, out int row, out int col)
         {
+            cell = cell.ToUpper();
+
             int i = 0;
+            while (i < cell.Length && char.IsLetter(cell[i])) i++;
+
+            string colPart = cell.Substring(0, i);
+            string rowPart = cell.Substring(i);
+
             col = 0;
+            foreach (char c in colPart)
+                col = col * 26 + (c - 'A' + 1);
 
-            while (i < cell.Length && Char.IsLetter(cell[i]))
-            {
-                col = col * 26 + (Char.ToUpper(cell[i]) - 'A' + 1);
-                i++;
-            }
-
-            row = int.Parse(cell.Substring(i));
+            row = int.Parse(rowPart);
         }
+
+
         /// <summary>
         /// Provides an Icon for the component.
         /// </summary>
