@@ -15,6 +15,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using System.Threading;
 using System.Windows.Forms;
 using rd = Rhino.NodeInCode;
 
@@ -53,6 +54,7 @@ namespace NS_Parrot
 
         // 错误信息
         string theErrorMessage = "";
+        private int _pendingUiRefresh = 0;
 
 
 
@@ -423,7 +425,13 @@ namespace NS_Parrot
                 // ✅ 来自 CAD 转换阶段的错误
                 if (!string.IsNullOrEmpty(r.ErrorMessage))
                 {
-                    errorList.Add($"Handle={r.Handle} : {r.ErrorMessage}");
+                    string errorMessage = r.ErrorMessage.Trim();
+                    errorMessage = errorMessage.TrimStart('|').Trim();
+
+                    if (errorMessage.StartsWith("Handle=", StringComparison.OrdinalIgnoreCase))
+                        errorList.Add(errorMessage);
+                    else
+                        errorList.Add($"Handle={r.Handle} : {errorMessage}");
                 }
             }
 
@@ -529,11 +537,7 @@ namespace NS_Parrot
             AutoCADTool.CAD2Rhino((res) =>
             {
                 theRhinoResultList = res;
-
-                Rhino.RhinoApp.InvokeOnUiThread((Action)(() =>
-                {
-                    ExpireSolution(true);
-                }));
+                RequestSafeUiRefresh();
             });
         }
 
@@ -592,11 +596,7 @@ namespace NS_Parrot
                     }
                 }
 
-                // ✅ GH必须在UI线程刷新
-                Rhino.RhinoApp.InvokeOnUiThread((Action)(() =>
-                {
-                    ExpireSolution(true);
-                }));
+                RequestSafeUiRefresh();
             });
         }
 
@@ -720,12 +720,48 @@ namespace NS_Parrot
                     }
                 }
 
-                // ✅ GH UI线程刷新
-                Rhino.RhinoApp.InvokeOnUiThread((Action)(() =>
-                {
-                    ExpireSolution(true);
-                }));
+                RequestSafeUiRefresh();
             });
+        }
+
+        private void RequestSafeUiRefresh()
+        {
+            if (Interlocked.Exchange(ref _pendingUiRefresh, 1) == 1)
+                return;
+
+            Rhino.RhinoApp.InvokeOnUiThread((Action)(() =>
+            {
+                System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
+                timer.Interval = 80;
+                timer.Tick += (s, e) =>
+                {
+                    timer.Stop();
+                    timer.Dispose();
+
+                    try
+                    {
+                        StabilizeRhinoUi();
+                        ExpireSolution(true);
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref _pendingUiRefresh, 0);
+                    }
+                };
+                timer.Start();
+            }));
+        }
+
+        private static void StabilizeRhinoUi()
+        {
+            Rhino.RhinoApp.Wait();
+            Application.DoEvents();
+
+            var doc = Rhino.RhinoDoc.ActiveDoc;
+            if (doc != null)
+                doc.Views.Redraw();
+
+            Rhino.RhinoApp.Wait();
         }
         //void RemoveEntity(object argumentNameIsNotImportentEither, EventArgs butTheirOrderMatters)
         //{

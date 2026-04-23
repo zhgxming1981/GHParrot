@@ -21,7 +21,6 @@ namespace NS_Parrot
 
         // ===== 触发控制 =====
         private bool _triggerRun = false;
-        private static bool _lastWrite = false;
 
 
         // ===== 缓存（用于右键）=====
@@ -113,13 +112,7 @@ namespace NS_Parrot
                 return;
             }
 
-            if (writeInput && _lastWrite)
-            {
-                DA.SetData(0, "等待 Write 复位");
-                return;
-            }
-
-            _lastWrite = writeInput;
+          
             _triggerRun = false;
 
             Excel.Application app = null;

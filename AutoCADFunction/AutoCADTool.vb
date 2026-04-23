@@ -64,6 +64,8 @@ Public Class AutoCADTool
     ''' </summary>
     ''' <remarks></remarks>
     Private Shared iAcadDoc As AcadDocument
+    Private Shared ReadOnly FailedBlockCache As New Dictionary(Of String, String)()
+    Private Shared ReadOnly FailedBlockCacheLock As New Object()
 
 
     Public Shared ReadOnly Property AcadApp As AcadApplication
@@ -387,13 +389,6 @@ Public Class AutoCADTool
             Return results
         End If
 
-        Dim docName As String = ""
-        Try
-            docName = doc.Name
-        Catch
-            docName = "UnknownDoc"
-        End Try
-
         Try
             ' ============================
             ' SelectionSet
@@ -424,10 +419,7 @@ Public Class AutoCADTool
 
                     If String.IsNullOrEmpty(handle) Then Continue For
 
-                    ' 👉 唯一化（防跨文档冲突）
-                    'Dim uniqueHandle As String = docName & "_" & handle
-
-                    ' 👉 核心调用（统一入口🔥）
+                    ' 通过 Handle 回查对象，避免直接持有 SelectionSet 中的 COM 包装对象
                     Dim result = ConvertCADItemToRhino_ByHandle(handle)
 
                     If result IsNot Nothing Then
@@ -455,6 +447,42 @@ Public Class AutoCADTool
         Return results
 
     End Function
+
+    Private Shared Function GetActiveDocumentCachePrefix() As String
+        Try
+            Dim doc = ActiveDoc
+            If doc IsNot Nothing Then
+                Return doc.Name
+            End If
+        Catch
+        End Try
+
+        Return "UnknownDoc"
+    End Function
+
+    Private Shared Function BuildFailedBlockCacheKey(blockName As String) As String
+        Return GetActiveDocumentCachePrefix() & "|" & blockName
+    End Function
+
+    Private Shared Function TryGetFailedBlockMessage(blockName As String, ByRef cachedMessage As String) As Boolean
+        Dim cacheKey As String = BuildFailedBlockCacheKey(blockName)
+
+        SyncLock FailedBlockCacheLock
+            Return FailedBlockCache.TryGetValue(cacheKey, cachedMessage)
+        End SyncLock
+    End Function
+
+    Private Shared Sub RememberFailedBlockMessage(blockName As String, message As String)
+        If String.IsNullOrWhiteSpace(blockName) OrElse String.IsNullOrWhiteSpace(message) Then
+            Return
+        End If
+
+        Dim cacheKey As String = BuildFailedBlockCacheKey(blockName)
+
+        SyncLock FailedBlockCacheLock
+            FailedBlockCache(cacheKey) = message
+        End SyncLock
+    End Sub
     'Public Shared Function ConvertCADItemToRhino22(item As Object) As RhinoResult '(Object, String, Drawing.Color, String, String, String)
     '    If TypeOf (item) Is AutoCAD.AcadLine Then
     '        Return CAD_Line2Rhino_LineCurve(item)
@@ -1815,6 +1843,8 @@ FAIL:
     Private Shared Function CAD_Block2Rhino_RegionOnly(item As AutoCAD.AcadBlockReference) As RhinoResult
 
         Dim blockName As String = item.Name
+        Dim blockTag As String = "BlockName=" & blockName '& " | Handle=" & item.Handle
+        Dim cachedFailedMessage As String = Nothing
 
         ' 🔥 先准备默认返回（带元数据）
         Dim result As New RhinoResult(
@@ -1827,6 +1857,11 @@ FAIL:
             ""
         )
 
+        If TryGetFailedBlockMessage(blockName, cachedFailedMessage) Then
+            result.ErrorMessage = cachedFailedMessage
+            Return result
+        End If
+
         Try
             '============================
             ' 1️⃣ Copy
@@ -1835,7 +1870,8 @@ FAIL:
                 TryCast(item.Copy(), AutoCAD.AcadBlockReference)
 
             If blkCopy Is Nothing Then
-                result.ErrorMessage = "块复制失败"
+                result.ErrorMessage = blockTag & " | 块复制失败"
+                RememberFailedBlockMessage(blockName, result.ErrorMessage)
                 Return result
             End If
 
@@ -1862,7 +1898,7 @@ FAIL:
                         End If
 
                     Catch ex As Exception
-                        result.ErrorMessage = "处理Region时发生错误: " & ex.Message
+                        result.ErrorMessage = blockTag & " | 处理Region时发生错误: " & ex.Message
                     End Try
 
                 End If
@@ -1878,7 +1914,7 @@ FAIL:
                     Try
                         ent.Delete()
                     Catch ex As Exception
-                        result.ErrorMessage &= "| 删除子对象失败: " & ex.Message
+                        result.ErrorMessage &= "| " & blockTag & " | 删除子对象失败: " & ex.Message
                     End Try
                 End If
             Next
@@ -1886,7 +1922,7 @@ FAIL:
             Try
                 blkCopy.Delete()
             Catch ex As Exception
-                result.ErrorMessage &= "| 删除块副本失败: " & ex.Message
+                result.ErrorMessage &= "| " & blockTag & " | 删除块副本失败: " & ex.Message
             End Try
 
             '============================
@@ -1895,13 +1931,15 @@ FAIL:
             If foundGeometry IsNot Nothing Then
                 result.Geometry = foundGeometry
             Else
-                result.ErrorMessage &= "| 未找到有效的Region"
+                result.ErrorMessage &= "| " & blockTag & " | 未找到有效的Region"
+                RememberFailedBlockMessage(blockName, result.ErrorMessage.TrimStart("|"c).Trim())
             End If
 
             Return result
 
         Catch ex As Exception
-            result.ErrorMessage = "总体处理错误: " & ex.Message
+            result.ErrorMessage = blockTag & " | 总体处理错误: " & ex.Message
+            RememberFailedBlockMessage(blockName, result.ErrorMessage)
             Return result
         End Try
 

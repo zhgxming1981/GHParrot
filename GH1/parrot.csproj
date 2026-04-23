@@ -24,8 +24,11 @@
     <Compile Remove="Component\ExcelCAD\ToSolidWorks.cs" />
     <Compile Remove="Component\Library\SectionParams.cs" />
     <Compile Remove="Component\Library\SectionProperty.cs" />
+    <Compile Remove="Component\Modeling\CreateMullion.cs" />
     <Compile Remove="Component\Modeling\MyBake2.cs" />
+    <Compile Remove="Component\Modeling\MyHoles.cs" />
     <Compile Remove="Component\Modeling\MyTransform.cs" />
+    <Compile Remove="Component\Modeling\NewTransom.cs" />
     <Compile Remove="cpu.cs" />
     <Compile Remove="Double.cs" />
     <Compile Remove="GetGuid.cs" />
@@ -150,6 +153,10 @@
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
     </None>
+  </ItemGroup>
+  
+  <ItemGroup>
+    <Folder Include="Component\Modeling\" />
   </ItemGroup>
   
   <PropertyGroup Condition="$(Configuration) == 'Debug' AND $([MSBuild]::IsOSPlatform(Windows))">

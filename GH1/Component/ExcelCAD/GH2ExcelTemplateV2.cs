@@ -22,7 +22,6 @@ namespace NS_Parrot
 
         // ===== 触发控制 =====
         private bool _triggerRun = false;
-        private static bool _lastWrite = false;
 
         protected override void RegisterInputParams(GH_InputParamManager p)
         {
@@ -101,13 +100,7 @@ namespace NS_Parrot
                 return;
             }
 
-            if (writeInput && _lastWrite)
-            {
-                DA.SetData(0, "等待Write复位");
-                return;
-            }
-
-            _lastWrite = writeInput;
+            // 直接重置
             _triggerRun = false;
 
             Excel.Application app = null;
@@ -128,7 +121,7 @@ namespace NS_Parrot
                     appCreated = true;
                 }
 
-                app.Visible = false;
+                app.Visible = false;  // 初始隐藏，待写入完成后显示
                 app.DisplayAlerts = false;
                 app.ScreenUpdating = false;
 
@@ -166,8 +159,8 @@ namespace NS_Parrot
 
                     bool sameFile = !string.IsNullOrWhiteSpace(templatePath) &&
                         string.Equals(Path.GetFullPath(templatePath),
-                                      Path.GetFullPath(targetPath),
-                                      StringComparison.OrdinalIgnoreCase);
+                                       Path.GetFullPath(targetPath),
+                                       StringComparison.OrdinalIgnoreCase);
 
                     // ===== 优先模板 =====
                     if (!string.IsNullOrWhiteSpace(templateSheet))
@@ -282,8 +275,10 @@ namespace NS_Parrot
                 // ===== 显示Excel =====
                 app.Visible = true;
                 app.ScreenUpdating = true;
-                app.ActiveWorkbook?.Activate();
-                app.ActiveWindow?.Activate();
+
+                // ⭐ 激活目标 sheet
+                wb.Activate();
+                ws.Activate();
 
                 DA.SetData(0, $"完成：{rowCount}行 × {colCount}列");
             }
