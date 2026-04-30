@@ -8,9 +8,7 @@ using TSM = Tekla.Structures.Model;
 using TSG = Tekla.Structures.Geometry3d;
 using GTLink.Types;
 using System.Windows.Forms;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
-using CommonFunction.Algorithm;
+using CommonFunction;
 
 namespace NS_Parrot
 {

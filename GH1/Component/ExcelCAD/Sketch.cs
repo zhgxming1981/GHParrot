@@ -1,17 +1,11 @@
 ﻿using CatiaFunction;
-using CommonFunction.Algorithm;
-using CommonFunction.Hardware;
-using CommonFunction.Transform;
+using CommonFunction;
 using Grasshopper.Kernel;
-using Grasshopper.Kernel.Types;
-using Rhino.Collections;
-using Rhino.DocObjects;
 using Rhino.Geometry;
 using Rhino.Geometry.Collections;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Tekla.Structures.ModelInternal;
 
 namespace NS_Parrot
 {

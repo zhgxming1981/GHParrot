@@ -29,27 +29,7 @@ Public Class RhinoResult
         Me.ErrorMessage = errorMessage
     End Sub
 End Class
-'Public Class RhinoResult
 
-'    Public Property Geometry As Object
-'    Public Property Handle As String
-'    Public Property Color As Drawing.Color
-'    Public Property Layer As String
-'    Public Property SourceHandle As String
-'    Public Property Name As String
-'    Public Property ErrorMessage As String
-
-'    Public Sub New(geo As Object, handle As String, color As Drawing.Color, layer As String, sourceHandle As String, name As String, err As String)
-'        Me.Geometry = geo
-'        Me.Handle = handle
-'        Me.Color = color
-'        Me.Layer = layer
-'        Me.SourceHandle = sourceHandle
-'        Me.Name = name
-'        Me.ErrorMessage = err
-'    End Sub
-
-'End Class
 
 Public Class AutoCADTool
     Private Declare Function FindWindow Lib "user32.dll" Alias "FindWindowA" (ByVal lpClassName As String, ByVal lpWindowName As String) As IntPtr
@@ -64,10 +44,6 @@ Public Class AutoCADTool
     ''' </summary>
     ''' <remarks></remarks>
     Private Shared iAcadDoc As AcadDocument
-    Private Shared ReadOnly FailedBlockCache As New Dictionary(Of String, String)()
-    Private Shared ReadOnly FailedBlockCacheLock As New Object()
-
-
     Public Shared ReadOnly Property AcadApp As AcadApplication
         Get
             If TAcadApp Is Nothing Then
@@ -382,6 +358,7 @@ Public Class AutoCADTool
     Public Shared Function CAD2Rhino(onFinish As Action(Of List(Of RhinoResult))) As List(Of RhinoResult)
 
         Dim results As New List(Of RhinoResult)
+        Dim failedBlockCache As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
 
         Dim doc = ActiveDoc
         If doc Is Nothing Then
@@ -420,7 +397,7 @@ Public Class AutoCADTool
                     If String.IsNullOrEmpty(handle) Then Continue For
 
                     ' 通过 Handle 回查对象，避免直接持有 SelectionSet 中的 COM 包装对象
-                    Dim result = ConvertCADItemToRhino_ByHandle(handle)
+                    Dim result = ConvertCADItemToRhino_ByHandle(handle, failedBlockCache)
 
                     If result IsNot Nothing Then
                         ' 强制写入统一Handle（覆盖内部）
@@ -447,42 +424,6 @@ Public Class AutoCADTool
         Return results
 
     End Function
-
-    Private Shared Function GetActiveDocumentCachePrefix() As String
-        Try
-            Dim doc = ActiveDoc
-            If doc IsNot Nothing Then
-                Return doc.Name
-            End If
-        Catch
-        End Try
-
-        Return "UnknownDoc"
-    End Function
-
-    Private Shared Function BuildFailedBlockCacheKey(blockName As String) As String
-        Return GetActiveDocumentCachePrefix() & "|" & blockName
-    End Function
-
-    Private Shared Function TryGetFailedBlockMessage(blockName As String, ByRef cachedMessage As String) As Boolean
-        Dim cacheKey As String = BuildFailedBlockCacheKey(blockName)
-
-        SyncLock FailedBlockCacheLock
-            Return FailedBlockCache.TryGetValue(cacheKey, cachedMessage)
-        End SyncLock
-    End Function
-
-    Private Shared Sub RememberFailedBlockMessage(blockName As String, message As String)
-        If String.IsNullOrWhiteSpace(blockName) OrElse String.IsNullOrWhiteSpace(message) Then
-            Return
-        End If
-
-        Dim cacheKey As String = BuildFailedBlockCacheKey(blockName)
-
-        SyncLock FailedBlockCacheLock
-            FailedBlockCache(cacheKey) = message
-        End SyncLock
-    End Sub
     'Public Shared Function ConvertCADItemToRhino22(item As Object) As RhinoResult '(Object, String, Drawing.Color, String, String, String)
     '    If TypeOf (item) Is AutoCAD.AcadLine Then
     '        Return CAD_Line2Rhino_LineCurve(item)
@@ -596,7 +537,7 @@ Public Class AutoCADTool
 
     'End Function
 
-    Public Shared Function ConvertCADItemToRhino_ByHandle(handle As String) As RhinoResult
+    Public Shared Function ConvertCADItemToRhino_ByHandle(handle As String, Optional failedBlockCache As Dictionary(Of String, String) = Nothing) As RhinoResult
 
         Dim obj As Object = Nothing  ' 🔥 提前定义
 
@@ -631,7 +572,7 @@ Public Class AutoCADTool
                 Return CAD_Text2Rhino(obj)
 
             ElseIf TypeOf obj Is AutoCAD.AcadBlockReference Then
-                Return CAD_Block2Rhino_RegionOnly(obj)
+                Return CAD_Block2Rhino_RegionOnly(obj, failedBlockCache)
 
             Else
                 Return New RhinoResult(
@@ -1419,72 +1360,90 @@ Public Class AutoCADTool
             plane = Rg.Plane.WorldXY
         End If
 
-        '========================
-        ' 7️⃣ 按面积排序（大→小）
-        '========================
-        closedLoops.Sort(Function(a, b)
-                             Dim areaA = Math.Abs(Rg.AreaMassProperties.Compute(a).Area)
-                             Dim areaB = Math.Abs(Rg.AreaMassProperties.Compute(b).Area)
-                             Return areaB.CompareTo(areaA)
-                         End Function)
-
-        '========================
-        ' 8️⃣ 外环逐个找孔
-        '========================
-        Dim used As New HashSet(Of Rg.Curve)
         Dim finalBreps As New List(Of Rg.Brep)
 
-        For i = 0 To closedLoops.Count - 1
+        '========================
+        ' 7️⃣ 单闭合圈快路径
+        '========================
+        If closedLoops.Count = 1 Then
+            Dim singleLoop = closedLoops(0)
 
-            Dim outer = closedLoops(i)
-            If used.Contains(outer) Then Continue For
-
-            Dim loops As New List(Of Rg.Curve)
-
-            ' 外环方向（必须 CCW）
-            If outer.ClosedCurveOrientation(plane) = Rg.CurveOrientation.Clockwise Then
-                outer.Reverse()
+            If singleLoop.ClosedCurveOrientation(plane) = Rg.CurveOrientation.Clockwise Then
+                singleLoop.Reverse()
             End If
 
-            loops.Add(outer)
-            used.Add(outer)
+            Dim simpleBreps = Rg.Brep.CreatePlanarBreps({singleLoop}, 0.01)
+            If simpleBreps IsNot Nothing AndAlso simpleBreps.Length > 0 Then
+                finalBreps.AddRange(simpleBreps)
+            End If
+        Else
 
-            ' 找孔
-            For j = i + 1 To closedLoops.Count - 1
+            '========================
+            ' 8️⃣ 按面积排序（大→小）
+            '========================
+            closedLoops.Sort(Function(a, b)
+                                 Dim areaA = Math.Abs(Rg.AreaMassProperties.Compute(a).Area)
+                                 Dim areaB = Math.Abs(Rg.AreaMassProperties.Compute(b).Area)
+                                 Return areaB.CompareTo(areaA)
+                             End Function)
 
-                Dim inner = closedLoops(j)
-                If used.Contains(inner) Then Continue For
+            '========================
+            ' 9️⃣ 外环逐个找孔
+            '========================
+            Dim used As New HashSet(Of Rg.Curve)
 
-                Dim rel = Rg.Curve.PlanarClosedCurveRelationship(inner, outer, plane, 0.01)
+            For i = 0 To closedLoops.Count - 1
 
-                If rel = Rg.RegionContainment.AInsideB Then
+                Dim outer = closedLoops(i)
+                If used.Contains(outer) Then Continue For
 
-                    ' 孔方向（必须 CW）
-                    If inner.ClosedCurveOrientation(plane) = Rg.CurveOrientation.CounterClockwise Then
-                        inner.Reverse()
+                Dim loops As New List(Of Rg.Curve)
+
+                ' 外环方向（必须 CCW）
+                If outer.ClosedCurveOrientation(plane) = Rg.CurveOrientation.Clockwise Then
+                    outer.Reverse()
+                End If
+
+                loops.Add(outer)
+                used.Add(outer)
+
+                ' 找孔
+                For j = i + 1 To closedLoops.Count - 1
+
+                    Dim inner = closedLoops(j)
+                    If used.Contains(inner) Then Continue For
+
+                    Dim rel = Rg.Curve.PlanarClosedCurveRelationship(inner, outer, plane, 0.01)
+
+                    If rel = Rg.RegionContainment.AInsideB Then
+
+                        ' 孔方向（必须 CW）
+                        If inner.ClosedCurveOrientation(plane) = Rg.CurveOrientation.CounterClockwise Then
+                            inner.Reverse()
+                        End If
+
+                        loops.Add(inner)
+                        used.Add(inner)
                     End If
 
-                    loops.Add(inner)
-                    used.Add(inner)
+                Next
+
+                '========================
+                ' 创建 Brep
+                '========================
+                Dim breps = Rg.Brep.CreatePlanarBreps(loops, 0.01)
+
+                If breps IsNot Nothing AndAlso breps.Length > 0 Then
+                    finalBreps.AddRange(breps)
                 End If
 
             Next
-
-            '========================
-            ' 创建 Brep
-            '========================
-            Dim breps = Rg.Brep.CreatePlanarBreps(loops, 0.01)
-
-            If breps IsNot Nothing AndAlso breps.Length > 0 Then
-                finalBreps.AddRange(breps)
-            End If
-
-        Next
+        End If
 
         If finalBreps.Count = 0 Then Return Nothing
 
         '========================
-        ' 9️⃣ 属性
+        ' 🔟 属性
         '========================
         Dim layer As String = ""
         Dim color As Drawing.Color = Drawing.Color.White
@@ -1499,7 +1458,7 @@ Public Class AutoCADTool
         End Try
 
         '========================
-        ' 🔟 返回
+        ' 1️⃣1️⃣ 返回
         '========================
         Return New RhinoResult(finalBreps(0), layer, color, item.Linetype, handle, "", "")
 
@@ -1824,7 +1783,7 @@ FAIL:
 
 
 
-    Private Shared Function CAD_Block2Rhino_ByHandle(handle As String) As RhinoResult
+    Private Shared Function CAD_Block2Rhino_ByHandle(handle As String, Optional failedBlockCache As Dictionary(Of String, String) = Nothing) As RhinoResult
 
         Dim obj = ActiveDoc.HandleToObject(handle)
         Dim blk = TryCast(obj, AutoCAD.AcadBlockReference)
@@ -1833,14 +1792,14 @@ FAIL:
             Return New RhinoResult(Nothing, "", Drawing.Color.White, "", handle, "", "未找到块")
         End If
 
-        Return CAD_Block2Rhino_RegionOnly(blk)
+        Return CAD_Block2Rhino_RegionOnly(blk, failedBlockCache)
 
     End Function
 
 
 
 
-    Private Shared Function CAD_Block2Rhino_RegionOnly(item As AutoCAD.AcadBlockReference) As RhinoResult
+    Private Shared Function CAD_Block2Rhino_RegionOnly(item As AutoCAD.AcadBlockReference, Optional failedBlockCache As Dictionary(Of String, String) = Nothing) As RhinoResult
 
         Dim blockName As String = item.Name
         Dim blockTag As String = "BlockName=" & blockName '& " | Handle=" & item.Handle
@@ -1857,7 +1816,7 @@ FAIL:
             ""
         )
 
-        If TryGetFailedBlockMessage(blockName, cachedFailedMessage) Then
+        If failedBlockCache IsNot Nothing AndAlso failedBlockCache.TryGetValue(blockName, cachedFailedMessage) Then
             result.ErrorMessage = cachedFailedMessage
             Return result
         End If
@@ -1871,7 +1830,9 @@ FAIL:
 
             If blkCopy Is Nothing Then
                 result.ErrorMessage = blockTag & " | 块复制失败"
-                RememberFailedBlockMessage(blockName, result.ErrorMessage)
+                If failedBlockCache IsNot Nothing Then
+                    failedBlockCache(blockName) = result.ErrorMessage
+                End If
                 Return result
             End If
 
@@ -1880,30 +1841,43 @@ FAIL:
             '============================
             Dim list As Object = blkCopy.Explode()
 
-            Dim foundGeometry As Rhino.Geometry.GeometryBase = Nothing
+            Dim targetRegion As AutoCAD.AcadRegion = Nothing
+            Dim regionCount As Integer = 0
 
             '============================
-            ' 3️⃣ 查找 Region
+            ' 3️⃣ 先检查 Region 数量
             '============================
             For Each obj In list
 
                 If TypeOf obj Is AutoCAD.AcadRegion Then
-
-                    Try
-                        Dim rr As RhinoResult = CAD_Region2Rhino(obj)
-
-                        If rr.Geometry IsNot Nothing Then
-                            foundGeometry = rr.Geometry
-                            Exit For
-                        End If
-
-                    Catch ex As Exception
-                        result.ErrorMessage = blockTag & " | 处理Region时发生错误: " & ex.Message
-                    End Try
-
+                    regionCount += 1
+                    If regionCount = 1 Then
+                        targetRegion = TryCast(obj, AutoCAD.AcadRegion)
+                    End If
                 End If
 
             Next
+
+            If regionCount = 0 Then
+                result.ErrorMessage = blockTag & " | 未找到有效的Region"
+            ElseIf regionCount > 1 Then
+                result.ErrorMessage = blockTag & " | 检测到多个Region，不符合单块单面域规则"
+            ElseIf targetRegion IsNot Nothing Then
+                Try
+                    Dim rr As RhinoResult = CAD_Region2Rhino(targetRegion)
+
+                    If rr IsNot Nothing AndAlso rr.Geometry IsNot Nothing Then
+                        result.Geometry = rr.Geometry
+                    Else
+                        result.ErrorMessage = blockTag & " | 未找到有效的Region"
+                    End If
+
+                Catch ex As Exception
+                    result.ErrorMessage = blockTag & " | 处理Region时发生错误: " & ex.Message
+                End Try
+            Else
+                result.ErrorMessage = blockTag & " | 未找到有效的Region"
+            End If
 
             '============================
             ' 4️⃣ 清理（必须执行）
@@ -1925,21 +1899,20 @@ FAIL:
                 result.ErrorMessage &= "| " & blockTag & " | 删除块副本失败: " & ex.Message
             End Try
 
-            '============================
-            ' 5️⃣ 赋值 Geometry（关键修复）
-            '============================
-            If foundGeometry IsNot Nothing Then
-                result.Geometry = foundGeometry
-            Else
-                result.ErrorMessage &= "| " & blockTag & " | 未找到有效的Region"
-                RememberFailedBlockMessage(blockName, result.ErrorMessage.TrimStart("|"c).Trim())
+            If result.Geometry Is Nothing Then
+                result.ErrorMessage = result.ErrorMessage.TrimStart("|"c).Trim()
+                If failedBlockCache IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(result.ErrorMessage) Then
+                    failedBlockCache(blockName) = result.ErrorMessage
+                End If
             End If
 
             Return result
 
         Catch ex As Exception
             result.ErrorMessage = blockTag & " | 总体处理错误: " & ex.Message
-            RememberFailedBlockMessage(blockName, result.ErrorMessage)
+            If failedBlockCache IsNot Nothing Then
+                failedBlockCache(blockName) = result.ErrorMessage
+            End If
             Return result
         End Try
 

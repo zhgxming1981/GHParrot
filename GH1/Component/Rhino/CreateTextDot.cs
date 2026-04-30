@@ -1,13 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using CommonFunction;
 using Grasshopper.Kernel;
-using Grasshopper.Kernel.Types;
 using Rhino.Geometry;
-using System.Diagnostics;
-using Grasshopper.Kernel.Types.Transforms;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
-using CommonFunction.Algorithm;
+using System;
 
 namespace NS_Parrot
 {

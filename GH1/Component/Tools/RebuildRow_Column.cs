@@ -3,9 +3,7 @@ using Grasshopper.Kernel;
 using Grasshopper.Kernel.Data;
 using Grasshopper;
 using Grasshopper.Kernel.Types;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
-using CommonFunction.Algorithm;
+using CommonFunction;
 
 namespace NS_Parrot
 {

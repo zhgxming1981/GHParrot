@@ -7,9 +7,7 @@ using System.Collections.Specialized;
 using System.IO;
 using Rhino.Geometry.Collections;
 using System.Linq;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
-using CommonFunction.Algorithm;
+using CommonFunction;
 
 namespace NS_Parrot
 {

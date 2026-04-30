@@ -44,11 +44,10 @@
     <OptionInfer>On</OptionInfer>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Grasshopper">
-      <HintPath>D:\Program Files\Rhino 7\Plug-ins\Grasshopper\Grasshopper.dll</HintPath>
-    </Reference>
-    <Reference Include="RhinoCommon">
-      <HintPath>D:\Program Files\Rhino 7\System\RhinoCommon.dll</HintPath>
+    <Reference Include="RhinoCommon, Version=7.37.24107.15001, Culture=neutral, PublicKeyToken=552281e97c755530, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>D:\Program Files\Rhino 8\System\RhinoCommon.dll</HintPath>
+      <Private>False</Private>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Data" />
@@ -70,7 +69,9 @@
     <Import Include="System.Threading.Tasks" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Common4Catia.vb" />
+    <Compile Include="Common4Catia.vb">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Compile>
     <Compile Include="My Project\AssemblyInfo.vb" />
     <Compile Include="My Project\Application.Designer.vb">
       <AutoGen>True</AutoGen>

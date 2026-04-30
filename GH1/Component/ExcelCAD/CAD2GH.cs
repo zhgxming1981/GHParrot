@@ -1,28 +1,28 @@
-﻿using AutoCAD;
-using AutoCADFunction;
-using CommonFunction.Algorithm;
-using CommonFunction.Hardware;
-using Grasshopper;
+﻿using AutoCADFunction;
+using CommonFunction;
+using GH_IO.Serialization;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Attributes;
-using Grasshopper.Kernel.Types;
 using parrot.Properties;
-using Rhino;
+using Rhino.FileIO;
 using Rhino.Geometry;
+using Rhino.Runtime;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Threading;
 using System.Windows.Forms;
-using rd = Rhino.NodeInCode;
 
 namespace NS_Parrot
 {
     public class CAD2GH : GH_Component
     {
+        private const string PersistenceChunk = "CadImportCache";
+        private const int PersistenceVersion = 1;
+
         /// <summary>
         /// Initializes a new instance of the CAD2GH class.
         /// </summary>
@@ -37,14 +37,8 @@ namespace NS_Parrot
         public enum ButtonColor { Black, Grey }//按钮颜色
         public ButtonColor CurrentButtonColor { get; set; } = ButtonColor.Black;//当前的按钮颜色
 
-        //private List<object> theObjectList = new List<object>();//从CAD中导入的对象
         public List<object> theBakeGeoList = new List<object>();//将要bake的对象
-        //private List<string> theLayerNameList = new List<string>();//autoCAD中图层名
-        //private List<System.Drawing.Color> theColorList = new List<Color>();//autoCAD中颜色值
-        //private List<string> theLineTypeList = new List<string>();//autoCAD中线形
-        //private List<string> theCadEntityHandleList = new List<string>();//当前电池中存储的EntityHandle
-        //private List<string> theBlockNameList = new List<string>();//当前电池中存储的块名
-        //private string theErrorMessage;
+  
         private List<RhinoResult> theRhinoResultList = new List<RhinoResult>();
         public string layerName = "";
 
@@ -55,6 +49,14 @@ namespace NS_Parrot
         // 错误信息
         string theErrorMessage = "";
         private int _pendingUiRefresh = 0;
+
+        private enum PersistedGeometryKind
+        {
+            None = 0,
+            GeometryBase = 1,
+            TextEntity = 2,
+            Point3d = 3
+        }
 
 
 
@@ -94,268 +96,10 @@ namespace NS_Parrot
         /// This is the method that actually does the work.
         /// </summary>
         /// <param name="DA">The DA object is used to retrieve from inputs and store in outputs.</param>
-
-        //protected override void SolveInstance(IGH_DataAccess DA)
-        //{
-        //    if (!CHardware.CheckLegality())
-        //        return;
-
-        //    theBakeGeoList.Clear();
-
-        //    Point3d insert = Point3d.Origin;
-        //    DA.GetData(0, ref insert);
-
-        //    //Plane plane1 = Plane.WorldXY;
-        //    Plane plane1 = new Plane(insert, Vector3d.XAxis, Vector3d.YAxis);
-        //    Plane plane2 = new Plane(insert, Vector3d.XAxis, Vector3d.YAxis);
-        //    DA.GetData(1, ref plane2);
-
-        //    DA.GetData(2, ref layerName);
-
-        //    // 🔥 统一变换
-        //    Transform xform = Transform.PlaneToPlane(plane1, plane2);
-
-        //    List<object> outputList = new List<object>();
-
-        //    foreach (var obj in theObjectList)
-        //    {
-        //        if (obj is GeometryBase geo)
-        //        {
-        //            GeometryBase g = geo.Duplicate();
-        //            g.Transform(xform);
-        //            outputList.Add(g);
-        //        }
-        //        else if (obj is TextEntity txt)
-        //        {
-        //            TextEntity t = txt.Duplicate() as TextEntity;
-        //            t.Transform(xform);
-        //            outputList.Add(t);
-        //        }
-        //        else if (obj is Point3d pt)
-        //        {
-        //            Point3d p = pt;
-        //            p.Transform(xform);
-        //            outputList.Add(p);
-        //        }
-        //    }
-
-        //    theBakeGeoList.AddRange(outputList);
-
-        //    DA.SetDataList(0, outputList);
-        //    DA.SetDataList(1, theLayerNameList);
-        //    DA.SetDataList(2, theColorList);
-        //    DA.SetDataList(3, theLineTypeList);
-        //    DA.SetDataList(4, theCadEntityHandleList);
-        //    DA.SetDataList(5, theBlockNameList);
-        //}
-
-
-
-
-        //protected override void SolveInstance(IGH_DataAccess DA)
-        //{
-        //    if (!CHardware.CheckLegality())
-        //        return;
-
-        //    theBakeGeoList.Clear();
-
-        //    Point3d insert = Point3d.Origin;
-        //    if (!DA.GetData(0, ref insert))
-        //        return;
-
-        //    Plane plane1 = new Plane(insert, Vector3d.XAxis, Vector3d.YAxis);
-
-        //    Plane plane2 = Plane.WorldXY;
-        //    if (!DA.GetData(1, ref plane2))
-        //        return;
-
-        //    DA.GetData(2, ref layerName);
-
-        //    Transform xform = Transform.PlaneToPlane(plane1, plane2);
-
-        //    List<object> outputList = new List<object>();
-
-        //    // 🔥 收集错误（来自 RhinoResult）
-        //    List<string> errorList = new List<string>();
-
-        //    for (int i = 0; i < theRhinoResultList.Count; i++)
-        //    {
-        //        var obj = theRhinoResultList[i].Geometry;
-
-        //        try
-        //        {
-        //            if (obj is GeometryBase geo)
-        //            {
-        //                GeometryBase g = geo.Duplicate();
-        //                g.Transform(xform);
-        //                outputList.Add(g);
-        //            }
-        //            else if (obj is TextEntity txt)
-        //            {
-        //                TextEntity t = txt.Duplicate() as TextEntity;
-        //                t.Transform(xform);
-        //                outputList.Add(t);
-        //            }
-        //            else if (obj is Point3d pt)
-        //            {
-        //                Point3d p = pt;
-        //                p.Transform(xform);
-        //                outputList.Add(p);
-        //            }
-        //            else
-        //            {
-        //                outputList.Add(null);
-        //            }
-        //        }
-        //        catch
-        //        {
-        //            outputList.Add(null);
-        //        }
-
-        //        // ✅ 从 RhinoResult 同步错误（关键）
-        //        if (i < theRhinoResultList.Count)
-        //        {
-        //            var rr = theRhinoResultList[i];
-
-        //            if (!string.IsNullOrEmpty(rr.ErrorMessage))
-        //            {
-        //                string handle = rr.Handle ?? "未知";
-        //                errorList.Add($"Handle={handle} : {rr.ErrorMessage}");
-        //            }
-        //        }
-        //    }
-
-        //    theBakeGeoList.AddRange(outputList);
-
-        //    //============================
-        //    // 🔥 GH 气泡提示
-        //    //============================
-        //    if (errorList.Count > 0)
-        //    {
-        //        string msg = string.Join("\n", errorList);
-
-        //        this.AddRuntimeMessage(
-        //            GH_RuntimeMessageLevel.Warning,
-        //            msg
-        //        );
-        //    }
-
-        //    //============================
-        //    // 输出
-        //    //============================
-
-        //    List<string> theLayerNameList=theRhinoResultList.Select(r => r.Layer).ToList();
-        //    List<System.Drawing.Color> theColorList=theRhinoResultList.Select(r => r.Color).ToList();
-        //    List<string> theLineTypeList=theRhinoResultList.Select(r => r.LineType).ToList();
-        //    List<string> theCadEntityHandleList=theRhinoResultList.Select(r => r.Handle).ToList();
-        //    List<string> theBlockNameList=theRhinoResultList.Select(r => r.BlockName).ToList();
-
-        //    DA.SetDataList(0, outputList);
-        //    DA.SetDataList(1, theLayerNameList);
-        //    DA.SetDataList(2, theColorList);
-        //    DA.SetDataList(3, theLineTypeList);
-        //    DA.SetDataList(4, theCadEntityHandleList);
-        //    DA.SetDataList(5, theBlockNameList);
-        //}
-
-        //protected override void SolveInstance(IGH_DataAccess DA)
-        //{
-        //    if (!CHardware.CheckLegality())
-        //        return;
-
-        //    theBakeGeoList.Clear();
-
-        //    Point3d insert = Point3d.Origin;
-        //    DA.GetData(0, ref insert);
-
-        //    Plane plane1 = new Plane(insert, Vector3d.XAxis, Vector3d.YAxis);
-
-        //    Plane plane2 = Plane.WorldXY;
-        //    if (!DA.GetData(1, ref plane2))
-        //        return;
-
-        //    DA.GetData(2, ref layerName);
-
-        //    Transform xform = Transform.PlaneToPlane(plane1, plane2);
-
-        //    List<object> outputList = new List<object>();
-        //    List<string> layerList = new List<string>();
-        //    List<System.Drawing.Color> colorList = new List<System.Drawing.Color>();
-        //    List<string> lineTypeList = new List<string>();
-        //    List<string> handleList = new List<string>();
-        //    List<string> blockNameList = new List<string>();
-
-        //    List<string> errorList = new List<string>();
-
-        //    foreach (var r in theRhinoResultList)
-        //    {
-        //        object geoOut = null;
-
-        //        try
-        //        {
-        //            if (r.Geometry is GeometryBase geo)
-        //            {
-        //                GeometryBase g = geo.Duplicate();
-        //                g.Transform(xform);
-        //                geoOut = g;
-        //            }
-        //            else if (r.Geometry is TextEntity txt)
-        //            {
-        //                TextEntity t = txt.Duplicate() as TextEntity;
-        //                t.Transform(xform);
-        //                geoOut = t;
-        //            }
-        //            else if (r.Geometry is Point3d pt)
-        //            {
-        //                Point3d p = pt;
-        //                p.Transform(xform);
-        //                geoOut = p;
-        //            }
-        //        }
-        //        catch (Exception ex)
-        //        {
-        //            errorList.Add($"Handle={r.Handle} 变换失败: {ex.Message}");
-        //        }
-
-        //        outputList.Add(geoOut);
-        //        layerList.Add(r.Layer);
-        //        colorList.Add(r.Color);
-        //        lineTypeList.Add(r.LineType);
-        //        handleList.Add(r.Handle);
-        //        blockNameList.Add(r.BlockName);
-
-        //        // ✅ 来自 CAD 层错误
-        //        if (!string.IsNullOrEmpty(r.ErrorMessage))
-        //        {
-        //            errorList.Add($"Handle={r.Handle} : {r.ErrorMessage}");
-        //        }
-        //    }
-
-        //    theBakeGeoList.AddRange(outputList);
-
-        //    // 🔥 GH 气泡
-        //    if (errorList.Count > 0)
-        //    {
-        //        AddRuntimeMessage(
-        //            GH_RuntimeMessageLevel.Warning,
-        //            string.Join("\n", errorList)
-        //        );
-        //    }
-
-        //    DA.SetDataList(0, outputList);
-        //    DA.SetDataList(1, layerList);
-        //    DA.SetDataList(2, colorList);
-        //    DA.SetDataList(3, lineTypeList);
-        //    DA.SetDataList(4, handleList);
-        //    DA.SetDataList(5, blockNameList);
-        //}
-
-
-
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            if (!CHardware.CheckLegality())
-                return;
+            //if (!CHardware.CheckLegality())
+            //    return;
 
             theBakeGeoList.Clear();
 
@@ -388,6 +132,7 @@ namespace NS_Parrot
             {
                 object obj = r.Geometry;
                 object outGeo = null;
+                bool hasCadError = !string.IsNullOrWhiteSpace(r.ErrorMessage);
 
                 try
                 {
@@ -415,15 +160,8 @@ namespace NS_Parrot
                     errorList.Add($"Handle={r.Handle} 变换失败: {ex.Message}");
                 }
 
-                outputList.Add(outGeo);
-                layerList.Add(r.Layer);
-                colorList.Add(r.Color);
-                lineTypeList.Add(r.LineType);
-                handleList.Add(r.Handle);
-                blockNameList.Add(r.BlockName);
-
                 // ✅ 来自 CAD 转换阶段的错误
-                if (!string.IsNullOrEmpty(r.ErrorMessage))
+                if (hasCadError)
                 {
                     string errorMessage = r.ErrorMessage.Trim();
                     errorMessage = errorMessage.TrimStart('|').Trim();
@@ -433,6 +171,16 @@ namespace NS_Parrot
                     else
                         errorList.Add($"Handle={r.Handle} : {errorMessage}");
                 }
+
+                if (hasCadError || outGeo == null)
+                    continue;
+
+                outputList.Add(outGeo);
+                layerList.Add(r.Layer);
+                colorList.Add(r.Color);
+                lineTypeList.Add(r.LineType);
+                handleList.Add(r.Handle);
+                blockNameList.Add(r.BlockName);
             }
 
             theBakeGeoList.AddRange(outputList);
@@ -512,63 +260,19 @@ namespace NS_Parrot
             AutoCADTool.ConnectCAD();
         }
 
-        //void GetEntityFromAutoCAD(object argumentNameIsNotImportentEither, EventArgs butTheirOrderMatters)
-        //{
-        //    List<RhinoResult> value = AutoCADTool.CAD2Rhino();//就是刚刚写的CAD2Rhino()
-        //    theObjectList = value.Geometry;//全局变量，返回的autoCAD对象，类型为List<object> 
-        //    theLayerNameList = value.Layer;//全局变量，返回的autoCAD对象图层，类型为List<string>
-        //    theColorList = value.Color;//全局变量，返回的autoCAD对象颜色，类型为List<Drawing.Color>
-        //    theLineTypeList = value.LineType;//全局变量，返回的autoCAD对象线型，类型为List<string>
-        //    theCadEntityHandleList = value.Handle;//全局变量，返回的autoCAD对象Handle，类型为List<string>
-        //    theBlockNameList = value.BlockName;//全局变量，返回的autoCAD对象Handle，类型为List<string>
-        //    theErrorMessage = value.ErrorMessage;
-        //    ExpireSolution(true);//告诉系统，电池需要重新计算
-        //}
-
-        //void GetEntityFromAutoCAD(object sender, EventArgs e)
-        //{
-        //    theRhinoResultList = AutoCADTool.CAD2Rhino();
-        //    ExpireSolution(true);
-        //}
+    
 
 
         void GetEntityFromAutoCAD(object sender, EventArgs e)
         {
             AutoCADTool.CAD2Rhino((res) =>
             {
-                theRhinoResultList = res;
+                SetRhinoResults(res);
                 RequestSafeUiRefresh();
             });
         }
 
-        //void AddEntity(object sender, EventArgs e)
-        //{
-        //    List<RhinoResult> value = AutoCADTool.CAD2Rhino();
-
-        //    theErrorMessage = "";
-
-        //    foreach (var v in value)
-        //    {
-        //        string handle = v.Handle;
-
-        //        if (string.IsNullOrEmpty(handle))
-        //            continue;
-
-        //        // ✅ O(1) 查重
-        //        if (theHandleSet.Add(handle)) // ⭐关键写法（Add 本身就返回是否成功）
-        //        {
-        //            theRhinoResultList.Add(v);
-        //        }
-
-        //        // 收集错误
-        //        if (!string.IsNullOrEmpty(v.ErrorMessage))
-        //        {
-        //            theErrorMessage += v.ErrorMessage + "\n";
-        //        }
-        //    }
-
-        //    ExpireSolution(true);
-        //}
+     
 
         void AddEntity(object sender, EventArgs e)
         {
@@ -600,83 +304,7 @@ namespace NS_Parrot
             });
         }
 
-        //void AddEntity(object argumentNameIsNotImportentEither, EventArgs butTheirOrderMatters)
-        //{
-        //    // 获取 CAD 当前选择集的对象
-        //    var value = AutoCADTool.CAD2Rhino(); // 返回 (List<object>, List<string>, List<Color>, List<string>)
-        //    var newObjects = value.Item1;
-        //    var newLayers = value.Item2;
-        //    var newColors = value.Item3;
-        //    var newLineTypes = value.Item4;
-        //    var newHandles = value.Item5;
-        //    var newBlockNames = value.Item6;
-
-        //    // 遍历新对象，判断 handle 是否已经存在
-        //    for (int i = 0; i < newObjects.Count; i++)
-        //    {
-        //        string handle = newHandles[i];
-
-        //        // 如果全局 handle 列表中不存在，则添加
-        //        if (!theCadEntityHandleList.Contains(handle))
-        //        {
-        //            theObjectList.Add(newObjects[i]);
-        //            theLayerNameList.Add(newLayers[i]);
-        //            theColorList.Add(newColors[i]);
-        //            theLineTypeList.Add(newLineTypes[i]);
-        //            theCadEntityHandleList.Add(handle);
-        //            theBlockNameList.Add(newBlockNames[i]);
-        //        }
-        //        // 否则跳过，不添加
-        //    }
-
-        //    // 通知系统需要重新计算
-        //    ExpireSolution(true);
-        //}
-
-
-        //void RemoveEntity(object sender, EventArgs e)
-        //{
-        //    List<RhinoResult> value = AutoCADTool.CAD2Rhino();
-
-        //    // 🔥 要删除的 handle
-        //    HashSet<string> removeSet = new HashSet<string>();
-
-        //    foreach (var v in value)
-        //    {
-        //        if (!string.IsNullOrEmpty(v.Handle))
-        //            removeSet.Add(v.Handle);
-        //    }
-
-        //    theErrorMessage = "";
-
-        //    // 🔥 重建（O(n)）
-        //    List<RhinoResult> newList = new List<RhinoResult>();
-        //    HashSet<string> newHandleSet = new HashSet<string>();
-
-        //    foreach (var r in theRhinoResultList)
-        //    {
-        //        if (!removeSet.Contains(r.Handle))
-        //        {
-        //            newList.Add(r);
-        //            newHandleSet.Add(r.Handle);
-        //        }
-        //    }
-
-        //    // 替换
-        //    theRhinoResultList = newList;
-        //    theHandleSet = newHandleSet;
-
-        //    // 收集错误
-        //    foreach (var v in value)
-        //    {
-        //        if (!string.IsNullOrEmpty(v.ErrorMessage))
-        //        {
-        //            theErrorMessage += v.ErrorMessage + "\n";
-        //        }
-        //    }
-
-        //    ExpireSolution(true);
-        //}
+      
 
 
         void RemoveEntity(object sender, EventArgs e)
@@ -763,51 +391,183 @@ namespace NS_Parrot
 
             Rhino.RhinoApp.Wait();
         }
-        //void RemoveEntity(object argumentNameIsNotImportentEither, EventArgs butTheirOrderMatters)
-        //{
-        //    // 获取 CAD 当前选择集的对象
-        //    var value = AutoCADTool.CAD2Rhino(); // 返回 (List<object>, List<string>, List<Color>, List<string>)
-        //    var removeObjects = value.Item1;
-        //    var removeLayers = value.Item2;
-        //    var removeColors = value.Item3;
-        //    var removeLineTypes = value.Item4;
-        //    var removeHandles = value.Item5;
-        //    var removeBlockNames = value.Item6;
-        //    // 遍历要移除的 handle 列表
-        //    for (int i = 0; i < removeHandles.Count; i++)
-        //    {
-        //        string handle = removeHandles[i];
 
-        //        // 查找全局列表中 handle 的索引
-        //        int index = theCadEntityHandleList.IndexOf(handle);
-
-        //        if (index >= 0)
-        //        {
-        //            // 从各个全局列表中移除对应元素，保持索引对应
-        //            theObjectList.RemoveAt(index);
-        //            theLayerNameList.RemoveAt(index);
-        //            theColorList.RemoveAt(index);
-        //            theLineTypeList.RemoveAt(index);
-        //            theCadEntityHandleList.RemoveAt(index);
-        //            theBlockNameList.RemoveAt(index);
-        //        }
-        //        // 如果 handle 不存在全局列表中，则跳过，不报错
-        //    }
-
-        //// 通知系统需要重新计算
-        //ExpireSolution(true);
-        //}
 
         void ClearEntity(object argumentNameIsNotImportentEither, EventArgs butTheirOrderMatters)
         {
-            //theObjectList.Clear();
-            //theLayerNameList.Clear();
-            //theColorList.Clear();
-            //theLineTypeList.Clear();
-            //theCadEntityHandleList.Clear();
-            //theBlockNameList.Clear();
             theRhinoResultList.Clear();
+            theHandleSet.Clear();
             ExpireSolution(true);//告诉系统，电池需要重新计算
+        }
+
+        public override bool Write(GH_IWriter writer)
+        {
+            writer.SetInt32("PersistenceVersion", PersistenceVersion);
+
+            GH_IWriter cacheChunk = writer.CreateChunk(PersistenceChunk);
+            cacheChunk.SetInt32("Count", theRhinoResultList.Count);
+
+            for (int i = 0; i < theRhinoResultList.Count; i++)
+            {
+                GH_IWriter itemChunk = cacheChunk.CreateChunk("Item", i);
+                WriteRhinoResult(itemChunk, theRhinoResultList[i]);
+            }
+
+            return base.Write(writer);
+        }
+
+        public override bool Read(GH_IReader reader)
+        {
+            theRhinoResultList.Clear();
+            theHandleSet.Clear();
+
+            if (reader.FindChunk(PersistenceChunk) is GH_IReader cacheChunk)
+            {
+                int count = 0;
+                cacheChunk.TryGetInt32("Count", ref count);
+
+                List<RhinoResult> restored = new List<RhinoResult>();
+
+                for (int i = 0; i < count; i++)
+                {
+                    GH_IReader itemChunk = cacheChunk.FindChunk("Item", i);
+                    if (itemChunk == null)
+                        continue;
+
+                    RhinoResult restoredItem = ReadRhinoResult(itemChunk);
+                    if (restoredItem != null)
+                        restored.Add(restoredItem);
+                }
+
+                SetRhinoResults(restored);
+            }
+
+            return base.Read(reader);
+        }
+
+        private void SetRhinoResults(IEnumerable<RhinoResult> results)
+        {
+            theRhinoResultList = results?.ToList() ?? new List<RhinoResult>();
+            RebuildHandleSet();
+        }
+
+        private void RebuildHandleSet()
+        {
+            theHandleSet = new HashSet<string>(
+                theRhinoResultList
+                    .Select(r => r?.Handle)
+                    .Where(h => !string.IsNullOrWhiteSpace(h)));
+        }
+
+        private static void WriteRhinoResult(GH_IWriter writer, RhinoResult result)
+        {
+            writer.SetString("Layer", result?.Layer ?? string.Empty);
+            writer.SetDrawingColor("Color", result?.Color ?? Color.White);
+            writer.SetString("LineType", result?.LineType ?? string.Empty);
+            writer.SetString("Handle", result?.Handle ?? string.Empty);
+            writer.SetString("BlockName", result?.BlockName ?? string.Empty);
+            writer.SetString("ErrorMessage", result?.ErrorMessage ?? string.Empty);
+
+            PersistedGeometryKind kind = GetPersistedGeometryKind(result?.Geometry);
+            writer.SetInt32("GeometryKind", (int)kind);
+            writer.SetString("GeometryRuntimeType", result?.Geometry?.GetType().FullName ?? string.Empty);
+
+            switch (kind)
+            {
+                case PersistedGeometryKind.Point3d:
+                    Point3d point = (Point3d)result.Geometry;
+                    writer.SetDouble("PointX", point.X);
+                    writer.SetDouble("PointY", point.Y);
+                    writer.SetDouble("PointZ", point.Z);
+                    break;
+
+                case PersistedGeometryKind.TextEntity:
+                case PersistedGeometryKind.GeometryBase:
+                    CommonObject commonObject = result.Geometry as CommonObject;
+                    if (commonObject != null)
+                    {
+                        var options = new SerializationOptions();
+                        writer.SetString("GeometryJson", commonObject.ToJSON(options));
+                    }
+                    break;
+            }
+        }
+
+        private static RhinoResult ReadRhinoResult(GH_IReader reader)
+        {
+            string layer = string.Empty;
+            string lineType = string.Empty;
+            string handle = string.Empty;
+            string blockName = string.Empty;
+            string errorMessage = string.Empty;
+
+            reader.TryGetString("Layer", ref layer);
+            reader.TryGetString("LineType", ref lineType);
+            reader.TryGetString("Handle", ref handle);
+            reader.TryGetString("BlockName", ref blockName);
+            reader.TryGetString("ErrorMessage", ref errorMessage);
+
+            Color color = Color.White;
+            reader.TryGetDrawingColor("Color", ref color);
+
+            int geometryKindValue = 0;
+            reader.TryGetInt32("GeometryKind", ref geometryKindValue);
+            PersistedGeometryKind kind = Enum.IsDefined(typeof(PersistedGeometryKind), geometryKindValue)
+                ? (PersistedGeometryKind)geometryKindValue
+                : PersistedGeometryKind.None;
+
+            object geometry = null;
+
+            try
+            {
+                switch (kind)
+                {
+                    case PersistedGeometryKind.Point3d:
+                        geometry = new Point3d(
+                            reader.GetDouble("PointX"),
+                            reader.GetDouble("PointY"),
+                            reader.GetDouble("PointZ"));
+                        break;
+
+                    case PersistedGeometryKind.TextEntity:
+                    case PersistedGeometryKind.GeometryBase:
+                        string geometryJson = reader.GetString("GeometryJson");
+                        if (!string.IsNullOrWhiteSpace(geometryJson))
+                        {
+                            CommonObject commonObject = CommonObject.FromJSON(geometryJson);
+                            if (kind == PersistedGeometryKind.TextEntity)
+                                geometry = commonObject as TextEntity;
+                            else
+                                geometry = commonObject as GeometryBase;
+                        }
+                        break;
+                }
+            }
+            catch
+            {
+                geometry = null;
+                if (string.IsNullOrWhiteSpace(errorMessage))
+                    errorMessage = "Failed to restore persisted geometry.";
+            }
+
+            return new RhinoResult(geometry, layer, color, lineType, handle, blockName, errorMessage);
+        }
+
+        private static PersistedGeometryKind GetPersistedGeometryKind(object geometry)
+        {
+            if (geometry == null)
+                return PersistedGeometryKind.None;
+
+            if (geometry is TextEntity)
+                return PersistedGeometryKind.TextEntity;
+
+            if (geometry is Point3d)
+                return PersistedGeometryKind.Point3d;
+
+            if (geometry is GeometryBase)
+                return PersistedGeometryKind.GeometryBase;
+
+            return PersistedGeometryKind.None;
         }
 
         /// <summary>
@@ -894,47 +654,7 @@ namespace NS_Parrot
         }
 
 
-        private void MyBake2(CAD2GH info)
-        {
-            string layerName = info.layerName;
-            System.Drawing.Color layerColor = System.Drawing.Color.Black;
-            int layerIndex = Rhino.RhinoDoc.ActiveDoc.Layers.FindByFullPath(layerName, -1);//查找图层的索引号
-            if (layerIndex == -1)//如果图层不存在，就新建图层
-            {
-                layerIndex = Rhino.RhinoDoc.ActiveDoc.Layers.Add(layerName, layerColor);
-            }
-            int count = info.theBakeGeoList.Count;
-
-            for (int i = 0; i < count; i++)
-            {
-                Guid id = new Guid();
-
-                if (info.theBakeGeoList[i] is GeometryBase)
-                {
-                    id = Rhino.RhinoDoc.ActiveDoc.Objects.Add((GeometryBase)info.theBakeGeoList[i]);//将几何体加入到Rhino文档中
-                }
-                else if (info.theBakeGeoList[i] is Point3d)
-                {
-                    id = Rhino.RhinoDoc.ActiveDoc.Objects.AddPoint((Point3d)info.theBakeGeoList[i]);
-                }
-                else if (info.theBakeGeoList[i] is TextEntity)
-                {
-                    id = Rhino.RhinoDoc.ActiveDoc.Objects.AddText((TextEntity)info.theBakeGeoList[i]);
-                }
-                else if (info.theBakeGeoList[i] is Circle)
-                {
-                    id = Rhino.RhinoDoc.ActiveDoc.Objects.AddCircle((Circle)info.theBakeGeoList[i]);
-                }
-                else
-                {
-                    MessageBox.Show("第" + i.ToString() + "个元素不可bake，类型为：" + info.theBakeGeoList[i].ToString());
-                    return;
-                }
-                Rhino.DocObjects.RhinoObject obj = Rhino.RhinoDoc.ActiveDoc.Objects.FindId(id);
-                obj.Attributes.LayerIndex = layerIndex;
-                obj.CommitChanges();//重要，否则看不到任何效果   
-            }
-        }
+ 
         private void MyBake(CAD2GH info)
         {
             string layerName = info.layerName;

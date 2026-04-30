@@ -6,9 +6,7 @@ using Rhino.Geometry;
 using Rhino.FileIO;
 using System.Windows.Forms;
 using System.Linq;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
-using CommonFunction.Algorithm;
+using CommonFunction;
 
 namespace NS_Parrot
 {

@@ -6,9 +6,7 @@ using Rhino.Geometry;
 using GTLink.Types;
 using TSM = Tekla.Structures.Model;
 using TSG = Tekla.Structures.Geometry3d;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
-using CommonFunction.Algorithm;
+using CommonFunction;
 
 namespace NS_Parrot
 {

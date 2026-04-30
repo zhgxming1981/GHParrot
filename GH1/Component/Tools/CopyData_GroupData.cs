@@ -7,9 +7,7 @@ using rd = Rhino.NodeInCode;
 using Grasshopper;
 using Rhino.Geometry.Intersect;
 using Rhino.Render;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
-using CommonFunction.Algorithm;
+using CommonFunction;
 
 
 namespace NS_Parrot

@@ -1,15 +1,9 @@
-﻿using Rhino.Geometry;
+﻿using CommonFunction;
+using Rhino.Geometry;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
-using CommonFunction.Algorithm;
 
-namespace CommonFunction.Algorithm
+namespace CommonFunction
 {
     public static class CMath
     {

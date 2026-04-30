@@ -1,16 +1,15 @@
-﻿using System;
-using System.Collections.Generic;
-using CommonFunction.Algorithm;
-using System.Drawing;
-using System.Windows.Forms;
+﻿using CommonFunction;
 using CommonFunction.Hardware;
-using Grasshopper.GUI.Canvas;
 using Grasshopper.GUI;
+using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Attributes;
 using Grasshopper.Kernel.Types;
 using Rhino;
-using Rhino.Geometry;
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Windows.Forms;
 
 namespace NS_Parrot
 {
@@ -57,7 +56,7 @@ namespace NS_Parrot
         /// <param name="DA">The DA object is used to retrieve from inputs and store in outputs.</param>
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            if (!CHardware.CheckLegality())
+            if (!CommonFunction.CHardware.CheckLegality())
                 return;
 
             guid.Clear();

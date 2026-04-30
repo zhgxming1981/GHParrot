@@ -4,9 +4,7 @@ using Grasshopper.Kernel;
 using Rhino.Geometry;
 using rd = Rhino.NodeInCode;
 using System.Collections.Specialized;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
-using CommonFunction.Algorithm;
+using CommonFunction;
 namespace NS_Parrot
 {
     public class GetUserString : GH_Component

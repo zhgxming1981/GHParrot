@@ -1,13 +1,12 @@
 ﻿using System;
+using System.IO;
 using System.Linq;
 using System.Management;
-using System.IO;
-using System.Runtime.InteropServices;
 using System.Net;
 using System.Net.Sockets;
-using CommonFunction.Hardware;
+using System.Runtime.InteropServices;
 
-namespace CommonFunction.Hardware
+namespace CommonFunction
 {
     public static class CHardware
     {

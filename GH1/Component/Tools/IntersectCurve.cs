@@ -5,9 +5,7 @@ using Rhino.Geometry;
 using rd = Rhino.NodeInCode;
 using Grasshopper;
 using Rhino.Geometry.Intersect;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
-using CommonFunction.Algorithm;
+using CommonFunction;
 using parrot.Properties;
 
 

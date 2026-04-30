@@ -4,9 +4,7 @@ using System.Collections.Generic;
 using Grasshopper.Kernel;
 using NS_Parrot;
 using Rhino.Geometry;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
-using CommonFunction.Algorithm;
+using CommonFunction;
 
 namespace NS_Parrot
 {

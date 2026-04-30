@@ -1,5 +1,4 @@
-﻿using CommonFunction.Algorithm;
-using CommonFunction.Hardware;
+﻿using CommonFunction;
 using ExcelFunction;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;

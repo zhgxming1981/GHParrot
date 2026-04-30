@@ -2,9 +2,7 @@
 using System.Collections.Generic;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
-using CommonFunction.Algorithm;
+using CommonFunction;
 using parrot.Properties;
 
 namespace NS_Parrot

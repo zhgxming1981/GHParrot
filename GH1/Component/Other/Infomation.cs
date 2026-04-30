@@ -5,9 +5,7 @@ using Grasshopper.GUI.Canvas;
 using Grasshopper.GUI;
 using Grasshopper.Kernel.Attributes;
 using System.Drawing;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
-using CommonFunction.Algorithm;
+using CommonFunction;
 
 namespace NS_Parrot
 {
