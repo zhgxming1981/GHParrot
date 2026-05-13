@@ -10,10 +10,7 @@ Imports System.Security.Cryptography
 Imports System.ComponentModel
 Imports PARTITF
 Imports Grasshopper.Kernel.Types
-Imports Grasshopper.Kernel.Types.Transforms
 Imports Rhino.Geometry.Collections
-Imports CommonFunction.Transform
-Imports Grasshopper.Kernel.Geometry
 
 
 Public NotInheritable Class Common4Catia

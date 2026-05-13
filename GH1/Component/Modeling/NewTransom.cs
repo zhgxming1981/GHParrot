@@ -3,8 +3,7 @@ using System.Collections.Generic;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
 using rd = Rhino.NodeInCode;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
+using CommonFunction;
 using CommonFunction.Algorithm;
 using parrot.Properties;
 

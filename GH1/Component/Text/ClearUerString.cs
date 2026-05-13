@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using CommonFunction.Hardware;
+using CommonFunction;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Types;
 using Rhino;

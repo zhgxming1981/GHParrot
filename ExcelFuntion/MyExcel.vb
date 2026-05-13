@@ -102,7 +102,15 @@ Public Class MyExcel
             ConnectExcel()
         End If
 
-        'Dim OpenBook As Workbook
+        Dim fullName As String = System.IO.Path.GetFullPath(fileName)
+        For Each book As Workbook In iExcelApp.Workbooks
+            If String.Equals(System.IO.Path.GetFullPath(book.FullName), fullName, StringComparison.OrdinalIgnoreCase) Then
+                iWorkbook = book
+                iWorkbook.Activate()
+                Return iWorkbook
+            End If
+        Next
+
         iWorkbook = iExcelApp.Workbooks.Open(fileName)
         Return iWorkbook
     End Function

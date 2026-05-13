@@ -1,6 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using CommonFunction.Hardware;
+using CommonFunction;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
 using rd = Rhino.NodeInCode;

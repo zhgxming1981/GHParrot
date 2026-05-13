@@ -4,8 +4,7 @@ using rd = Rhino.NodeInCode;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
 using Rhino.Geometry.Intersect;
-using CommonFunction.Transform;
-using CommonFunction.Hardware;
+using CommonFunction;
 using CommonFunction.Algorithm;
 
 namespace NS_Parrot

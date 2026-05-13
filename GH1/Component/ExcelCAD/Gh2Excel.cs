@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Text;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace NS_Parrot
@@ -29,6 +30,8 @@ namespace NS_Parrot
         public ButtonColor CurrentButtonColor { get; set; } = ButtonColor.Black;//当前的按钮颜色
 
         public bool WriteNow = false;
+        private string LastFileName = string.Empty;
+        private string LastSheetName = string.Empty;
 
         /// <summary>
         /// Registers all the input parameters for this component.
@@ -40,7 +43,11 @@ namespace NS_Parrot
             pManager.AddTextParameter("Title", "表头", "表头，以列表的格式提供，可以为空", GH_ParamAccess.list);
             pManager.AddTextParameter("Start", "起始", "起始位置", GH_ParamAccess.item);
             pManager.AddTextParameter("Data", "Data", "要写入Excel的数据，先要格式化，变成A|B|C的格式", GH_ParamAccess.list);
+            pManager.AddBooleanParameter("Run", "Run", "为true时触发写入", GH_ParamAccess.item, false);
+            pManager.AddBooleanParameter("显示", "显示", "写入完成后是否显示Excel，默认true", GH_ParamAccess.item, true);
             pManager[2].Optional = true;
+            pManager[5].Optional = true;
+            pManager[6].Optional = true;
         }
 
         /// <summary>
@@ -57,6 +64,23 @@ namespace NS_Parrot
             Attributes = new CButton_Write2Excel(this);
         }
 
+        protected override void AppendAdditionalComponentMenuItems(ToolStripDropDown menu)
+        {
+            Menu_AppendItem(menu, "显示Excel", ShowExcelMenuClicked);
+        }
+
+        private void ShowExcelMenuClicked(object sender, EventArgs e)
+        {
+            try
+            {
+                ExcelPulseTools.ShowExcel(LastFileName, LastSheetName);
+            }
+            catch (Exception ex)
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "显示Excel失败: " + ex.Message);
+            }
+        }
+
         /// <summary>
         /// This is the method that actually does the work.
         /// </summary>
@@ -66,13 +90,21 @@ namespace NS_Parrot
             if (!CHardware.CheckLegality())
                 return;
 
-            if (!WriteNow) return;
+            bool run = false;
+            bool showExcel = true;
+            DA.GetData(5, ref run);
+            DA.GetData(6, ref showExcel);
+
+            if (!(WriteNow || run)) return;
 
             string fileName = "";
             if (!DA.GetData(0, ref fileName)) { return; }
 
             string sheetName = "";
             if (!DA.GetData(1, ref sheetName)) { return; }
+
+            LastFileName = fileName;
+            LastSheetName = sheetName;
 
             List<string> title2 = new List<string>();
             DA.GetDataList(2, title2);
@@ -129,7 +161,15 @@ namespace NS_Parrot
             }
             myExcel.WriteData(row, column, string_row);
             myExcel.SaveExcelFile();
-            myExcel.SetExcelWindowState(true, true, true);
+            if (showExcel)
+            {
+                myExcel.SetExcelWindowState(true, true, true);
+            }
+            else
+            {
+                myExcel.SetExcelWindowState(false, false, true);
+                MessageBox.Show("写入已经完成", "GH2Excel", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
             WriteNow = false;
         }
 
@@ -236,7 +276,7 @@ namespace NS_Parrot
                 Gh2Excel info = (Gh2Excel)Owner;
                 info.CurrentButtonColor = Gh2Excel.ButtonColor.Grey;//修改按钮颜色
                 info.ExpireSolution(true);//告诉系统，电池需要重新计算
-                CMath.Delay(50);//暂停50ms，再绘制下一个状态
+                Thread.Sleep(50);//暂停50ms，再绘制下一个状态
                 info.CurrentButtonColor = Gh2Excel.ButtonColor.Black;//修改按钮颜色
 
                 info.WriteNow = true;

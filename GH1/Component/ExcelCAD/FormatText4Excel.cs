@@ -7,7 +7,7 @@ using System.Collections;
 //using ExcelFunction;
 using System.IO;
 using System.Text;
-using CommonFunction.Hardware;
+using CommonFunction;
 
 namespace NS_Parrot
 {

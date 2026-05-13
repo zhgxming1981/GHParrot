@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Management;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 
@@ -17,27 +18,99 @@ namespace CommonFunction
         /// <returns></returns>
         public static string GetCurrentMacAddress()
         {
-            var mac = string.Empty;
             try
             {
-                var mc = new ManagementClass("Win32_NetworkAdapterConfiguration");
-                var moc = mc.GetInstances();
-                foreach (var mo in moc)
+                var mac = NetworkInterface.GetAllNetworkInterfaces()
+                    .Where(IsPhysicalNetworkInterface)
+                    .OrderByDescending(GetNetworkInterfacePriority)
+                    .ThenBy(x => x.Id)
+                    .Select(x => FormatMacAddress(x.GetPhysicalAddress().GetAddressBytes()))
+                    .FirstOrDefault(x => !string.IsNullOrEmpty(x));
+
+                if (!string.IsNullOrEmpty(mac))
                 {
-                    if ((bool)mo["IPEnabled"] == true)
-                    {
-                        mac = mo["MacAddress"].ToString();
-                        mac = mac.Replace(':', '-');
-                        break;
-                    }
-                    mo.Dispose();
+                    return mac;
                 }
-                return mac;
+
+                return GetMacAddressFromWmi();
             }
             catch
             {
                 return string.Empty;
             }
+        }
+
+        private static bool IsPhysicalNetworkInterface(NetworkInterface networkInterface)
+        {
+            var physicalAddress = networkInterface.GetPhysicalAddress();
+            if (physicalAddress == null || physicalAddress.GetAddressBytes().Length != 6)
+                return false;
+
+            if (networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
+                networkInterface.NetworkInterfaceType == NetworkInterfaceType.Tunnel ||
+                networkInterface.NetworkInterfaceType == NetworkInterfaceType.Unknown)
+                return false;
+
+            var name = (networkInterface.Name + " " + networkInterface.Description).ToLowerInvariant();
+            return !name.Contains("virtual") &&
+                   !name.Contains("vmware") &&
+                   !name.Contains("hyper-v") &&
+                   !name.Contains("virtualbox") &&
+                   !name.Contains("vpn") &&
+                   !name.Contains("bluetooth") &&
+                   !name.Contains("pseudo") &&
+                   !name.Contains("tap") &&
+                   !name.Contains("loopback");
+        }
+
+        private static int GetNetworkInterfacePriority(NetworkInterface networkInterface)
+        {
+            var priority = 0;
+            var ipProperties = networkInterface.GetIPProperties();
+
+            if (networkInterface.NetworkInterfaceType == NetworkInterfaceType.Ethernet)
+                priority += 100;
+            else if (networkInterface.NetworkInterfaceType == NetworkInterfaceType.Wireless80211)
+                priority += 90;
+
+            if (ipProperties.GatewayAddresses.Any())
+                priority += 20;
+
+            if (ipProperties.DnsAddresses.Any())
+                priority += 10;
+
+            if (networkInterface.OperationalStatus == OperationalStatus.Up)
+                priority += 1;
+
+            return priority;
+        }
+
+        private static string FormatMacAddress(byte[] bytes)
+        {
+            if (bytes == null || bytes.Length != 6)
+                return string.Empty;
+
+            return string.Join("-", bytes.Select(x => x.ToString("X2")));
+        }
+
+        private static string GetMacAddressFromWmi()
+        {
+            using (var searcher = new ManagementObjectSearcher(
+                "SELECT MACAddress FROM Win32_NetworkAdapter WHERE MACAddress IS NOT NULL AND PhysicalAdapter = TRUE"))
+            using (var adapters = searcher.Get())
+            {
+                foreach (ManagementObject adapter in adapters)
+                {
+                    using (adapter)
+                    {
+                        var mac = adapter["MACAddress"] as string;
+                        if (!string.IsNullOrEmpty(mac))
+                            return mac.Replace(':', '-');
+                    }
+                }
+            }
+
+            return string.Empty;
         }
 
 
@@ -65,28 +138,28 @@ namespace CommonFunction
         /// 通过局域网ip地址获取Mac地址
         /// </summary>
         /// <returns></returns>
-        private static string GetLanMacAddress(string ip)//获取远程IP（不能跨网段）的MAC地址
-        {
-            string Mac = "";
-            try
-            {
-                Int32 ldest = inet_addr(ip); //将IP地址从 点数格式转换成无符号长整型
-                Int64 macinfo = new Int64();
-                Int32 len = 6;
-                SendARP(ldest, 0, ref macinfo, ref len);
-                string TmpMac = Convert.ToString(macinfo, 16).PadLeft(12, '0');//转换成16进制　　注意有些没有十二位
-                Mac = TmpMac.Substring(0, 2).ToUpper();
-                for (int i = 2; i < TmpMac.Length; i = i + 2)
-                {
-                    Mac = TmpMac.Substring(i, 2).ToUpper() + "-" + Mac;
-                }
-            }
-            catch (Exception ex)
-            {
-                Mac = "获取远程主机的MAC错误：" + ex.Message;
-            }
-            return Mac;
-        }
+        //private static string GetLanMacAddress(string ip)//获取远程IP（不能跨网段）的MAC地址
+        //{
+        //    string Mac = "";
+        //    try
+        //    {
+        //        Int32 ldest = inet_addr(ip); //将IP地址从 点数格式转换成无符号长整型
+        //        Int64 macinfo = new Int64();
+        //        Int32 len = 6;
+        //        SendARP(ldest, 0, ref macinfo, ref len);
+        //        string TmpMac = Convert.ToString(macinfo, 16).PadLeft(12, '0');//转换成16进制　　注意有些没有十二位
+        //        Mac = TmpMac.Substring(0, 2).ToUpper();
+        //        for (int i = 2; i < TmpMac.Length; i = i + 2)
+        //        {
+        //            Mac = TmpMac.Substring(i, 2).ToUpper() + "-" + Mac;
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        Mac = "获取远程主机的MAC错误：" + ex.Message;
+        //    }
+        //    return Mac;
+        //}
 
         /// <summary>
         /// 校验合法性
@@ -101,55 +174,21 @@ namespace CommonFunction
                     hostIP = GetCurrentIP();
                     Legality = true;
                 }
-                else if (CheckLanMechine())
-                {
-                    hostIP = lanIp;
-                    Legality = true;
-                }
+                //else if (CheckLanMechine())
+                //{
+                //    hostIP = lanIp;
+                //    Legality = true;
+                //}
                 else
                 {
                     Legality = false;
                 }
             }
             return (bool)Legality;
-            //return true;
         }
 
 
-        public static string GetNetDateTime()
-        {
-            //获取网络时间
-            WebRequest request = null;
-            WebResponse response = null;
-            WebHeaderCollection headerCollection = null;
-            string datetime = string.Empty;
-            try
-            {
-                request = WebRequest.Create("https://www.baidu.com");
-                request.Timeout = 3000;
-                request.Credentials = CredentialCache.DefaultCredentials;
-                response = request.GetResponse();
-                headerCollection = response.Headers;
-                foreach (var h in headerCollection.AllKeys)
-                {
-                    if (h == "Date")
-                    {
-                        datetime = headerCollection[h];
-                    }
-                }
-                return datetime;
-            }
-            catch (Exception) { return datetime; }
-            finally
-            {
-                if (request != null)
-                { request.Abort(); }
-                if (response != null)
-                { response.Close(); }
-                if (headerCollection != null)
-                { headerCollection.Clear(); }
-            }
-        }
+  
 
 
 
@@ -162,17 +201,16 @@ namespace CommonFunction
                 hostIP = GetCurrentIP();
                 Legality = true;
             }
-            else if (CheckLanMechine())
-            {
-                hostIP = lanIp;
-                Legality = true;
-            }
+            //else if (CheckLanMechine())
+            //{
+            //    hostIP = lanIp;
+            //    Legality = true;
+            //}
             else
             {
                 Legality = false;
             }
             return (bool)Legality;
-            //return true;
         }
 
         /// <summary>
@@ -199,15 +237,15 @@ namespace CommonFunction
                 return false;
         }
 
-        private static bool CheckLanMechine()
-        {
-            string localFileName = System.IO.Directory.GetCurrentDirectory() + "\\min_Parrot.txt";
-            lanIp = ReadFile(localFileName);
-            string mac = GetLanMacAddress(lanIp);//局域网mac
+        //private static bool CheckLanMechine()
+        //{
+        //    string localFileName = System.IO.Directory.GetCurrentDirectory() + "\\min_Parrot.txt";
+        //    lanIp = ReadFile(localFileName);
+        //    string mac = GetLanMacAddress(lanIp);//局域网mac
 
-            string lanFileName = "\\\\" + lanIp + "\\MyGHFile\\min_Parrot.txt";
-            return CheckMechine(mac, lanFileName);
-        }
+        //    string lanFileName = "\\\\" + lanIp + "\\MyGHFile\\min_Parrot.txt";
+        //    return CheckMechine(mac, lanFileName);
+        //}
 
 
 

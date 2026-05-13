@@ -2,13 +2,11 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Forms;
-using CommonFunction.Hardware;
+using CommonFunction;
+using GH_IO.Serialization;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Types;
-using Microsoft.Office.Interop.Excel;
 //using NS_Parrot.Properties;
-using Rhino;
-using Rhino.Geometry;
 
 namespace NS_Parrot
 {
@@ -150,6 +148,47 @@ namespace NS_Parrot
         {
             TheGuid.Clear();
             ExpireSolution(true);//告诉系统，电池需要重新计算
+        }
+
+        public override bool Write(GH_IWriter writer)
+        {
+            GH_IWriter cacheChunk = writer.CreateChunk("SelectXCache");
+            cacheChunk.SetInt32("Count", TheGuid.Count);
+
+            for (int i = 0; i < TheGuid.Count; i++)
+            {
+                GH_IWriter item = cacheChunk.CreateChunk("Item", i);
+                item.SetString("Value", TheGuid[i].Value.ToString());
+            }
+
+            return base.Write(writer);
+        }
+
+        public override bool Read(GH_IReader reader)
+        {
+            TheGuid.Clear();
+
+            if (reader.FindChunk("SelectXCache") is GH_IReader cacheChunk)
+            {
+                int count = 0;
+                cacheChunk.TryGetInt32("Count", ref count);
+
+                for (int i = 0; i < count; i++)
+                {
+                    GH_IReader item = cacheChunk.FindChunk("Item", i);
+                    if (item == null || !item.ItemExists("Value"))
+                    {
+                        continue;
+                    }
+
+                    if (Guid.TryParse(item.GetString("Value"), out Guid id))
+                    {
+                        TheGuid.Add(new GH_Guid(id));
+                    }
+                }
+            }
+
+            return base.Read(reader);
         }
 
 

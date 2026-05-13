@@ -37,6 +37,7 @@ namespace NS_Parrot
             pManager.AddTextParameter("StartCells", "SC", "多个起始单元格", GH_ParamAccess.list);
             pManager.AddTextParameter("DataList", "DL", "数据列表（A|B|C）", GH_ParamAccess.list);
             pManager.AddBooleanParameter("Write", "W", "执行", GH_ParamAccess.item, false);
+            pManager.AddBooleanParameter("显示", "显示", "写入完成后是否显示Excel，默认true", GH_ParamAccess.item, true);
         }
 
         /// <summary>
@@ -76,12 +77,14 @@ namespace NS_Parrot
             List<string> startCells = new List<string>();
             List<string> dataList = new List<string>();
             bool writeInput = false;
+            bool showExcel = true;
 
             if (!DA.GetData(0, ref filePath)) return;
             if (!DA.GetData(1, ref sheetName)) return;
             if (!DA.GetDataList(2, startCells)) return;
             if (!DA.GetDataList(3, dataList)) return;
             DA.GetData(4, ref writeInput);
+            DA.GetData(5, ref showExcel);
 
             _lastFilePath = filePath;
             _lastSheetName = sheetName;
@@ -197,10 +200,18 @@ namespace NS_Parrot
 
                 wb.Save();
 
-                // ⭐ 先显示，再结束（避免空白）
-                ShowExcelAndActivateSheet(filePath, sheetName);
+                if (showExcel)
+                {
+                    ShowExcelAndActivateSheet(filePath, sheetName);
+                }
+                else
+                {
+                    app.Visible = false;
+                    app.ScreenUpdating = false;
+                    System.Windows.Forms.MessageBox.Show("写入已经完成", "GH2ExcelMData", System.Windows.Forms.MessageBoxButtons.OK, System.Windows.Forms.MessageBoxIcon.Information);
+                }
 
-                DA.SetData(0, "写入完成 ✅");
+                DA.SetData(0, "写入完成");
             }
             catch (Exception ex)
             {
@@ -210,7 +221,7 @@ namespace NS_Parrot
             {
                 // ❗ 不释放 wb / ws（关键修复点）
 
-                if (app != null && appCreated)
+                if (app != null && appCreated && !showExcel)
                 {
                     app.Quit();
                     Marshal.ReleaseComObject(app);

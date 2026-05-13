@@ -90,6 +90,7 @@ namespace NS_Parrot
             pManager.AddTextParameter("线型", "线型", "线型", GH_ParamAccess.list);
             pManager.AddTextParameter("句柄", "句柄", "线型", GH_ParamAccess.list);
             pManager.AddTextParameter("块名", "块名", "块名", GH_ParamAccess.list);
+            pManager.AddTextParameter("文件名", "文件名", "导入对象所在的CAD文件名", GH_ParamAccess.item);
         }
 
         /// <summary>
@@ -202,6 +203,7 @@ namespace NS_Parrot
             DA.SetDataList(3, lineTypeList);
             DA.SetDataList(4, handleList);
             DA.SetDataList(5, blockNameList);
+            DA.SetData(6, GetFileName(theRhinoResultList));
         }
 
         /// <summary>
@@ -459,6 +461,13 @@ namespace NS_Parrot
                     .Where(h => !string.IsNullOrWhiteSpace(h)));
         }
 
+        private static string GetFileName(IEnumerable<RhinoResult> results)
+        {
+            return results?
+                .Select(r => r?.FileName)
+                .FirstOrDefault(f => !string.IsNullOrWhiteSpace(f)) ?? string.Empty;
+        }
+
         private static void WriteRhinoResult(GH_IWriter writer, RhinoResult result)
         {
             writer.SetString("Layer", result?.Layer ?? string.Empty);
@@ -467,6 +476,7 @@ namespace NS_Parrot
             writer.SetString("Handle", result?.Handle ?? string.Empty);
             writer.SetString("BlockName", result?.BlockName ?? string.Empty);
             writer.SetString("ErrorMessage", result?.ErrorMessage ?? string.Empty);
+            writer.SetString("FileName", result?.FileName ?? string.Empty);
 
             PersistedGeometryKind kind = GetPersistedGeometryKind(result?.Geometry);
             writer.SetInt32("GeometryKind", (int)kind);
@@ -500,12 +510,14 @@ namespace NS_Parrot
             string handle = string.Empty;
             string blockName = string.Empty;
             string errorMessage = string.Empty;
+            string fileName = string.Empty;
 
             reader.TryGetString("Layer", ref layer);
             reader.TryGetString("LineType", ref lineType);
             reader.TryGetString("Handle", ref handle);
             reader.TryGetString("BlockName", ref blockName);
             reader.TryGetString("ErrorMessage", ref errorMessage);
+            reader.TryGetString("FileName", ref fileName);
 
             Color color = Color.White;
             reader.TryGetDrawingColor("Color", ref color);
@@ -550,7 +562,7 @@ namespace NS_Parrot
                     errorMessage = "Failed to restore persisted geometry.";
             }
 
-            return new RhinoResult(geometry, layer, color, lineType, handle, blockName, errorMessage);
+            return new RhinoResult(geometry, layer, color, lineType, handle, blockName, errorMessage, fileName);
         }
 
         private static PersistedGeometryKind GetPersistedGeometryKind(object geometry)

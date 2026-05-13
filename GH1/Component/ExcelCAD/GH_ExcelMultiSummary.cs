@@ -21,7 +21,6 @@ namespace parrot.Component.ExcelCAD
         {
         }
         private bool _triggerRun = false;
-        private Excel.Application _excelApp = null;
         /// <summary>
         /// Registers all the input parameters for this component.
         /// </summary>
@@ -145,8 +144,8 @@ namespace parrot.Component.ExcelCAD
                 {
                     if (ignoreSheets.Contains(ws.Name)) continue;
 
-                    int lastRow = ws.Cells[ws.Rows.Count, baseCol]
-                        .End(Excel.XlDirection.xlUp).Row;
+                    int lastRow = ((Excel.Range)ws.Cells[ws.Rows.Count, baseCol])
+                        .End[Excel.XlDirection.xlUp].Row;
 
                     if (lastRow < startRow) continue;
 

@@ -14,10 +14,16 @@
   <ItemGroup>
     <Compile Remove="Catia\**" />
     <Compile Remove="Common\**" />
+    <Compile Remove="bin\**" />
+    <Compile Remove="obj\**" />
     <EmbeddedResource Remove="Catia\**" />
     <EmbeddedResource Remove="Common\**" />
+    <EmbeddedResource Remove="bin\**" />
+    <EmbeddedResource Remove="obj\**" />
     <None Remove="Catia\**" />
     <None Remove="Common\**" />
+    <None Remove="bin\**" />
+    <None Remove="obj\**" />
   </ItemGroup>
 	
   <ItemGroup>
@@ -88,6 +94,10 @@
 	
   <ItemGroup>
     <None Include="..\.editorconfig" Link=".editorconfig" />
+    <None Include="D:\Program Files\Tekla Structures\2025.0\bin\SQLite.Interop.dll">
+      <Link>SQLite.Interop.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
   
   <ItemGroup>
@@ -99,7 +109,6 @@
     <ProjectReference Include="..\CatiaFunction\CatiaFunction.vbproj" />
     <ProjectReference Include="..\CommonFunction\CommonFunction.csproj" />
     <ProjectReference Include="..\ExcelFuntion\ExcelFunction.vbproj" />
-    <ProjectReference Include="..\SolidworksFunction\SolidworksFunction.vbproj" />
   </ItemGroup>
   
   <ItemGroup>
@@ -115,6 +124,9 @@
     </Reference>
     <Reference Include="RhinoCommon">
       <HintPath>D:\Program Files\Rhino 8\System\RhinoCommon.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Data.SQLite">
+      <HintPath>D:\Program Files\Tekla Structures\2025.0\bin\System.Data.SQLite.dll</HintPath>
     </Reference>
     <Reference Include="System.Management" />
     <Reference Include="System.Windows.Forms" />

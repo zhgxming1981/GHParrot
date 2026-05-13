@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data.SqlTypes;
-using CommonFunction.Hardware;
+using CommonFunction;
 using Grasshopper.Kernel;
 using Rhino.DocObjects;
 using Rhino.Geometry;

@@ -31,6 +31,7 @@ namespace NS_Parrot
             pManager.AddTextParameter("StartCell", "SC", "起始单元格", GH_ParamAccess.item);
             pManager.AddTextParameter("DataList", "DL", "数据列表 A|B|C", GH_ParamAccess.list);
             pManager.AddBooleanParameter("Write", "W", "执行写入", GH_ParamAccess.item, false);
+            pManager.AddBooleanParameter("显示", "显示", "写入完成后是否显示Excel，默认true", GH_ParamAccess.item, true);
         }
 
         /// <summary>
@@ -54,6 +55,7 @@ namespace NS_Parrot
             string startCell = "";
             List<string> dataList = new List<string>();
             bool write = false;
+            bool showExcel = true;
 
             if (!DA.GetData(0, ref templatePath)) return;
             if (!DA.GetData(1, ref templateSheet)) return;
@@ -62,6 +64,7 @@ namespace NS_Parrot
             if (!DA.GetData(4, ref startCell)) return;
             if (!DA.GetDataList(5, dataList)) return;
             if (!DA.GetData(6, ref write)) return;
+            DA.GetData(7, ref showExcel);
 
             if (!write)
             {
@@ -76,6 +79,7 @@ namespace NS_Parrot
             }
 
             Excel.Application app = new Excel.Application();
+            app.Visible = false;
             app.DisplayAlerts = false;
 
             try
@@ -150,12 +154,22 @@ namespace NS_Parrot
                 // ===== 保存 =====
                 targetWb.Save();
 
-                // ===== 关闭 =====
                 templateWb.Close(false);
-                targetWb.Close();
-                app.Quit();
+                if (showExcel)
+                {
+                    app.Visible = true;
+                    app.ScreenUpdating = true;
+                    targetWb.Activate();
+                    newSheet.Activate();
+                }
+                else
+                {
+                    targetWb.Close();
+                    app.Quit();
+                    System.Windows.Forms.MessageBox.Show("写入已经完成", "GH2Excel模板", System.Windows.Forms.MessageBoxButtons.OK, System.Windows.Forms.MessageBoxIcon.Information);
+                }
 
-                DA.SetData(0, "完成 ✅（模板已复制 + 写入数据）");
+                DA.SetData(0, "完成（模板已复制 + 写入数据）");
             }
             catch (Exception ex)
             {

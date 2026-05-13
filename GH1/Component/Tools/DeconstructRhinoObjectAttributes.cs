@@ -3,7 +3,7 @@ using Grasshopper.Kernel.Types;
 using Rhino.Geometry;
 using System;
 using System.Collections.Generic;
-using CommonFunction.Hardware;
+using CommonFunction;
 using Rhino.DocObjects;
 using Rhino;
 

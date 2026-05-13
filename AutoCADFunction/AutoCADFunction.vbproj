@@ -171,7 +171,7 @@
     </COMReference>
   </ItemGroup>
   <ItemGroup>
-    <Analyzer Include="C:\Program Files\Autodesk\AutoCAD 2020\acdbmgd.dll" />
+    <Analyzer Include="D:\Program Files\Autodesk\AutoCAD 2020\acdbmgd.dll" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.VisualBasic.targets" />
 </Project>

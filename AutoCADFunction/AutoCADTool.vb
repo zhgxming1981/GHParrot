@@ -1,4 +1,4 @@
-ï»¿Option Explicit On
+Option Explicit On
 Imports System.Collections.Concurrent
 Imports System.Threading
 Imports AutoCAD
@@ -6,20 +6,21 @@ Imports Autodesk.AutoCAD.DatabaseServices
 Imports Rhino.Geometry
 Imports rd = Rhino.NodeInCode
 Imports Rg = Rhino.Geometry
-' å®šä¹‰ä¸€ä¸ªç»“æ„ä½“æ¥æ›¿ä»£å…ƒç»„
-' ä½¿ç”¨å·²æä¾›çš„ RhinoResult ç»“æ„ä½“
+' ¶¨ÒåÒ»¸ö½á¹¹ÌåÀ´Ìæ´úÔª×é
+' Ê¹ÓÃÒÑÌá¹©µÄ RhinoResult ½á¹¹Ìå
 
 Public Class RhinoResult
-    Public Geometry As Object ' å‡ ä½•å¯¹è±¡
-    Public Layer As String ' å›¾å±‚
-    Public Color As Drawing.Color ' é¢œè‰²
-    Public LineType As String ' çº¿å‹
-    Public Handle As String ' å¥æŸ„
-    Public BlockName As String ' å—å
-    Public ErrorMessage As String ' å¼‚å¸¸ä¿¡æ¯ï¼ˆå¦‚æœæœ‰ï¼‰
+    Public Geometry As Object ' ¼¸ºÎ¶ÔÏó
+    Public Layer As String ' Í¼²ã
+    Public Color As Drawing.Color ' ÑÕÉ«
+    Public LineType As String ' ÏßĞÍ
+    Public Handle As String ' ¾ä±ú
+    Public BlockName As String ' ¿éÃû
+    Public ErrorMessage As String ' Òì³£ĞÅÏ¢£¨Èç¹ûÓĞ£©
+    Public FileName As String ' CADÎÄ¼şÃû
 
-    ' æ„é€ å‡½æ•°
-    Public Sub New(geometry As Object, layer As String, color As Drawing.Color, lineType As String, handle As String, blockName As String, errorMessage As String)
+    ' ¹¹Ôìº¯Êı
+    Public Sub New(geometry As Object, layer As String, color As Drawing.Color, lineType As String, handle As String, blockName As String, errorMessage As String, Optional fileName As String = "")
         Me.Geometry = geometry
         Me.Layer = layer
         Me.Color = color
@@ -27,6 +28,55 @@ Public Class RhinoResult
         Me.Handle = handle
         Me.BlockName = blockName
         Me.ErrorMessage = errorMessage
+        Me.FileName = fileName
+    End Sub
+End Class
+
+Public Class CADVectorBlockResult
+    Public VectorLine As Rhino.Geometry.Line
+    Public Spec As String
+    Public Spacing As String
+    Public Material As String
+    Public Layer As String
+    Public Color As Drawing.Color
+    Public LineType As String
+    Public Handle As String
+    Public BlockName As String
+    Public ErrorMessage As String
+    Public FileName As String
+
+    Public Sub New(vectorLine As Rhino.Geometry.Line, spec As String, spacing As String, material As String, layer As String, color As Drawing.Color, lineType As String, handle As String, blockName As String, errorMessage As String, Optional fileName As String = "")
+        Me.VectorLine = vectorLine
+        Me.Spec = spec
+        Me.Spacing = spacing
+        Me.Material = material
+        Me.Layer = layer
+        Me.Color = color
+        Me.LineType = lineType
+        Me.Handle = handle
+        Me.BlockName = blockName
+        Me.ErrorMessage = errorMessage
+        Me.FileName = fileName
+    End Sub
+End Class
+
+Public Class CADOuterContourResult
+    Public Surface As Rhino.Geometry.Brep
+    Public Layer As String
+    Public Color As Drawing.Color
+    Public LineType As String
+    Public Handle As String
+    Public ErrorMessage As String
+    Public FileName As String
+
+    Public Sub New(surface As Rhino.Geometry.Brep, layer As String, color As Drawing.Color, lineType As String, handle As String, errorMessage As String, Optional fileName As String = "")
+        Me.Surface = surface
+        Me.Layer = layer
+        Me.Color = color
+        Me.LineType = lineType
+        Me.Handle = handle
+        Me.ErrorMessage = errorMessage
+        Me.FileName = fileName
     End Sub
 End Class
 
@@ -35,12 +85,12 @@ Public Class AutoCADTool
     Private Declare Function FindWindow Lib "user32.dll" Alias "FindWindowA" (ByVal lpClassName As String, ByVal lpWindowName As String) As IntPtr
     Private Declare Function SetForegroundWindow Lib "user32.dll" (ByVal hwnd As IntPtr) As IntPtr
     ''' <summary>
-    ''' CADç¨‹åºçš„å®ä¾‹
+    ''' CAD³ÌĞòµÄÊµÀı
     ''' </summary>
     ''' <remarks></remarks>
     Private Shared TAcadApp As AcadApplication
     ''' <summary>
-    ''' CADæ–‡æ¡£çš„æŒ‡é’ˆ
+    ''' CADÎÄµµµÄÖ¸Õë
     ''' </summary>
     ''' <remarks></remarks>
     Private Shared iAcadDoc As AcadDocument
@@ -64,7 +114,7 @@ Public Class AutoCADTool
 
 
     ''' <summary>
-    ''' æ–°å»ºä¸€ä¸ªcadæ–‡æ¡£
+    ''' ĞÂ½¨Ò»¸öcadÎÄµµ
     ''' </summary>
     Public Shared Sub Add_CAD_NewDocument()
         TAcadApp.Documents.Add()
@@ -75,11 +125,11 @@ Public Class AutoCADTool
 
 
     ''' <summary>
-    ''' åœ¨å±å¹•ä¸Šé€‰æ‹©å…ƒç´ ï¼Œå…ƒç´ ç±»å‹ç”±TypeOfSelectObjectæŒ‡å®š
-    ''' entityTypeæ˜¯CADå†…éƒ¨å®šä¹‰çš„ç»„ç 
+    ''' ÔÚÆÁÄ»ÉÏÑ¡ÔñÔªËØ£¬ÔªËØÀàĞÍÓÉTypeOfSelectObjectÖ¸¶¨
+    ''' entityTypeÊÇCADÄÚ²¿¶¨ÒåµÄ×éÂë
     ''' </summary>
-    ''' <param name="filterCode"></param>è¿‡æ»¤å™¨ç±»å‹çš„ç»„ç 
-    ''' <param name="filterStr"></param>å®ä½“ç±»å‹çš„ç»„ç 
+    ''' <param name="filterCode"></param>¹ıÂËÆ÷ÀàĞÍµÄ×éÂë
+    ''' <param name="filterStr"></param>ÊµÌåÀàĞÍµÄ×éÂë
     ''' <returns></returns>
     Public Shared Function GetSelectionSetOnScreen(filterCode As Integer, filterStr As String) As AcadSelectionSet
         Dim ssetObj As AcadSelectionSet
@@ -88,8 +138,8 @@ Public Class AutoCADTool
         ssetObj = iAcadDoc.SelectionSets().Add("sset_object")
         On Error GoTo 0
         If Not (ssetObj Is Nothing) Then
-            MySetForegroundWindow(TAcadApp.Caption()) 'å°†CADçª—å£å‰ç½®
-            Dim FilterType(0 To 0) As Int16  'æ³¨æ„VBAä¸­çš„integerç±»å‹åœ¨VB.Netä¸­å¯¹åº”çš„æ˜¯int16
+            MySetForegroundWindow(TAcadApp.Caption()) '½«CAD´°¿ÚÇ°ÖÃ
+            Dim FilterType(0 To 0) As Int16  '×¢ÒâVBAÖĞµÄintegerÀàĞÍÔÚVB.NetÖĞ¶ÔÓ¦µÄÊÇint16
             Dim FilterData(0 To 0) As Object
             FilterType(0) = filterCode
             FilterData(0) = filterStr
@@ -103,35 +153,35 @@ Public Class AutoCADTool
 
 
     ''' <summary>
-    ''' ä»å±å¹•è·å–é€‰æ‹©é›†ï¼Œå¯¹è±¡ç±»å‹ä¸ºç›´çº¿å’Œæ–‡æœ¬
+    ''' ´ÓÆÁÄ»»ñÈ¡Ñ¡Ôñ¼¯£¬¶ÔÏóÀàĞÍÎªÖ±ÏßºÍÎÄ±¾
     ''' </summary>
     ''' <returns></returns>
     Public Shared Function GetSelectionSetOnScreen() As AcadSelectionSet
         On Error Resume Next
         iAcadDoc = TAcadApp.ActiveDocument
         If iAcadDoc Is Nothing Then
-            MsgBox("æ²¡æœ‰æ´»åŠ¨çš„CADæ–‡æ¡£ï¼", MsgBoxStyle.MsgBoxSetForeground + MsgBoxStyle.OkOnly + MsgBoxStyle.SystemModal + MsgBoxStyle.Exclamation, "é”™è¯¯ä¿¡æ¯")
+            MsgBox("Ã»ÓĞ»î¶¯µÄCADÎÄµµ£¡", MsgBoxStyle.MsgBoxSetForeground + MsgBoxStyle.OkOnly + MsgBoxStyle.SystemModal + MsgBoxStyle.Exclamation, "´íÎóĞÅÏ¢")
             Return Nothing
         End If
         On Error GoTo 0
 
         Dim ssetObj As AcadSelectionSet
         On Error Resume Next
-        IsModelSpace = CheckModelSpaceIsActivety() 'æ£€æŸ¥å½“å‰åœ¨æ¨¡å‹ç©ºé—´è¿˜æ˜¯å›¾çº¸ç©ºé—´
+        IsModelSpace = CheckModelSpaceIsActivety() '¼ì²éµ±Ç°ÔÚÄ£ĞÍ¿Õ¼ä»¹ÊÇÍ¼Ö½¿Õ¼ä
         iAcadDoc.SelectionSets().Item("sset_object").Delete()
         ssetObj = iAcadDoc.SelectionSets().Add("sset_object")
         If ssetObj IsNot Nothing Then
-            MySetForegroundWindow(TAcadApp.Caption()) 'å°†CADçª—å£å‰ç½®
-            'Dim FilterType(0 To 3) As Int16  'æ³¨æ„VBAä¸­çš„integerç±»å‹åœ¨VB.Netä¸­å¯¹åº”çš„æ˜¯int16
+            MySetForegroundWindow(TAcadApp.Caption()) '½«CAD´°¿ÚÇ°ÖÃ
+            'Dim FilterType(0 To 3) As Int16  '×¢ÒâVBAÖĞµÄintegerÀàĞÍÔÚVB.NetÖĞ¶ÔÓ¦µÄÊÇint16
             'Dim FilterData(0 To 3) As Object
-            ''è®¾ç½®è¿‡æ»¤å™¨ç±»å‹ 
+            ''ÉèÖÃ¹ıÂËÆ÷ÀàĞÍ 
             'FilterType(0) = -4
             'FilterType(1) = 0
             'FilterType(2) = 0
             'FilterType(3) = 0
             'FilterType(4) = 0
             'FilterType(4) = -4
-            ''è®¾ç½®è¿‡æ»¤æ•°æ®
+            ''ÉèÖÃ¹ıÂËÊı¾İ
             'FilterData(0) = "<or"
             'FilterData(1) = "LINE"
             'FilterData(2) = "TEXT"
@@ -161,7 +211,7 @@ Public Class AutoCADTool
     '        On Error Resume Next
     '        TAcadApp = CreateObject("AutoCAD.Application.23", )
     '        If TAcadApp Is Nothing Then
-    '            MsgBox("æ— æ³•è¿æ¥æˆ–æ‰“å¼€AutoCADï¼Œè¯·æ£€æŸ¥AutoCADæ˜¯å¦å®‰è£…æ­£ç¡®ï¼", MsgBoxStyle.MsgBoxSetForeground + MsgBoxStyle.OkOnly + MsgBoxStyle.SystemModal + MsgBoxStyle.Exclamation, "é”™è¯¯ä¿¡æ¯")
+    '            MsgBox("ÎŞ·¨Á¬½Ó»ò´ò¿ªAutoCAD£¬Çë¼ì²éAutoCADÊÇ·ñ°²×°ÕıÈ·£¡", MsgBoxStyle.MsgBoxSetForeground + MsgBoxStyle.OkOnly + MsgBoxStyle.SystemModal + MsgBoxStyle.Exclamation, "´íÎóĞÅÏ¢")
     '            Return False
     '        End If
     '    End If
@@ -171,14 +221,14 @@ Public Class AutoCADTool
 
 
     '''<summary>
-    ''' è¿æ¥CAD
+    ''' Á¬½ÓCAD
     ''' </summary>
-    ''' <returns>è¿æ¥æˆåŠŸè¿”å›trueï¼Œå¦åˆ™è¿”å›false</returns>
+    ''' <returns>Á¬½Ó³É¹¦·µ»Øtrue£¬·ñÔò·µ»Øfalse</returns>
     ''' <remarks></remarks>
     Public Shared Function ConnectCAD(Optional visible As Boolean = True) As Boolean
-        ' ä½¿ç”¨ Object() æ•°ç»„ä»£æ›¿ Variant + Array()
+        ' Ê¹ÓÃ Object() Êı×é´úÌæ Variant + Array()
         'Dim acadVersions As Object() = New Object() {
-        'New Object() {2020, "AutoCAD.Application.23"},'å¿…é¡»æ˜¯"AutoCAD.Application.23"ï¼Œå¦‚æœæ˜¯"AutoCAD.Application.23.1"å°±è¿æ¥ä¸ä¸Š
+        'New Object() {2020, "AutoCAD.Application.23"},'±ØĞëÊÇ"AutoCAD.Application.23"£¬Èç¹ûÊÇ"AutoCAD.Application.23.1"¾ÍÁ¬½Ó²»ÉÏ
         'New Object() {2025, "AutoCAD.Application.25.0"},
         'New Object() {2026, "AutoCAD.Application.25.1"},
         'New Object() {2024, "AutoCAD.Application.24.3"},
@@ -189,13 +239,13 @@ Public Class AutoCADTool
         'New Object() {2018, "AutoCAD.Application.22"}}
 
         Dim cad2020 As String = "AutoCAD.Application.23"
-        ' éå†ç‰ˆæœ¬
+        ' ±éÀú°æ±¾
         'For Each versionPair As Object In acadVersions
         'Dim pair As Object() = CType(versionPair, Object())
         'Dim progID As String = pair(0).ToString()
 
         Try
-            ' å°è¯•è·å–å·²æ‰“å¼€å®ä¾‹
+            ' ³¢ÊÔ»ñÈ¡ÒÑ´ò¿ªÊµÀı
             TAcadApp = GetObject(, cad2020)
         Catch ex As Exception
             TAcadApp = Nothing
@@ -203,7 +253,7 @@ Public Class AutoCADTool
 
         If TAcadApp Is Nothing Then
             Try
-                ' åˆ›å»ºå®ä¾‹
+                ' ´´½¨ÊµÀı
                 TAcadApp = CreateObject("AutoCAD.Application.23.1")
             Catch ex As Exception
                 TAcadApp = Nothing
@@ -216,8 +266,8 @@ Public Class AutoCADTool
         End If
         'Next
 
-        ' æ‰€æœ‰ç‰ˆæœ¬å°è¯•å¤±è´¥
-        MsgBox("æ— æ³•è¿æ¥æˆ–æ‰“å¼€AutoCADï¼Œè¯·æ£€æŸ¥AutoCADæ˜¯å¦å®‰è£…æ­£ç¡®ï¼", MsgBoxStyle.MsgBoxSetForeground Or MsgBoxStyle.OkOnly Or MsgBoxStyle.SystemModal Or MsgBoxStyle.Exclamation, "é”™è¯¯ä¿¡æ¯")
+        ' ËùÓĞ°æ±¾³¢ÊÔÊ§°Ü
+        MsgBox("ÎŞ·¨Á¬½Ó»ò´ò¿ªAutoCAD£¬Çë¼ì²éAutoCADÊÇ·ñ°²×°ÕıÈ·£¡", MsgBoxStyle.MsgBoxSetForeground Or MsgBoxStyle.OkOnly Or MsgBoxStyle.SystemModal Or MsgBoxStyle.Exclamation, "´íÎóĞÅÏ¢")
         Return False
     End Function
 
@@ -229,16 +279,16 @@ Public Class AutoCADTool
         End If
         iAcadDoc = TAcadApp.ActiveDocument
         If iAcadDoc Is Nothing Then
-            MsgBox("æ²¡æœ‰æ´»åŠ¨çš„CADæ–‡æ¡£ï¼", MsgBoxStyle.MsgBoxSetForeground + MsgBoxStyle.OkOnly + MsgBoxStyle.SystemModal + MsgBoxStyle.Exclamation, "é”™è¯¯ä¿¡æ¯")
+            MsgBox("Ã»ÓĞ»î¶¯µÄCADÎÄµµ£¡", MsgBoxStyle.MsgBoxSetForeground + MsgBoxStyle.OkOnly + MsgBoxStyle.SystemModal + MsgBoxStyle.Exclamation, "´íÎóĞÅÏ¢")
             Return False
         End If
         Return True
     End Function
 
     ''' <summary>
-    ''' åˆ¤æ–­æ˜¯å½“å‰æ˜¯åœ¨æ¨¡å‹ç©ºé—´è¿˜æ˜¯åœ¨å›¾çº¸ç©ºé—´
+    ''' ÅĞ¶ÏÊÇµ±Ç°ÊÇÔÚÄ£ĞÍ¿Õ¼ä»¹ÊÇÔÚÍ¼Ö½¿Õ¼ä
     ''' </summary>
-    ''' <returns></returns>trueè¡¨ç¤ºåœ¨æ¨¡å‹ç©ºé—´ï¼Œfalseè¡¨ç¤ºåœ¨å›¾çº¸ç©ºé—´
+    ''' <returns></returns>true±íÊ¾ÔÚÄ£ĞÍ¿Õ¼ä£¬false±íÊ¾ÔÚÍ¼Ö½¿Õ¼ä
     Private Shared Function CheckModelSpaceIsActivety() As Boolean
         If iAcadDoc.GetVariable("CTAB") = "Model" Then
             CheckModelSpaceIsActivety = True
@@ -252,23 +302,49 @@ Public Class AutoCADTool
 
     Public Shared Sub MySetForegroundWindow(ByVal caption As String)
         Dim hwnd As Long = FindWindow(vbNullString, caption)
-        SetForegroundWindow(hwnd) 'å°†hwnd ä»£è¡¨çš„çª—å£å‰ç½®
+        SetForegroundWindow(hwnd) '½«hwnd ´ú±íµÄ´°¿ÚÇ°ÖÃ
     End Sub
+
+    Private Shared Function GetActiveDocumentFileName() As String
+        Try
+            Dim doc = ActiveDoc
+            If doc Is Nothing Then Return ""
+
+            Dim fullName As String = ""
+
+            Try
+                fullName = CStr(doc.FullName)
+            Catch
+            End Try
+
+            If Not String.IsNullOrWhiteSpace(fullName) Then
+                Return fullName
+            End If
+
+            Try
+                Return CStr(doc.Name)
+            Catch
+                Return ""
+            End Try
+        Catch
+            Return ""
+        End Try
+    End Function
 
 
 
     ''' <summary>
-    ''' æ±‚è§£P1å’ŒP2çš„è·ç¦»
+    ''' Çó½âP1ºÍP2µÄ¾àÀë
     ''' </summary>
-    ''' <param name="p1"></param>ç‚¹1
-    ''' <param name="p2"></param>ç‚¹2
+    ''' <param name="p1"></param>µã1
+    ''' <param name="p2"></param>µã2
     ''' <returns></returns>
     Function GetDistanceFor2Points(p1() As Double, p2() As Double) As Double
         GetDistanceFor2Points = Math.Sqrt((p1(0) - p2(0)) ^ 2 + (p1(1) - p2(1)) ^ 2 + (p1(2) - p2(2)) ^ 2)
     End Function
 
     ''' <summary>
-    ''' å‡ ä¸ªæ•°ä¸­æœ€å°çš„
+    ''' ¼¸¸öÊıÖĞ×îĞ¡µÄ
     ''' </summary>
     ''' <param name="a"></param>
     ''' <param name="b"></param>
@@ -290,7 +366,7 @@ Public Class AutoCADTool
 
 
 
-    ' è¿™ä¸ªå‡½æ•°è´Ÿè´£éå† CAD é€‰æ‹©é›†å¹¶è¿”å›æ‰€æœ‰ Rhino å¯¹è±¡
+    ' Õâ¸öº¯Êı¸ºÔğ±éÀú CAD Ñ¡Ôñ¼¯²¢·µ»ØËùÓĞ Rhino ¶ÔÏó
     'Public Shared Function CAD2Rhino2() As List(Of RhinoResult)
     '    Dim sset As AcadSelectionSet = GetSelectionSetOnScreen()
     '    Dim rhinoResults As List(Of RhinoResult) = New List(Of RhinoResult)()
@@ -315,7 +391,7 @@ Public Class AutoCADTool
     '        Return
     '    End If
 
-    '    ' âœ… 1ï¸âƒ£ åªæ”¶é›† Handleï¼ˆå…³é”®ï¼‰
+    '    ' ? 1?? Ö»ÊÕ¼¯ Handle£¨¹Ø¼ü£©
     '    Dim handle As New List(Of String)
 
     '    For Each item In sset
@@ -325,13 +401,13 @@ Public Class AutoCADTool
     '        End Try
     '    Next
 
-    '    ' âœ… 2ï¸âƒ£ ä¸¢ç»™é˜Ÿåˆ—å¤„ç†
+    '    ' ? 2?? ¶ª¸ø¶ÓÁĞ´¦Àí
     '    Dim processor As New CADProcessor(CADGlobal.cadQueue)
 
     '    processor.Process(handle,
     '    Sub(results)
 
-    '        ' ğŸ”¥ å·²ç»å›åˆ° UIçº¿ç¨‹
+    '        ' ?? ÒÑ¾­»Øµ½ UIÏß³Ì
     '        Dim finalResults As New List(Of RhinoResult)
 
     '        For Each value In results
@@ -362,9 +438,11 @@ Public Class AutoCADTool
 
         Dim doc = ActiveDoc
         If doc Is Nothing Then
-            onFinish?.Invoke(results)
+            If onFinish IsNot Nothing Then onFinish(results)
             Return results
         End If
+
+        Dim fileName As String = GetActiveDocumentFileName()
 
         Try
             ' ============================
@@ -377,12 +455,12 @@ Public Class AutoCADTool
                 sset.SelectOnScreen()
             Catch
                 sset.Delete()
-                onFinish?.Invoke(results)
+                If onFinish IsNot Nothing Then onFinish(results)
                 Return results
             End Try
 
             ' ============================
-            ' éå†ï¼ˆåªåšä¸€ä»¶äº‹ï¼šå–handleï¼‰
+            ' ±éÀú£¨Ö»×öÒ»¼şÊÂ£ºÈ¡handle£©
             ' ============================
             For Each item In sset
 
@@ -396,17 +474,18 @@ Public Class AutoCADTool
 
                     If String.IsNullOrEmpty(handle) Then Continue For
 
-                    ' é€šè¿‡ Handle å›æŸ¥å¯¹è±¡ï¼Œé¿å…ç›´æ¥æŒæœ‰ SelectionSet ä¸­çš„ COM åŒ…è£…å¯¹è±¡
+                    ' Í¨¹ı Handle »Ø²é¶ÔÏó£¬±ÜÃâÖ±½Ó³ÖÓĞ SelectionSet ÖĞµÄ COM °ü×°¶ÔÏó
                     Dim result = ConvertCADItemToRhino_ByHandle(handle, failedBlockCache)
 
                     If result IsNot Nothing Then
-                        ' å¼ºåˆ¶å†™å…¥ç»Ÿä¸€Handleï¼ˆè¦†ç›–å†…éƒ¨ï¼‰
+                        ' Ç¿ÖÆĞ´ÈëÍ³Ò»Handle£¨¸²¸ÇÄÚ²¿£©
                         result.Handle = handle
+                        result.FileName = fileName
                         results.Add(result)
                     End If
 
                 Catch ex As Exception
-                    results.Add(New RhinoResult(Nothing, "", Drawing.Color.Red, "", "", "", ex.Message))
+                    results.Add(New RhinoResult(Nothing, "", Drawing.Color.Red, "", "", "", ex.Message, fileName))
                 End Try
 
             Next
@@ -417,11 +496,666 @@ Public Class AutoCADTool
             End Try
 
         Catch ex As Exception
-            results.Add(New RhinoResult(Nothing, "", Drawing.Color.Red, "", "", "", ex.Message))
+            results.Add(New RhinoResult(Nothing, "", Drawing.Color.Red, "", "", "", ex.Message, fileName))
         End Try
 
-        onFinish?.Invoke(results)
+        If onFinish IsNot Nothing Then onFinish(results)
         Return results
+
+    End Function
+
+    Public Shared Function CADVectorBlock2GH(onFinish As Action(Of List(Of CADVectorBlockResult))) As List(Of CADVectorBlockResult)
+
+        Dim results As New List(Of CADVectorBlockResult)
+
+        Dim doc = ActiveDoc
+        If doc Is Nothing Then
+            If onFinish IsNot Nothing Then onFinish(results)
+            Return results
+        End If
+
+        Dim fileName As String = GetActiveDocumentFileName()
+
+        Try
+            Dim setName As String = "GH_VECTOR_BLOCK_" & Guid.NewGuid().ToString("N")
+            Dim sset = doc.SelectionSets.Add(setName)
+
+            Try
+                sset.SelectOnScreen()
+            Catch
+                sset.Delete()
+                If onFinish IsNot Nothing Then onFinish(results)
+                Return results
+            End Try
+
+            For Each item In sset
+                Try
+                    Dim handle As String = ""
+
+                    Try
+                        handle = item.Handle
+                    Catch
+                    End Try
+
+                    If String.IsNullOrEmpty(handle) Then Continue For
+
+                    Dim result = ConvertCADVectorBlock_ByHandle(handle)
+                    If result IsNot Nothing Then
+                        result.Handle = handle
+                        result.FileName = fileName
+                        results.Add(result)
+                    End If
+
+                Catch ex As Exception
+                    results.Add(New CADVectorBlockResult(New Rhino.Geometry.Line(), "", "", "", "", Drawing.Color.Red, "", "", "", ex.Message, fileName))
+                End Try
+            Next
+
+            Try
+                sset.Delete()
+            Catch
+            End Try
+
+        Catch ex As Exception
+            results.Add(New CADVectorBlockResult(New Rhino.Geometry.Line(), "", "", "", "", Drawing.Color.Red, "", "", "", ex.Message, fileName))
+        End Try
+
+        If onFinish IsNot Nothing Then onFinish(results)
+        Return results
+
+    End Function
+
+    Public Shared Function CADOuterContour2GH(onFinish As Action(Of List(Of CADOuterContourResult))) As List(Of CADOuterContourResult)
+
+        Dim results As New List(Of CADOuterContourResult)
+
+        Dim doc = ActiveDoc
+        If doc Is Nothing Then
+            If onFinish IsNot Nothing Then onFinish(results)
+            Return results
+        End If
+
+        Dim fileName As String = GetActiveDocumentFileName()
+
+        Try
+            Dim setName As String = "GH_OUTER_CONTOUR_" & Guid.NewGuid().ToString("N")
+            Dim sset = doc.SelectionSets.Add(setName)
+
+            Try
+                sset.SelectOnScreen()
+            Catch
+                sset.Delete()
+                If onFinish IsNot Nothing Then onFinish(results)
+                Return results
+            End Try
+
+            For Each item In sset
+                Try
+                    Dim handle As String = ""
+
+                    Try
+                        handle = item.Handle
+                    Catch
+                    End Try
+
+                    If String.IsNullOrEmpty(handle) Then Continue For
+
+                    Dim result = ConvertCADOuterContour_ByHandle(handle)
+                    If result IsNot Nothing Then
+                        result.Handle = handle
+                        result.FileName = fileName
+                        results.Add(result)
+                    End If
+
+                Catch ex As Exception
+                    results.Add(New CADOuterContourResult(Nothing, "", Drawing.Color.Red, "", "", ex.Message, fileName))
+                End Try
+            Next
+
+            Try
+                sset.Delete()
+            Catch
+            End Try
+
+        Catch ex As Exception
+            results.Add(New CADOuterContourResult(Nothing, "", Drawing.Color.Red, "", "", ex.Message, fileName))
+        End Try
+
+        If onFinish IsNot Nothing Then onFinish(results)
+        Return results
+
+    End Function
+
+    Public Shared Function ConvertCADOuterContour_ByHandle(handle As String) As CADOuterContourResult
+
+        Dim obj As Object = Nothing
+
+        Try
+            obj = ActiveDoc.HandleToObject(handle)
+
+            If TypeOf obj Is AutoCAD.AcadRegion Then
+                Return CAD_OuterContourRegion2GH(TryCast(obj, AutoCAD.AcadRegion))
+
+            ElseIf TypeOf obj Is AutoCAD.AcadLWPolyline Then
+                Return CAD_OuterContourPolyline2GH(TryCast(obj, AutoCAD.AcadLWPolyline))
+
+            ElseIf TypeOf obj Is AutoCAD.AcadBlockReference Then
+                Return CAD_OuterContourBlock2GH(TryCast(obj, AutoCAD.AcadBlockReference))
+
+            Else
+                Return New CADOuterContourResult(
+                    Nothing,
+                    "",
+                    Drawing.Color.Gray,
+                    "",
+                    handle,
+                    TypeName(obj) & "ÀàĞÍ²»ÄÜÌáÈ¡ÍâÂÖÀª¡£"
+                )
+            End If
+
+        Catch ex As Exception
+            Dim typeName As String = "Unknown"
+            If obj IsNot Nothing Then
+                Try
+                    typeName = obj.GetType().Name
+                Catch
+                End Try
+            End If
+
+            Return New CADOuterContourResult(
+                Nothing,
+                "",
+                Drawing.Color.Red,
+                "",
+                handle,
+                "Handle=" & handle & " | Type=" & typeName & " | " & ex.Message
+            )
+        End Try
+
+    End Function
+
+    Private Shared Function CAD_OuterContourRegion2GH(item As AutoCAD.AcadRegion) As CADOuterContourResult
+        Dim layer As String = item.Layer
+        Dim color As Drawing.Color = Drawing.Color.FromArgb(item.TrueColor.Red, item.TrueColor.Green, item.TrueColor.Blue)
+        Dim lineType As String = item.Linetype
+        Dim handle As String = item.Handle
+
+        Dim rr As RhinoResult = CAD_Region2Rhino(item)
+        Dim geometry As Object = Nothing
+        If rr IsNot Nothing Then geometry = rr.Geometry
+        Dim brep As Rhino.Geometry.Brep = TryCast(geometry, Rhino.Geometry.Brep)
+
+        If brep Is Nothing Then
+            Return New CADOuterContourResult(Nothing, layer, color, lineType, handle, "ÃæÓòÍâÂÖÀª×ª»»Ê§°Ü")
+        End If
+
+        Return New CADOuterContourResult(brep, layer, color, lineType, handle, "")
+    End Function
+
+    Private Shared Function CAD_OuterContourPolyline2GH(item As AutoCAD.AcadLWPolyline) As CADOuterContourResult
+        Dim layer As String = item.Layer
+        Dim color As Drawing.Color = Drawing.Color.FromArgb(item.TrueColor.Red, item.TrueColor.Green, item.TrueColor.Blue)
+        Dim lineType As String = item.Linetype
+        Dim handle As String = item.Handle
+
+        Dim rr As RhinoResult = CAD_Polyline2Rhino(item)
+        Dim geometry As Object = Nothing
+        If rr IsNot Nothing Then geometry = rr.Geometry
+        Dim curve As Rhino.Geometry.Curve = TryCast(geometry, Rhino.Geometry.Curve)
+
+        If curve Is Nothing Then
+            Return New CADOuterContourResult(Nothing, layer, color, lineType, handle, "¶à¶ÎÏßÍâÂÖÀª×ª»»Ê§°Ü")
+        End If
+
+        If Not curve.IsClosed Then
+            Return New CADOuterContourResult(Nothing, layer, color, lineType, handle, "ÍâÂÖÀª²»±ÕºÏ£¬ÎŞ·¨Éú³ÉSurface")
+        End If
+
+        Dim brep As Rhino.Geometry.Brep = CreateLargestPlanarBrep(curve)
+        If brep Is Nothing Then
+            Return New CADOuterContourResult(Nothing, layer, color, lineType, handle, "±ÕºÏÍâÂÖÀªÎŞ·¨Éú³ÉSurface")
+        End If
+
+        Return New CADOuterContourResult(brep, layer, color, lineType, handle, "")
+    End Function
+
+    Private Shared Function CAD_OuterContourBlock2GH(item As AutoCAD.AcadBlockReference) As CADOuterContourResult
+        Dim layer As String = item.Layer
+        Dim color As Drawing.Color = Drawing.Color.FromArgb(item.TrueColor.Red, item.TrueColor.Green, item.TrueColor.Blue)
+        Dim lineType As String = item.Linetype
+        Dim handle As String = item.Handle
+        Dim errors As New List(Of String)
+        Dim candidates As New List(Of Rhino.Geometry.Brep)
+
+        Try
+            Dim blkCopy As AutoCAD.AcadBlockReference = TryCast(item.Copy(), AutoCAD.AcadBlockReference)
+            If blkCopy Is Nothing Then
+                Return New CADOuterContourResult(Nothing, layer, color, lineType, handle, "Í¼¿é¸´ÖÆÊ§°Ü")
+            End If
+
+            Dim list As Object = blkCopy.Explode()
+
+            For Each child In list
+                Try
+                    If TypeOf child Is AutoCAD.AcadRegion Then
+                        Dim rr As RhinoResult = CAD_Region2Rhino(TryCast(child, AutoCAD.AcadRegion))
+                        Dim geometry As Object = Nothing
+                        If rr IsNot Nothing Then geometry = rr.Geometry
+                        Dim brep As Rhino.Geometry.Brep = TryCast(geometry, Rhino.Geometry.Brep)
+                        If brep IsNot Nothing Then candidates.Add(brep)
+
+                    ElseIf TypeOf child Is AutoCAD.AcadLWPolyline Then
+                        Dim rr As RhinoResult = CAD_Polyline2Rhino(TryCast(child, AutoCAD.AcadLWPolyline))
+                        Dim geometry As Object = Nothing
+                        If rr IsNot Nothing Then geometry = rr.Geometry
+                        Dim curve As Rhino.Geometry.Curve = TryCast(geometry, Rhino.Geometry.Curve)
+
+                        If curve IsNot Nothing Then
+                            If curve.IsClosed Then
+                                Dim brep As Rhino.Geometry.Brep = CreateLargestPlanarBrep(curve)
+                                If brep IsNot Nothing Then candidates.Add(brep)
+                            Else
+                                errors.Add("Í¼¿éÄÚ´æÔÚ²»±ÕºÏ¶à¶ÎÏß")
+                            End If
+                        End If
+                    End If
+                Catch ex As Exception
+                    errors.Add(ex.Message)
+                End Try
+            Next
+
+            For Each child In list
+                Dim ent = TryCast(child, AutoCAD.AcadEntity)
+                If ent IsNot Nothing Then
+                    Try
+                        ent.Delete()
+                    Catch
+                    End Try
+                End If
+            Next
+
+            Try
+                blkCopy.Delete()
+            Catch
+            End Try
+
+            Dim outerBrep As Rhino.Geometry.Brep = PickLargestBrep(candidates)
+            If outerBrep Is Nothing Then
+                If errors.Count > 0 Then
+                    Return New CADOuterContourResult(Nothing, layer, color, lineType, handle, String.Join(" | ", errors.ToArray()))
+                End If
+
+                Return New CADOuterContourResult(Nothing, layer, color, lineType, handle, "Í¼¿éÄÚÎ´ÕÒµ½¿ÉÉú³ÉSurfaceµÄ±ÕºÏÍâÂÖÀª")
+            End If
+
+            Return New CADOuterContourResult(outerBrep, layer, color, lineType, handle, "")
+
+        Catch ex As Exception
+            Return New CADOuterContourResult(Nothing, layer, color, lineType, handle, "Í¼¿éÍâÂÖÀª×ª»»Ê§°Ü: " & ex.Message)
+        End Try
+    End Function
+
+    Private Shared Function CreateLargestPlanarBrep(curve As Rhino.Geometry.Curve) As Rhino.Geometry.Brep
+        If curve Is Nothing OrElse Not curve.IsClosed Then Return Nothing
+
+        Dim breps = Rhino.Geometry.Brep.CreatePlanarBreps(curve, 0.01)
+        If breps Is Nothing OrElse breps.Length = 0 Then Return Nothing
+
+        Return PickLargestBrep(breps.ToList())
+    End Function
+
+    Private Shared Function PickLargestBrep(breps As List(Of Rhino.Geometry.Brep)) As Rhino.Geometry.Brep
+        If breps Is Nothing OrElse breps.Count = 0 Then Return Nothing
+
+        Dim best As Rhino.Geometry.Brep = Nothing
+        Dim bestArea As Double = Double.MinValue
+
+        For Each brep In breps
+            If brep Is Nothing Then Continue For
+
+            Dim area As Double = 0
+            Try
+                Dim amp = Rhino.Geometry.AreaMassProperties.Compute(brep)
+                If amp IsNot Nothing Then area = amp.Area
+            Catch
+                Dim box = brep.GetBoundingBox(True)
+                area = Math.Abs((box.Max.X - box.Min.X) * (box.Max.Y - box.Min.Y))
+            End Try
+
+            If area > bestArea Then
+                bestArea = area
+                best = brep
+            End If
+        Next
+
+        Return best
+    End Function
+
+    Public Shared Function SelectCADObjectsByHandles(myHandles As List(Of String), Optional zoomToObjects As Boolean = True) As List(Of String)
+
+        Dim messages As New List(Of String)
+
+        If myHandles Is Nothing OrElse myHandles.Count = 0 Then
+            messages.Add("Ã»ÓĞÊäÈëCAD¾ä±ú¡£")
+            Return messages
+        End If
+
+        If Not CheckCadOK() Then
+            messages.Add("ÎŞ·¨Á¬½ÓCAD»òÃ»ÓĞ»î¶¯CADÎÄµµ¡£")
+            Return messages
+        End If
+
+        Dim doc = ActiveDoc
+        Dim objects As New List(Of Object)
+
+        Dim minX As Double = Double.MaxValue
+        Dim minY As Double = Double.MaxValue
+        Dim minZ As Double = Double.MaxValue
+        Dim maxX As Double = Double.MinValue
+        Dim maxY As Double = Double.MinValue
+        Dim maxZ As Double = Double.MinValue
+        Dim hasBox As Boolean = False
+
+        For Each rawHandle As String In myHandles
+            Dim handle As String = If(rawHandle, "").Trim()
+            If String.IsNullOrWhiteSpace(handle) Then Continue For
+
+            Try
+                Dim obj = doc.HandleToObject(handle)
+                If obj Is Nothing Then
+                    messages.Add("Handle=" & handle & " Î´ÕÒµ½¶ÔÏó¡£")
+                    Continue For
+                End If
+
+                objects.Add(obj)
+
+                Try
+                    Dim minPt As Object = Nothing
+                    Dim maxPt As Object = Nothing
+                    obj.GetBoundingBox(minPt, maxPt)
+
+                    If minPt IsNot Nothing AndAlso maxPt IsNot Nothing Then
+                        minX = Math.Min(minX, CDbl(minPt(0)))
+                        minY = Math.Min(minY, CDbl(minPt(1)))
+                        minZ = Math.Min(minZ, CDbl(minPt(2)))
+                        maxX = Math.Max(maxX, CDbl(maxPt(0)))
+                        maxY = Math.Max(maxY, CDbl(maxPt(1)))
+                        maxZ = Math.Max(maxZ, CDbl(maxPt(2)))
+                        hasBox = True
+                    End If
+                Catch ex As Exception
+                    messages.Add("Handle=" & handle & " »ñÈ¡°üÎ§ºĞÊ§°Ü: " & ex.Message)
+                End Try
+
+            Catch ex As Exception
+                messages.Add("Handle=" & handle & " Ñ¡È¡Ê§°Ü: " & ex.Message)
+            End Try
+        Next
+
+        If objects.Count = 0 Then
+            messages.Add("Ã»ÓĞÕÒµ½¿ÉÑ¡È¡µÄCAD¶ÔÏó¡£")
+            Return messages
+        End If
+
+        Try
+            doc.SetVariable("PICKFIRST", 1)
+            doc.SetVariable("GRIPS", 1)
+        Catch
+        End Try
+
+        If zoomToObjects AndAlso hasBox Then
+            Try
+                Dim dx As Double = maxX - minX
+                Dim dy As Double = maxY - minY
+                Dim dz As Double = maxZ - minZ
+                Dim pad As Double = Math.Max(Math.Max(dx, dy), dz) * 0.15
+                If pad < 1.0 Then pad = 1.0
+
+                Dim minPoint(2) As Double
+                Dim maxPoint(2) As Double
+                minPoint(0) = minX - pad
+                minPoint(1) = minY - pad
+                minPoint(2) = minZ - pad
+                maxPoint(0) = maxX + pad
+                maxPoint(1) = maxY + pad
+                maxPoint(2) = maxZ + pad
+
+                TAcadApp.ZoomWindow(minPoint, maxPoint)
+            Catch ex As Exception
+                messages.Add("Ëõ·Åµ½CAD¶ÔÏóÊ§°Ü: " & ex.Message)
+            End Try
+        End If
+
+        Try
+            Dim command As String = BuildSelectHandlesCommand(myHandles)
+            If Not String.IsNullOrWhiteSpace(command) Then
+                doc.SendCommand(command & vbCr)
+            End If
+        Catch ex As Exception
+            messages.Add("·¢ËÍCADÔ­ÉúÑ¡ÖĞÃüÁîÊ§°Ü: " & ex.Message)
+
+            Try
+                Dim pickSet = doc.PickfirstSelectionSet
+                pickSet.Clear()
+
+                Dim objectArray(objects.Count - 1) As Object
+                For i As Integer = 0 To objects.Count - 1
+                    objectArray(i) = objects(i)
+                Next
+
+                pickSet.AddItems(objectArray)
+            Catch pickEx As Exception
+                messages.Add("Ğ´ÈëCADÔ¤Ñ¡¼¯Ê§°Ü: " & pickEx.Message)
+
+                For Each obj In objects
+                    Try
+                        obj.Highlight(True)
+                    Catch
+                    End Try
+                Next
+            End Try
+        End Try
+
+        Try
+            MySetForegroundWindow(TAcadApp.Caption())
+            doc.Regen(AutoCAD.AcRegenType.acActiveViewport)
+        Catch
+        End Try
+
+        messages.Insert(0, "ÒÑÑ¡ÖĞCAD¶ÔÏóÊıÁ¿: " & objects.Count.ToString())
+        Return messages
+
+    End Function
+
+    Private Shared Function BuildSelectHandlesCommand(myHandles As List(Of String)) As String
+        Dim parts As New List(Of String)
+
+        parts.Add("(setq ss (ssadd))")
+
+        For Each rawHandle As String In myHandles
+            Dim handle As String = If(rawHandle, "").Trim()
+            If String.IsNullOrWhiteSpace(handle) Then Continue For
+
+            handle = handle.Replace("""", "")
+            parts.Add("(if (handent """ & handle & """) (ssadd (handent """ & handle & """) ss))")
+        Next
+
+        parts.Add("(sssetfirst nil ss)")
+        parts.Add("(princ)")
+
+        Return String.Join(" ", parts.ToArray())
+    End Function
+
+    Public Shared Function ConvertCADVectorBlock_ByHandle(handle As String) As CADVectorBlockResult
+
+        Dim obj As Object = Nothing
+
+        Try
+            obj = ActiveDoc.HandleToObject(handle)
+
+            If Not TypeOf obj Is AutoCAD.AcadBlockReference Then
+                Return New CADVectorBlockResult(
+                    New Rhino.Geometry.Line(),
+                    "",
+                    "",
+                    "",
+                    "",
+                    Drawing.Color.Gray,
+                    "",
+                    handle,
+                    "",
+                    TypeName(obj) & "²»ÊÇÊôĞÔ¿é¡£"
+                )
+            End If
+
+            Return CAD_VectorBlock2GH(TryCast(obj, AutoCAD.AcadBlockReference))
+
+        Catch ex As Exception
+            Dim typeName As String = "Unknown"
+            If obj IsNot Nothing Then
+                Try
+                    typeName = obj.GetType().Name
+                Catch
+                End Try
+            End If
+
+            Return New CADVectorBlockResult(
+                New Rhino.Geometry.Line(),
+                "",
+                "",
+                "",
+                "",
+                Drawing.Color.Red,
+                "",
+                handle,
+                "",
+                "Handle=" & handle & " | Type=" & typeName & " | " & ex.Message
+            )
+        End Try
+
+    End Function
+
+    Private Shared Function CAD_VectorBlock2GH(item As AutoCAD.AcadBlockReference) As CADVectorBlockResult
+
+        Dim blockName As String = item.Name
+        Dim layer As String = item.Layer
+        Dim color As Drawing.Color = Drawing.Color.FromArgb(item.TrueColor.Red, item.TrueColor.Green, item.TrueColor.Blue)
+        Dim lineType As String = item.Linetype
+        Dim handle As String = item.Handle
+        Dim spec As String = ""
+        Dim spacing As String = ""
+        Dim material As String = ""
+        Dim errors As New List(Of String)
+
+        Dim result As New CADVectorBlockResult(
+            New Rhino.Geometry.Line(),
+            spec,
+            spacing,
+            material,
+            layer,
+            color,
+            lineType,
+            handle,
+            blockName,
+            ""
+        )
+
+        Try
+            If item.HasAttributes Then
+                Dim attrs As Object = item.GetAttributes()
+
+                For Each attObj In attrs
+                    Dim att = TryCast(attObj, AutoCAD.AcadAttributeReference)
+                    If att Is Nothing Then Continue For
+
+                    Dim tag As String = ""
+                    Dim value As String = ""
+
+                    Try
+                        tag = att.TagString.Trim()
+                    Catch
+                    End Try
+
+                    Try
+                        value = att.TextString
+                    Catch
+                    End Try
+
+                    If String.Equals(tag, "¹æ¸ñ", StringComparison.OrdinalIgnoreCase) Then
+                        spec = value
+                    ElseIf String.Equals(tag, "¼ä¾à", StringComparison.OrdinalIgnoreCase) Then
+                        spacing = value
+                    ElseIf String.Equals(tag, "²ÄÖÊ", StringComparison.OrdinalIgnoreCase) Then
+                        material = value
+                    End If
+                Next
+            End If
+
+            If String.IsNullOrWhiteSpace(spec) Then errors.Add("È±ÉÙÊôĞÔ£º¹æ¸ñ")
+            If String.IsNullOrWhiteSpace(spacing) Then errors.Add("È±ÉÙÊôĞÔ£º¼ä¾à")
+            If String.IsNullOrWhiteSpace(material) Then errors.Add("È±ÉÙÊôĞÔ£º²ÄÖÊ")
+
+            Dim blkCopy As AutoCAD.AcadBlockReference = TryCast(item.Copy(), AutoCAD.AcadBlockReference)
+            If blkCopy Is Nothing Then
+                result.ErrorMessage = "BlockName=" & blockName & " | ¿é¸´ÖÆÊ§°Ü"
+                Return result
+            End If
+
+            Dim list As Object = blkCopy.Explode()
+            Dim lineCount As Integer = 0
+            Dim vectorLine As Rhino.Geometry.Line = New Rhino.Geometry.Line()
+
+            For Each child In list
+                If TypeOf child Is AutoCAD.AcadLine Then
+                    lineCount += 1
+                    If lineCount = 1 Then
+                        Dim cadLine = DirectCast(child, AutoCAD.AcadLine)
+                        Dim sp = cadLine.StartPoint
+                        Dim ep = cadLine.EndPoint
+                        Dim fromPt As New Rhino.Geometry.Point3d(sp(0), sp(1), sp(2))
+                        Dim toPt As New Rhino.Geometry.Point3d(ep(0), ep(1), ep(2))
+                        vectorLine = New Rhino.Geometry.Line(fromPt, toPt)
+                    End If
+                End If
+            Next
+
+            If lineCount = 0 Then
+                errors.Add("¿éÄÚÎ´ÕÒµ½´ú±íÏòÁ¿µÄÖ±Ïß")
+            ElseIf lineCount > 1 Then
+                errors.Add("¿éÄÚ¼ì²âµ½¶à¸ùÖ±Ïß£¬ÎŞ·¨È·¶¨´ú±íÏòÁ¿")
+            ElseIf Not vectorLine.IsValid OrElse vectorLine.Length < 0.000000001 Then
+                errors.Add("´ú±íÏòÁ¿Ö±ÏßÎŞĞ§»ò³¤¶ÈÎª0")
+            End If
+
+            For Each child In list
+                Dim ent = TryCast(child, AutoCAD.AcadEntity)
+                If ent IsNot Nothing Then
+                    Try
+                        ent.Delete()
+                    Catch
+                    End Try
+                End If
+            Next
+
+            Try
+                blkCopy.Delete()
+            Catch
+            End Try
+
+            result.VectorLine = vectorLine
+            result.Spec = spec
+            result.Spacing = spacing
+            result.Material = material
+            result.ErrorMessage = String.Join(" | ", errors.ToArray())
+            Return result
+
+        Catch ex As Exception
+            result.Spec = spec
+            result.Spacing = spacing
+            result.Material = material
+            result.ErrorMessage = "BlockName=" & blockName & " | " & ex.Message
+            Return result
+        End Try
 
     End Function
     'Public Shared Function ConvertCADItemToRhino22(item As Object) As RhinoResult '(Object, String, Drawing.Color, String, String, String)
@@ -446,7 +1180,7 @@ Public Class AutoCADTool
     '    ElseIf TypeOf (item) Is AutoCAD.AcadBlockReference Then
     '        Return CAD_Block2Rhino_RegionOnly(item)
     '    Else
-    '        ' å¦‚æœä¸è®¤è¯†çš„ç±»å‹ï¼Œè¿”å› Nothing
+    '        ' Èç¹û²»ÈÏÊ¶µÄÀàĞÍ£¬·µ»Ø Nothing
     '        Return New RhinoResult(Nothing, "", Drawing.Color.Empty, "", "", "", "")
     '    End If
     'End Function
@@ -486,7 +1220,7 @@ Public Class AutoCADTool
     '        Return CAD_Block2Rhino_RegionOnly(obj)
 
     '    Else
-    '        Return New RhinoResult(Nothing, "", Drawing.Color.Empty, "", handle, "", "æœªçŸ¥ç±»å‹")
+    '        Return New RhinoResult(Nothing, "", Drawing.Color.Empty, "", handle, "", "Î´ÖªÀàĞÍ")
     '    End If
 
     'End Function
@@ -527,7 +1261,7 @@ Public Class AutoCADTool
     '            Return CAD_Block2Rhino_RegionOnly(obj)
 
     '        Else
-    '            Return New RhinoResult(Nothing, "", Drawing.Color.Empty, "", handle, "", "æœªçŸ¥ç±»å‹")
+    '            Return New RhinoResult(Nothing, "", Drawing.Color.Empty, "", handle, "", "Î´ÖªÀàĞÍ")
 
     '        End If
 
@@ -539,7 +1273,7 @@ Public Class AutoCADTool
 
     Public Shared Function ConvertCADItemToRhino_ByHandle(handle As String, Optional failedBlockCache As Dictionary(Of String, String) = Nothing) As RhinoResult
 
-        Dim obj As Object = Nothing  ' ğŸ”¥ æå‰å®šä¹‰
+        Dim obj As Object = Nothing  ' ?? ÌáÇ°¶¨Òå
 
         Try
             obj = ActiveDoc.HandleToObject(handle)
@@ -582,13 +1316,13 @@ Public Class AutoCADTool
                 "",
                 handle,
                 "",
-                TypeName(obj) + "ç±»å‹ä¸èƒ½å¤„ç†ã€‚"
+                TypeName(obj) + "ÀàĞÍ²»ÄÜ´¦Àí¡£"
             )
             End If
 
         Catch ex As Exception
 
-            ' ğŸ”¥ å®‰å…¨è·å–ç±»å‹åï¼ˆå…³é”®ï¼‰
+            ' ?? °²È«»ñÈ¡ÀàĞÍÃû£¨¹Ø¼ü£©
             Dim typeName As String = "Unknown"
 
             If obj IsNot Nothing Then
@@ -612,40 +1346,40 @@ Public Class AutoCADTool
     End Function
 
     Private Shared Function GetMidPointOnArc(arc As AutoCAD.AcadArc) As Double()
-        ' è·å–åœ†å¿ƒã€èµ·ç‚¹ã€ç»ˆç‚¹ã€æ³•å‘é‡
+        ' »ñÈ¡Ô²ĞÄ¡¢Æğµã¡¢ÖÕµã¡¢·¨ÏòÁ¿
         Dim center As Double() = CType(arc.Center, Double())
         Dim startPt As Double() = CType(arc.StartPoint, Double())
         Dim endPt As Double() = CType(arc.EndPoint, Double())
         Dim normal As Double() = CType(arc.Normal, Double())
 
-        ' è®¡ç®— Start å‘é‡ï¼ˆç›¸å¯¹åœ†å¿ƒï¼‰
+        ' ¼ÆËã Start ÏòÁ¿£¨Ïà¶ÔÔ²ĞÄ£©
         Dim startVec(2) As Double
         For i As Integer = 0 To 2
             startVec(i) = startPt(i) - center(i)
         Next
 
-        ' æ£€æŸ¥å‘é‡é•¿åº¦æ˜¯å¦æœ‰æ•ˆ
+        ' ¼ì²éÏòÁ¿³¤¶ÈÊÇ·ñÓĞĞ§
         Dim vecLen As Double = Math.Sqrt(startVec(0) ^ 2 + startVec(1) ^ 2 + startVec(2) ^ 2)
         Dim normalLen As Double = Math.Sqrt(normal(0) ^ 2 + normal(1) ^ 2 + normal(2) ^ 2)
         If vecLen < 0.000000000001 Or normalLen < 0.000000000001 Then
-            ' å¼‚å¸¸æƒ…å†µï¼Œè¿”å› StartPoint ä½œä¸ºå…œåº•
+            ' Òì³£Çé¿ö£¬·µ»Ø StartPoint ×÷Îª¶µµ×
             Return startPt
         End If
 
-        ' è®¡ç®—å¼§æ—‹è½¬è§’åº¦ï¼ˆå¼§åº¦ï¼‰
+        ' ¼ÆËã»¡Ğı×ª½Ç¶È£¨»¡¶È£©
         Dim startAngle As Double = arc.StartAngle
         Dim endAngle As Double = arc.EndAngle
         Dim deltaAngle As Double = endAngle - startAngle
-        ' ä¿è¯æ—‹è½¬è§’åº¦åœ¨ 0~2Ï€
+        ' ±£Ö¤Ğı×ª½Ç¶ÈÔÚ 0~2¦Ğ
         If deltaAngle < 0 Then deltaAngle += 2 * Math.PI
 
-        ' æ—‹è½¬ä¸€åŠè§’åº¦
+        ' Ğı×ªÒ»°ë½Ç¶È
         Dim midAngle As Double = deltaAngle / 2
 
-        ' Rodriguesæ—‹è½¬å…¬å¼è®¡ç®—ä¸­ç‚¹å‘é‡
+        ' RodriguesĞı×ª¹«Ê½¼ÆËãÖĞµãÏòÁ¿
         Dim midVec As Double() = RotateVectorAroundAxis(startVec, normal, midAngle)
 
-        ' ä¸­ç‚¹åæ ‡ = åœ†å¿ƒ + ä¸­ç‚¹å‘é‡
+        ' ÖĞµã×ø±ê = Ô²ĞÄ + ÖĞµãÏòÁ¿
         Dim midPt(2) As Double
         For i As Integer = 0 To 2
             midPt(i) = center(i) + midVec(i)
@@ -655,9 +1389,9 @@ Public Class AutoCADTool
     End Function
 
     ' ---------------------------------------
-    ' Rodrigueså…¬å¼ï¼šå‘é‡ç»•ä»»æ„è½´æ—‹è½¬
+    ' Rodrigues¹«Ê½£ºÏòÁ¿ÈÆÈÎÒâÖáĞı×ª
     Private Shared Function RotateVectorAroundAxis(vec As Double(), axis As Double(), angle As Double) As Double()
-        ' å½’ä¸€åŒ–è½´å‘é‡
+        ' ¹éÒ»»¯ÖáÏòÁ¿
         Dim axisLen As Double = Math.Sqrt(axis(0) ^ 2 + axis(1) ^ 2 + axis(2) ^ 2)
         Dim u As Double = axis(0) / axisLen
         Dim v As Double = axis(1) / axisLen
@@ -670,7 +1404,7 @@ Public Class AutoCADTool
         Dim cosA As Double = Math.Cos(angle)
         Dim sinA As Double = Math.Sin(angle)
 
-        ' Rodriguesæ—‹è½¬å…¬å¼
+        ' RodriguesĞı×ª¹«Ê½
         Dim rotated(2) As Double
         rotated(0) = u * (u * x + v * y + w * z) * (1 - cosA) + x * cosA + (-w * y + v * z) * sinA
         rotated(1) = v * (u * x + v * y + w * z) * (1 - cosA) + y * cosA + (w * x - u * z) * sinA
@@ -681,9 +1415,9 @@ Public Class AutoCADTool
 
     Private Shared Function CAD_Line2Rhino_LineCurve(item As AutoCAD.AcadLine) As RhinoResult
         Dim sp = item.StartPoint
-        Dim sp_rh = New Rhino.Geometry.Point3d(sp(0)ï¼Œ sp(1)ï¼Œ sp(2))
+        Dim sp_rh = New Rhino.Geometry.Point3d(sp(0)£¬ sp(1)£¬ sp(2))
         Dim ep = item.EndPoint
-        Dim ep_rh = New Rhino.Geometry.Point3d(ep(0)ï¼Œ ep(1)ï¼Œ ep(2))
+        Dim ep_rh = New Rhino.Geometry.Point3d(ep(0)£¬ ep(1)£¬ ep(2))
         Dim curve As Rhino.Geometry.LineCurve = New Rhino.Geometry.LineCurve(sp_rh, ep_rh)
         Dim layer As String = item.Layer
         Dim color As Drawing.Color
@@ -708,7 +1442,7 @@ Public Class AutoCADTool
 
         Dim pl As New Rhino.Geometry.Plane(center_rh, normal_rh)
 
-        ' âœ… Circle â†’ ArcCurveï¼ˆå…³é”®ï¼‰
+        ' ? Circle ¡ú ArcCurve£¨¹Ø¼ü£©
         Dim circle As New Rhino.Geometry.Circle(pl, radius)
         Dim curve As New Rhino.Geometry.ArcCurve(circle)
 
@@ -728,7 +1462,7 @@ Public Class AutoCADTool
 
 
     Private Shared Function CAD_Arc2Rhino_ArcCurve(item As AutoCAD.AcadArc) As RhinoResult
-        ' è·å–åœ†å¼§çš„èµ·ç‚¹ã€ç»ˆç‚¹å’Œä¸­ç‚¹
+        ' »ñÈ¡Ô²»¡µÄÆğµã¡¢ÖÕµãºÍÖĞµã
         Dim sp = item.StartPoint
         Dim sp_rh As Rhino.Geometry.Point3d = New Rhino.Geometry.Point3d(sp(0), sp(1), sp(2))
 
@@ -738,18 +1472,18 @@ Public Class AutoCADTool
         Dim mp = GetMidPointOnArc(item)
         Dim mp_rh As Rhino.Geometry.Point3d = New Rhino.Geometry.Point3d(mp(0), mp(1), mp(2))
 
-        ' åˆ›å»º Rhino åœ†å¼§å¯¹è±¡
+        ' ´´½¨ Rhino Ô²»¡¶ÔÏó
         Dim arc As Rhino.Geometry.Arc = New Rhino.Geometry.Arc(sp_rh, mp_rh, ep_rh)
         Dim curve As Rhino.Geometry.ArcCurve = New Rhino.Geometry.ArcCurve(arc)
 
-        ' è·å– AutoCAD çš„å›¾å±‚å’Œé¢œè‰²ä¿¡æ¯
+        ' »ñÈ¡ AutoCAD µÄÍ¼²ãºÍÑÕÉ«ĞÅÏ¢
         Dim layer As String = item.Layer
         Dim R As Integer = item.TrueColor.Red
         Dim G As Integer = item.TrueColor.Green
         Dim B As Integer = item.TrueColor.Blue
         Dim color As Drawing.Color = Drawing.Color.FromArgb(R, G, B)
 
-        ' åˆ›å»ºå¹¶è¿”å› RhinoResult ç»“æ„ä½“
+        ' ´´½¨²¢·µ»Ø RhinoResult ½á¹¹Ìå
         Return New RhinoResult(curve, layer, color, item.Linetype, item.Handle, "", "")
     End Function
 
@@ -758,23 +1492,23 @@ Public Class AutoCADTool
 
     Private Shared Function CAD_Point2Rhino(item As AutoCAD.AcadPoint) As RhinoResult
 
-        ' è·å–ç‚¹çš„åæ ‡
+        ' »ñÈ¡µãµÄ×ø±ê
         Dim coordinate = item.Coordinates
         Dim pt As New Rhino.Geometry.Point3d(coordinate(0), coordinate(1), coordinate(2))
 
-        ' åˆ›å»º Rhino ç‚¹å¯¹è±¡
+        ' ´´½¨ Rhino µã¶ÔÏó
         Dim pointGeo As New Rhino.Geometry.Point(pt)
 
-        ' è·å–å›¾å±‚ä¿¡æ¯
+        ' »ñÈ¡Í¼²ãĞÅÏ¢
         Dim layer As String = item.Layer
 
-        ' è·å–é¢œè‰²ä¿¡æ¯
+        ' »ñÈ¡ÑÕÉ«ĞÅÏ¢
         Dim R As Integer = item.TrueColor.Red
         Dim G As Integer = item.TrueColor.Green
         Dim B As Integer = item.TrueColor.Blue
         Dim color As Drawing.Color = Drawing.Color.FromArgb(R, G, B)
 
-        ' åˆ›å»ºå¹¶è¿”å› RhinoResult ç»“æ„ä½“
+        ' ´´½¨²¢·µ»Ø RhinoResult ½á¹¹Ìå
         Return New RhinoResult(pointGeo, layer, color, item.Linetype, item.Handle, "", "")
     End Function
 
@@ -911,14 +1645,14 @@ Public Class AutoCADTool
 
 
     ''' <summary>
-    ''' å°† AutoCAD æ–‡æœ¬å¯¼å…¥ Rhino
+    ''' ½« AutoCAD ÎÄ±¾µ¼Èë Rhino
     ''' </summary>
-    ''' <param name="item">AutoCAD æ–‡æœ¬å¯¹è±¡ï¼ˆAcadText æˆ– AcadMTextï¼‰</param>
-    ''' <returns>Tuple: (Rhino TextEntity, å›¾å±‚åç§°, é¢œè‰²)</returns>
-    Private Shared Function CAD_Text2Rhino3(item As Object) As (TextEntity, String, Drawing.Color, String)
+    ''' <param name="item">AutoCAD ÎÄ±¾¶ÔÏó£¨AcadText »ò AcadMText£©</param>
+    ''' <returns>Tuple: (Rhino TextEntity, Í¼²ãÃû³Æ, ÑÕÉ«)</returns>
+    Private Shared Function CAD_Text2Rhino3(item As Object) As Tuple(Of TextEntity, String, Drawing.Color, String)
 
         '========================
-        ' åŸºç¡€å±æ€§ï¼ˆå®‰å…¨è·å–ï¼‰
+        ' »ù´¡ÊôĞÔ£¨°²È«»ñÈ¡£©
         '========================
         Dim layer As String = ""
         Dim color As Drawing.Color = Drawing.Color.White
@@ -934,7 +1668,7 @@ Public Class AutoCADTool
         End Try
 
         '========================
-        ' é€šç”¨å˜é‡
+        ' Í¨ÓÃ±äÁ¿
         '========================
         Dim textContent As String = ""
         Dim insertionPoint As Point3d = Point3d.Origin
@@ -980,7 +1714,7 @@ Public Class AutoCADTool
             Catch
             End Try
 
-            ' AttachmentPoint â†’ å¯¹é½æ˜ å°„
+            ' AttachmentPoint ¡ú ¶ÔÆëÓ³Éä
             Dim ap As Integer = 0
             Try : ap = mt.AttachmentPoint : Catch : End Try
 
@@ -998,7 +1732,7 @@ Public Class AutoCADTool
             End Select
 
             '========================
-            ' ATTRIBï¼ˆå—å±æ€§ï¼‰
+            ' ATTRIB£¨¿éÊôĞÔ£©
             '========================
         ElseIf TypeOf item Is AcadAttributeReference Then
 
@@ -1022,20 +1756,20 @@ Public Class AutoCADTool
         End If
 
         '========================
-        ' ç©ºæ–‡æœ¬è¿‡æ»¤
+        ' ¿ÕÎÄ±¾¹ıÂË
         '========================
         If String.IsNullOrWhiteSpace(textContent) Then
             Return Nothing
         End If
 
         '========================
-        ' åˆ›å»ºå¹³é¢ï¼ˆå«æ—‹è½¬ï¼‰
+        ' ´´½¨Æ½Ãæ£¨º¬Ğı×ª£©
         '========================
         Dim plane As New Plane(insertionPoint, Vector3d.ZAxis)
         plane.Rotate(rotation, Vector3d.ZAxis)
 
         '========================
-        ' åˆ›å»º Rhino Text
+        ' ´´½¨ Rhino Text
         '========================
         Dim rhinoText As New TextEntity()
         rhinoText.Plane = plane
@@ -1043,7 +1777,7 @@ Public Class AutoCADTool
         rhinoText.TextHeight = height
 
         '========================
-        ' è®¡ç®—è¾¹ç•Œï¼ˆç”¨äºå¯¹é½ï¼‰
+        ' ¼ÆËã±ß½ç£¨ÓÃÓÚ¶ÔÆë£©
         '========================
         Dim bbox As BoundingBox = rhinoText.GetBoundingBox(True)
 
@@ -1057,7 +1791,7 @@ Public Class AutoCADTool
         Dim offset As Vector3d = Vector3d.Zero
 
         '------------------------
-        ' æ°´å¹³å¯¹é½
+        ' Ë®Æ½¶ÔÆë
         '------------------------
         Select Case hJust
             Case 1
@@ -1067,7 +1801,7 @@ Public Class AutoCADTool
         End Select
 
         '------------------------
-        ' å‚ç›´å¯¹é½
+        ' ´¹Ö±¶ÔÆë
         '------------------------
         Select Case vJust
             Case 1
@@ -1082,9 +1816,9 @@ Public Class AutoCADTool
         rhinoText.Plane = plane
 
         '========================
-        ' è¿”å›
+        ' ·µ»Ø
         '========================
-        Return (rhinoText, layer, color, handle)
+        Return Tuple.Create(rhinoText, layer, color, handle)
 
     End Function
 
@@ -1092,7 +1826,7 @@ Public Class AutoCADTool
     Private Shared Function CAD_Text2Rhino(item As Object) As RhinoResult '(TextEntity, String, Drawing.Color, String, String, String)
 
         '========================
-        ' åŸºç¡€å±æ€§ï¼ˆå®‰å…¨è·å–ï¼‰
+        ' »ù´¡ÊôĞÔ£¨°²È«»ñÈ¡£©
         '========================
         Dim layer As String = ""
         Dim color As Drawing.Color = Drawing.Color.White
@@ -1107,7 +1841,7 @@ Public Class AutoCADTool
         End Try
 
         '========================
-        ' é€šç”¨å˜é‡
+        ' Í¨ÓÃ±äÁ¿
         '========================
         Dim textContent As String = ""
         Dim insertionPoint As Point3d = Point3d.Origin
@@ -1138,7 +1872,7 @@ Public Class AutoCADTool
 
             Dim mt As Object = item
 
-            textContent = CleanMText(mt.TextString) ' â­ å»æ§åˆ¶ç¬¦
+            textContent = CleanMText(mt.TextString) ' ? È¥¿ØÖÆ·û
             insertionPoint = ToPoint3d(mt.InsertionPoint)
             height = SafeDouble(mt.Height)
             rotation = SafeDouble(mt.Rotation)
@@ -1146,7 +1880,7 @@ Public Class AutoCADTool
             Dim ap As Integer = 0
             Try : ap = mt.AttachmentPoint : Catch : End Try
 
-            ' AttachmentPoint â†’ å¯¹é½
+            ' AttachmentPoint ¡ú ¶ÔÆë
             Select Case ap
                 Case 0, 3 : hJust = 0
                 Case 1, 4 : hJust = 1
@@ -1181,7 +1915,7 @@ Public Class AutoCADTool
         If String.IsNullOrWhiteSpace(textContent) Then Return Nothing
 
         '========================
-        ' åˆ›å»º Rhino Textï¼ˆæ ¸å¿ƒï¼‰
+        ' ´´½¨ Rhino Text£¨ºËĞÄ£©
         '========================
         Dim plane As New Plane(insertionPoint, Vector3d.ZAxis)
         plane.Rotate(rotation, Vector3d.ZAxis)
@@ -1191,11 +1925,11 @@ Public Class AutoCADTool
         rhinoText.PlainText = textContent
         rhinoText.TextHeight = height
 
-        ' â­ å¯¹é½ï¼ˆå…³é”®ï¼æ›¿ä»£ bboxï¼‰
+        ' ? ¶ÔÆë£¨¹Ø¼ü£¡Ìæ´ú bbox£©
         'rhinoText.Justification = MapJustification(hJust, vJust)
         rhinoText.Justification = RhinoTextJustification(item)
         '========================
-        ' è¿”å›
+        ' ·µ»Ø
         '========================
         Return New RhinoResult(rhinoText, layer, color, item.LineType, handle, "", "")
 
@@ -1228,7 +1962,7 @@ Public Class AutoCADTool
     Private Shared Function MapJustification(hJust As Integer, vJust As Integer) As TextJustification
 
         Select Case hJust
-            Case 0 ' å·¦
+            Case 0 ' ×ó
                 Select Case vJust
                     Case 3 : Return Rg.TextJustification.TopLeft
                     Case 2 : Return Rg.TextJustification.MiddleLeft
@@ -1236,7 +1970,7 @@ Public Class AutoCADTool
                     Case Else : Return Rg.TextJustification.Left
                 End Select
 
-            Case 1 ' ä¸­
+            Case 1 ' ÖĞ
                 Select Case vJust
                     Case 3 : Return Rg.TextJustification.TopCenter
                     Case 2 : Return Rg.TextJustification.MiddleCenter
@@ -1244,7 +1978,7 @@ Public Class AutoCADTool
                     Case Else : Return Rg.TextJustification.Center
                 End Select
 
-            Case 2 ' å³
+            Case 2 ' ÓÒ
                 Select Case vJust
                     Case 3 : Return Rg.TextJustification.TopRight
                     Case 2 : Return Rg.TextJustification.MiddleRight
@@ -1262,16 +1996,16 @@ Public Class AutoCADTool
 
         Dim txt As String = input
 
-        ' æ¢è¡Œ
+        ' »»ĞĞ
         txt = txt.Replace("\P", vbCrLf)
 
-        ' åˆ é™¤æ ¼å¼æ§åˆ¶ï¼ˆ\A \H \W \C ç­‰ï¼‰
+        ' É¾³ı¸ñÊ½¿ØÖÆ£¨\A \H \W \C µÈ£©
         txt = System.Text.RegularExpressions.Regex.Replace(txt, "\\[A-Za-z0-9]+;?", "")
 
-        ' åˆ é™¤ {} åˆ†ç»„
+        ' É¾³ı {} ·Ö×é
         txt = txt.Replace("{", "").Replace("}", "")
 
-        ' åˆ é™¤ %% ç¬¦å·ï¼ˆå¦‚ %%cï¼‰
+        ' É¾³ı %% ·ûºÅ£¨Èç %%c£©
         txt = System.Text.RegularExpressions.Regex.Replace(txt, "%%.", "")
 
         Return txt.Trim()
@@ -1283,13 +2017,13 @@ Public Class AutoCADTool
     Private Shared Function CAD_Region2Rhino(item As AutoCAD.AcadRegion) As RhinoResult ' (Rg.Brep, String, Drawing.Color, String, String, String)
 
         '========================
-        ' 1ï¸âƒ£ Copy Region
+        ' 1?? Copy Region
         '========================
         Dim itemCopy As AutoCAD.AcadRegion = TryCast(item.Copy(), AutoCAD.AcadRegion)
         If itemCopy Is Nothing Then Return Nothing
 
         '========================
-        ' 2ï¸âƒ£ Explode
+        ' 2?? Explode
         '========================
         Dim rawObjs As Object = itemCopy.Explode()
         Dim edges As Object() = TryCast(rawObjs, Object())
@@ -1298,7 +2032,7 @@ Public Class AutoCADTool
         If edges Is Nothing OrElse edges.Length = 0 Then Return Nothing
 
         '========================
-        ' 3ï¸âƒ£ è½¬ Rhino Curve
+        ' 3?? ×ª Rhino Curve
         '========================
         Dim curves As New List(Of Rg.Curve)
 
@@ -1329,7 +2063,7 @@ Public Class AutoCADTool
 
             Catch
             Finally
-                ' åˆ é™¤ COM å¯¹è±¡
+                ' É¾³ı COM ¶ÔÏó
                 Try
                     edge.GetType().InvokeMember("Delete",
                     Reflection.BindingFlags.InvokeMethod, Nothing, edge, Nothing)
@@ -1341,19 +2075,19 @@ Public Class AutoCADTool
         If curves.Count = 0 Then Return Nothing
 
         '========================
-        ' 4ï¸âƒ£ Join æ›²çº¿
+        ' 4?? Join ÇúÏß
         '========================
         Dim joined = Rg.Curve.JoinCurves(curves, 0.01)
         If joined Is Nothing OrElse joined.Length = 0 Then Return Nothing
 
         '========================
-        ' 5ï¸âƒ£ è¿‡æ»¤é—­åˆæ›²çº¿
+        ' 5?? ¹ıÂË±ÕºÏÇúÏß
         '========================
         Dim closedLoops = joined.Where(Function(c) c IsNot Nothing AndAlso c.IsClosed).ToList()
         If closedLoops.Count = 0 Then Return Nothing
 
         '========================
-        ' 6ï¸âƒ£ è·å–çœŸå®å¹³é¢ï¼ˆå…³é”®ï¼‰
+        ' 6?? »ñÈ¡ÕæÊµÆ½Ãæ£¨¹Ø¼ü£©
         '========================
         Dim plane As Rg.Plane
         If Not closedLoops(0).TryGetPlane(plane) Then
@@ -1363,7 +2097,7 @@ Public Class AutoCADTool
         Dim finalBreps As New List(Of Rg.Brep)
 
         '========================
-        ' 7ï¸âƒ£ å•é—­åˆåœˆå¿«è·¯å¾„
+        ' 7?? µ¥±ÕºÏÈ¦¿ìÂ·¾¶
         '========================
         If closedLoops.Count = 1 Then
             Dim singleLoop = closedLoops(0)
@@ -1379,7 +2113,7 @@ Public Class AutoCADTool
         Else
 
             '========================
-            ' 8ï¸âƒ£ æŒ‰é¢ç§¯æ’åºï¼ˆå¤§â†’å°ï¼‰
+            ' 8?? °´Ãæ»ıÅÅĞò£¨´ó¡úĞ¡£©
             '========================
             closedLoops.Sort(Function(a, b)
                                  Dim areaA = Math.Abs(Rg.AreaMassProperties.Compute(a).Area)
@@ -1388,7 +2122,7 @@ Public Class AutoCADTool
                              End Function)
 
             '========================
-            ' 9ï¸âƒ£ å¤–ç¯é€ä¸ªæ‰¾å­”
+            ' 9?? Íâ»·Öğ¸öÕÒ¿×
             '========================
             Dim used As New HashSet(Of Rg.Curve)
 
@@ -1399,7 +2133,7 @@ Public Class AutoCADTool
 
                 Dim loops As New List(Of Rg.Curve)
 
-                ' å¤–ç¯æ–¹å‘ï¼ˆå¿…é¡» CCWï¼‰
+                ' Íâ»··½Ïò£¨±ØĞë CCW£©
                 If outer.ClosedCurveOrientation(plane) = Rg.CurveOrientation.Clockwise Then
                     outer.Reverse()
                 End If
@@ -1407,7 +2141,7 @@ Public Class AutoCADTool
                 loops.Add(outer)
                 used.Add(outer)
 
-                ' æ‰¾å­”
+                ' ÕÒ¿×
                 For j = i + 1 To closedLoops.Count - 1
 
                     Dim inner = closedLoops(j)
@@ -1417,7 +2151,7 @@ Public Class AutoCADTool
 
                     If rel = Rg.RegionContainment.AInsideB Then
 
-                        ' å­”æ–¹å‘ï¼ˆå¿…é¡» CWï¼‰
+                        ' ¿×·½Ïò£¨±ØĞë CW£©
                         If inner.ClosedCurveOrientation(plane) = Rg.CurveOrientation.CounterClockwise Then
                             inner.Reverse()
                         End If
@@ -1429,7 +2163,7 @@ Public Class AutoCADTool
                 Next
 
                 '========================
-                ' åˆ›å»º Brep
+                ' ´´½¨ Brep
                 '========================
                 Dim breps = Rg.Brep.CreatePlanarBreps(loops, 0.01)
 
@@ -1443,7 +2177,7 @@ Public Class AutoCADTool
         If finalBreps.Count = 0 Then Return Nothing
 
         '========================
-        ' ğŸ”Ÿ å±æ€§
+        ' ?? ÊôĞÔ
         '========================
         Dim layer As String = ""
         Dim color As Drawing.Color = Drawing.Color.White
@@ -1458,7 +2192,7 @@ Public Class AutoCADTool
         End Try
 
         '========================
-        ' 1ï¸âƒ£1ï¸âƒ£ è¿”å›
+        ' 1??1?? ·µ»Ø
         '========================
         Return New RhinoResult(finalBreps(0), layer, color, item.Linetype, handle, "", "")
 
@@ -1471,7 +2205,7 @@ Public Class AutoCADTool
 
     Private Shared Function CAD_Ellipse2Rhino(item As AcadEllipse) As RhinoResult ' (Rhino.Geometry.Curve, String, Drawing.Color, String, String, String)
         ' ============================
-        ' 1ï¸âƒ£ åŸºç¡€æ•°æ®
+        ' 1?? »ù´¡Êı¾İ
         ' ============================
         Dim c = item.Center
         Dim center As New Rhino.Geometry.Point3d(c(0), c(1), c(2))
@@ -1500,7 +2234,7 @@ Public Class AutoCADTool
         Dim nurbs As Rhino.Geometry.NurbsCurve = ellipse.ToNurbsCurve()
 
         ' ============================
-        ' â­ 2ï¸âƒ£ åˆ¤æ–­å®Œæ•´æ¤­åœ†ï¼ˆå…³é”®ä¿®å¤ï¼‰
+        ' ? 2?? ÅĞ¶ÏÍêÕûÍÖÔ²£¨¹Ø¼üĞŞ¸´£©
         ' ============================
         Dim startAngle As Double = item.StartAngle
         Dim endAngle As Double = item.EndAngle
@@ -1521,7 +2255,7 @@ Public Class AutoCADTool
         End If
 
         ' ============================
-        ' 3ï¸âƒ£ CAD èµ·æ­¢ç‚¹
+        ' 3?? CAD ÆğÖ¹µã
         ' ============================
         Dim sp = item.StartPoint
         Dim ep = item.EndPoint
@@ -1532,7 +2266,7 @@ Public Class AutoCADTool
         Dim line As New Rhino.Geometry.LineCurve(ptStart, ptEnd)
 
         ' ============================
-        ' 4ï¸âƒ£ Curve|Curveï¼ˆGHï¼‰
+        ' 4?? Curve|Curve£¨GH£©
         ' ============================
         Dim func_info = rd.Components.FindComponent("Curve|Curve")
         If func_info Is Nothing Then func_info = rd.Components.FindComponent("CCX")
@@ -1552,7 +2286,7 @@ Public Class AutoCADTool
         If arr Is Nothing OrElse arr.Length < 3 Then GoTo FAIL
 
         ' ============================
-        ' 5ï¸âƒ£ æå– tA
+        ' 5?? ÌáÈ¡ tA
         ' ============================
         Dim tList As New List(Of Double)
         Dim tA = TryCast(arr(1), System.Collections.IEnumerable)
@@ -1568,7 +2302,7 @@ Public Class AutoCADTool
         'tList.Sort()
 
         ' ============================
-        ' 6ï¸âƒ£ Shatterï¼ˆGHï¼‰
+        ' 6?? Shatter£¨GH£©
         ' ============================
         Dim shatter_info = rd.Components.FindComponent("Shatter")
         If shatter_info Is Nothing Then GoTo FAIL
@@ -1584,7 +2318,7 @@ Public Class AutoCADTool
         End Try
 
         ' ============================
-        ' 7ï¸âƒ£ è§£ææ›²çº¿ï¼ˆä¿®å¤å…³é”®ï¼‰
+        ' 7?? ½âÎöÇúÏß£¨ĞŞ¸´¹Ø¼ü£©
         ' ============================
         Dim segList As New List(Of Rhino.Geometry.Curve)
 
@@ -1599,7 +2333,7 @@ Public Class AutoCADTool
         If segList.Count = 0 Then GoTo FAIL
 
         ' ============================
-        ' 8ï¸âƒ£ è‡ªåŠ¨é€‰æ­£ç¡®å¼§æ®µï¼ˆæ ¸å¿ƒï¼‰
+        ' 8?? ×Ô¶¯Ñ¡ÕıÈ·»¡¶Î£¨ºËĞÄ£©
         ' ============================
         If startAngle < 0 Then startAngle += 2 * Math.PI
         If endAngle < 0 Then endAngle += 2 * Math.PI
@@ -1637,7 +2371,7 @@ Public Class AutoCADTool
         If targetCurve Is Nothing Then GoTo FAIL
 
         ' ============================
-        ' 9ï¸âƒ£ è¾“å‡º
+        ' 9?? Êä³ö
         ' ============================
         Dim layerOut As String = item.Layer
         Dim colorOut As Drawing.Color =
@@ -1646,7 +2380,7 @@ Public Class AutoCADTool
         Return New RhinoResult(targetCurve, layerOut, colorOut, item.Linetype, item.Handle, "", "")
 
         ' ============================
-        ' FAILï¼ˆå…œåº•ï¼‰
+        ' FAIL£¨¶µµ×£©
         ' ============================
 FAIL:
         Dim layer2 As String = item.Layer
@@ -1663,7 +2397,7 @@ FAIL:
     Private Shared Function CAD_Spline2Rhino(item As AcadSpline) As RhinoResult '(Rhino.Geometry.Curve, String, Drawing.Color, String, String, String)
 
         '==============================
-        ' 1. æ§åˆ¶ç‚¹
+        ' 1. ¿ØÖÆµã
         '==============================
         Dim ctrlArr() As Double = CType(item.ControlPoints, Double())
 
@@ -1681,7 +2415,7 @@ FAIL:
         Dim order As Integer = degree + 1
 
         '==============================
-        ' 3. æƒé‡ï¼ˆæ˜¯å¦ Rationalï¼‰
+        ' 3. È¨ÖØ£¨ÊÇ·ñ Rational£©
         '==============================
         Dim weights() As Double = Nothing
         Dim isRational As Boolean = False
@@ -1696,16 +2430,16 @@ FAIL:
         End Try
 
         '==============================
-        ' 4. Knotï¼ˆAutoCADåŸå§‹ï¼‰
+        ' 4. Knot£¨AutoCADÔ­Ê¼£©
         '==============================
         Dim acadKnots() As Double = CType(item.Knots, Double())
 
         '==============================
-        ' 5. æ„é€  Rhino Nurbs
+        ' 5. ¹¹Ôì Rhino Nurbs
         '==============================
         Dim nurbs As New Rhino.Geometry.NurbsCurve(3, isRational, order, ptCount)
 
-        ' æ§åˆ¶ç‚¹ + æƒé‡
+        ' ¿ØÖÆµã + È¨ÖØ
         For i As Integer = 0 To ptCount - 1
             If isRational Then
                 nurbs.Points.SetPoint(i, pts(i), weights(i))
@@ -1715,7 +2449,7 @@ FAIL:
         Next
 
         '==============================
-        ' 6. Knot è½¬æ¢ï¼ˆæ ¸å¿ƒï¼ï¼‰
+        ' 6. Knot ×ª»»£¨ºËĞÄ£¡£©
         '==============================
         ' AutoCAD: n + degree + 1
         ' Rhino:   n + degree - 1
@@ -1723,21 +2457,21 @@ FAIL:
         Dim expectedRhinoKnotCount As Integer = nurbs.Knots.Count
         Dim expectedAcadKnotCount As Integer = acadKnots.Length
 
-        ' ğŸ‘‰ å¸¸è§æƒ…å†µï¼šéœ€è¦å»æ‰é¦–å°¾é‡å¤ knot
+        ' ?? ³£¼ûÇé¿ö£ºĞèÒªÈ¥µôÊ×Î²ÖØ¸´ knot
         Dim rhinoKnots(expectedRhinoKnotCount - 1) As Double
 
         If expectedAcadKnotCount = expectedRhinoKnotCount + 2 Then
-            ' å»æ‰é¦–å°¾
+            ' È¥µôÊ×Î²
             For i As Integer = 0 To expectedRhinoKnotCount - 1
                 rhinoKnots(i) = acadKnots(i + 1)
             Next
 
         ElseIf expectedAcadKnotCount = expectedRhinoKnotCount Then
-            ' ç›´æ¥ç”¨ï¼ˆå°‘è§ï¼‰
+            ' Ö±½ÓÓÃ£¨ÉÙ¼û£©
             rhinoKnots = acadKnots
 
         Else
-            ' fallbackï¼šé‡æ–°å‚æ•°åŒ–ï¼ˆä¿é™©ï¼‰
+            ' fallback£ºÖØĞÂ²ÎÊı»¯£¨±£ÏÕ£©
             Dim t0 As Double = 0.0
             Dim t1 As Double = 1.0
             For i As Integer = 0 To expectedRhinoKnotCount - 1
@@ -1745,20 +2479,20 @@ FAIL:
             Next
         End If
 
-        ' èµ‹å€¼ Knot
+        ' ¸³Öµ Knot
         For i As Integer = 0 To nurbs.Knots.Count - 1
             nurbs.Knots(i) = rhinoKnots(i)
         Next
 
         '==============================
-        ' 7. å‘¨æœŸæ€§ï¼ˆå¯é€‰ï¼‰
+        ' 7. ÖÜÆÚĞÔ£¨¿ÉÑ¡£©
         '==============================
         If item.Closed Then
             nurbs.MakeClosed(0.001)
         End If
 
         '==============================
-        ' 8. å›¾å±‚ & é¢œè‰²
+        ' 8. Í¼²ã & ÑÕÉ«
         '==============================
         Dim layer As String = item.Layer
 
@@ -1766,10 +2500,10 @@ FAIL:
             Drawing.Color.FromArgb(item.TrueColor.Red, item.TrueColor.Green, item.TrueColor.Blue)
 
         '==============================
-        ' 9. éªŒè¯
+        ' 9. ÑéÖ¤
         '==============================
         If Not nurbs.IsValid Then
-            ' fallbackï¼šæœ€ä¿é™©æ–¹å¼ï¼ˆæ‹Ÿåˆï¼‰
+            ' fallback£º×î±£ÏÕ·½Ê½£¨ÄâºÏ£©
             Dim safeCurve = Rhino.Geometry.Curve.CreateInterpolatedCurve(pts, degree)
             Return New RhinoResult(safeCurve, layer, color, item.Linetype, item.Handle, "", "")
         End If
@@ -1789,7 +2523,7 @@ FAIL:
         Dim blk = TryCast(obj, AutoCAD.AcadBlockReference)
 
         If blk Is Nothing Then
-            Return New RhinoResult(Nothing, "", Drawing.Color.White, "", handle, "", "æœªæ‰¾åˆ°å—")
+            Return New RhinoResult(Nothing, "", Drawing.Color.White, "", handle, "", "Î´ÕÒµ½¿é")
         End If
 
         Return CAD_Block2Rhino_RegionOnly(blk, failedBlockCache)
@@ -1805,7 +2539,7 @@ FAIL:
         Dim blockTag As String = "BlockName=" & blockName '& " | Handle=" & item.Handle
         Dim cachedFailedMessage As String = Nothing
 
-        ' ğŸ”¥ å…ˆå‡†å¤‡é»˜è®¤è¿”å›ï¼ˆå¸¦å…ƒæ•°æ®ï¼‰
+        ' ?? ÏÈ×¼±¸Ä¬ÈÏ·µ»Ø£¨´øÔªÊı¾İ£©
         Dim result As New RhinoResult(
             Nothing,
             item.Layer,
@@ -1823,13 +2557,13 @@ FAIL:
 
         Try
             '============================
-            ' 1ï¸âƒ£ Copy
+            ' 1?? Copy
             '============================
             Dim blkCopy As AutoCAD.AcadBlockReference =
                 TryCast(item.Copy(), AutoCAD.AcadBlockReference)
 
             If blkCopy Is Nothing Then
-                result.ErrorMessage = blockTag & " | å—å¤åˆ¶å¤±è´¥"
+                result.ErrorMessage = blockTag & " | ¿é¸´ÖÆÊ§°Ü"
                 If failedBlockCache IsNot Nothing Then
                     failedBlockCache(blockName) = result.ErrorMessage
                 End If
@@ -1837,7 +2571,7 @@ FAIL:
             End If
 
             '============================
-            ' 2ï¸âƒ£ Explode
+            ' 2?? Explode
             '============================
             Dim list As Object = blkCopy.Explode()
 
@@ -1845,7 +2579,7 @@ FAIL:
             Dim regionCount As Integer = 0
 
             '============================
-            ' 3ï¸âƒ£ å…ˆæ£€æŸ¥ Region æ•°é‡
+            ' 3?? ÏÈ¼ì²é Region ÊıÁ¿
             '============================
             For Each obj In list
 
@@ -1859,9 +2593,9 @@ FAIL:
             Next
 
             If regionCount = 0 Then
-                result.ErrorMessage = blockTag & " | æœªæ‰¾åˆ°æœ‰æ•ˆçš„Region"
+                result.ErrorMessage = blockTag & " | Î´ÕÒµ½ÓĞĞ§µÄRegion"
             ElseIf regionCount > 1 Then
-                result.ErrorMessage = blockTag & " | æ£€æµ‹åˆ°å¤šä¸ªRegionï¼Œä¸ç¬¦åˆå•å—å•é¢åŸŸè§„åˆ™"
+                result.ErrorMessage = blockTag & " | ¼ì²âµ½¶à¸öRegion£¬²»·ûºÏµ¥¿éµ¥ÃæÓò¹æÔò"
             ElseIf targetRegion IsNot Nothing Then
                 Try
                     Dim rr As RhinoResult = CAD_Region2Rhino(targetRegion)
@@ -1869,18 +2603,18 @@ FAIL:
                     If rr IsNot Nothing AndAlso rr.Geometry IsNot Nothing Then
                         result.Geometry = rr.Geometry
                     Else
-                        result.ErrorMessage = blockTag & " | æœªæ‰¾åˆ°æœ‰æ•ˆçš„Region"
+                        result.ErrorMessage = blockTag & " | Î´ÕÒµ½ÓĞĞ§µÄRegion"
                     End If
 
                 Catch ex As Exception
-                    result.ErrorMessage = blockTag & " | å¤„ç†Regionæ—¶å‘ç”Ÿé”™è¯¯: " & ex.Message
+                    result.ErrorMessage = blockTag & " | ´¦ÀíRegionÊ±·¢Éú´íÎó: " & ex.Message
                 End Try
             Else
-                result.ErrorMessage = blockTag & " | æœªæ‰¾åˆ°æœ‰æ•ˆçš„Region"
+                result.ErrorMessage = blockTag & " | Î´ÕÒµ½ÓĞĞ§µÄRegion"
             End If
 
             '============================
-            ' 4ï¸âƒ£ æ¸…ç†ï¼ˆå¿…é¡»æ‰§è¡Œï¼‰
+            ' 4?? ÇåÀí£¨±ØĞëÖ´ĞĞ£©
             '============================
             For Each obj In list
                 Dim ent = TryCast(obj, AutoCAD.AcadEntity)
@@ -1888,7 +2622,7 @@ FAIL:
                     Try
                         ent.Delete()
                     Catch ex As Exception
-                        result.ErrorMessage &= "| " & blockTag & " | åˆ é™¤å­å¯¹è±¡å¤±è´¥: " & ex.Message
+                        result.ErrorMessage &= "| " & blockTag & " | É¾³ı×Ó¶ÔÏóÊ§°Ü: " & ex.Message
                     End Try
                 End If
             Next
@@ -1896,7 +2630,7 @@ FAIL:
             Try
                 blkCopy.Delete()
             Catch ex As Exception
-                result.ErrorMessage &= "| " & blockTag & " | åˆ é™¤å—å‰¯æœ¬å¤±è´¥: " & ex.Message
+                result.ErrorMessage &= "| " & blockTag & " | É¾³ı¿é¸±±¾Ê§°Ü: " & ex.Message
             End Try
 
             If result.Geometry Is Nothing Then
@@ -1909,7 +2643,7 @@ FAIL:
             Return result
 
         Catch ex As Exception
-            result.ErrorMessage = blockTag & " | æ€»ä½“å¤„ç†é”™è¯¯: " & ex.Message
+            result.ErrorMessage = blockTag & " | ×ÜÌå´¦Àí´íÎó: " & ex.Message
             If failedBlockCache IsNot Nothing Then
                 failedBlockCache(blockName) = result.ErrorMessage
             End If
@@ -1942,11 +2676,11 @@ Public Class CADTaskQueue
     End Sub
 
     ' ============================
-    ' ğŸ”¥ æ ¸å¿ƒçº¿ç¨‹å¾ªç¯
+    ' ?? ºËĞÄÏß³ÌÑ­»·
     ' ============================
     Private Sub WorkerLoop()
 
-        ' ğŸ‘‰ è¿™é‡Œåªåˆå§‹åŒ– AutoCADï¼ˆå…è®¸ç¼“å­˜ï¼‰
+        ' ?? ÕâÀïÖ»³õÊ¼»¯ AutoCAD£¨ÔÊĞí»º´æ£©
         Dim acadApp As Object = Nothing
 
         Try
@@ -1962,11 +2696,11 @@ Public Class CADTaskQueue
             If queue.TryDequeue(task) Then
 
                 Try
-                    ' ğŸ‘‰ æ¯ä¸ªä»»åŠ¡è‡ªå·±å»å– ActiveDocumentï¼ˆå…³é”®ï¼ï¼‰
+                    ' ?? Ã¿¸öÈÎÎñ×Ô¼ºÈ¥È¡ ActiveDocument£¨¹Ø¼ü£¡£©
                     task()
 
                 Catch
-                    ' å¯ä»¥åŠ æ—¥å¿—
+                    ' ¿ÉÒÔ¼ÓÈÕÖ¾
                 End Try
 
             Else
@@ -1978,7 +2712,7 @@ Public Class CADTaskQueue
     End Sub
 
     ' ============================
-    ' ğŸ”¥ å…¥é˜Ÿï¼ˆæ— ä¸Šä¸‹æ–‡ç‰ˆæœ¬ï¼‰
+    ' ?? Èë¶Ó£¨ÎŞÉÏÏÂÎÄ°æ±¾£©
     ' ============================
     Public Sub Enqueue(action As Action)
         queue.Enqueue(action)
@@ -1986,7 +2720,7 @@ Public Class CADTaskQueue
     End Sub
 
     ' ============================
-    ' ğŸ”¥ åœæ­¢é˜Ÿåˆ—
+    ' ?? Í£Ö¹¶ÓÁĞ
     ' ============================
     Public Sub StopQueue()
         running = False
@@ -2048,7 +2782,7 @@ Public Class CADProcessor
 
                               Dim done = Interlocked.Increment(finished)
 
-                              ' ğŸ”¥ å®Œæˆ
+                              ' ?? Íê³É
                               If done = total Then
 
                                   Rhino.RhinoApp.InvokeOnUiThread(Sub()

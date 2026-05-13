@@ -33,6 +33,7 @@ namespace NS_Parrot
             p.AddTextParameter("Data", "D", "数据 A|B|C", GH_ParamAccess.list);
             p.AddBooleanParameter("Overwrite", "O", "覆盖模式", GH_ParamAccess.item, true);
             p.AddBooleanParameter("Write", "W", "执行", GH_ParamAccess.item, false);
+            p.AddBooleanParameter("显示", "显示", "写入完成后是否显示Excel，默认true", GH_ParamAccess.item, true);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager p)
@@ -81,6 +82,7 @@ namespace NS_Parrot
             List<string> data = new List<string>();
             bool overwrite = true;
             bool writeInput = false;
+            bool showExcel = true;
 
             if (!DA.GetData(0, ref templatePath)) return;
             DA.GetData(1, ref templateSheet);
@@ -90,6 +92,7 @@ namespace NS_Parrot
             if (!DA.GetDataList(5, data)) return;
             DA.GetData(6, ref overwrite);
             DA.GetData(7, ref writeInput);
+            DA.GetData(8, ref showExcel);
 
             // ===== 统一触发 =====
             bool trigger = writeInput || _triggerRun;
@@ -216,7 +219,7 @@ namespace NS_Parrot
                 if (!overwrite)
                 {
                     var col = ws.Columns[startCol];
-                    var last = col.Cells[ws.Rows.Count].End(Excel.XlDirection.xlUp);
+                    var last = col.Cells[ws.Rows.Count].End[Excel.XlDirection.xlUp];
 
                     int lastRow = 0;
 
@@ -272,13 +275,19 @@ namespace NS_Parrot
 
                 wb.Save();
 
-                // ===== 显示Excel =====
-                app.Visible = true;
-                app.ScreenUpdating = true;
-
-                // ⭐ 激活目标 sheet
-                wb.Activate();
-                ws.Activate();
+                if (showExcel)
+                {
+                    app.Visible = true;
+                    app.ScreenUpdating = true;
+                    wb.Activate();
+                    ws.Activate();
+                }
+                else
+                {
+                    app.Visible = false;
+                    app.ScreenUpdating = false;
+                    System.Windows.Forms.MessageBox.Show("写入已经完成", "GH2Excel", System.Windows.Forms.MessageBoxButtons.OK, System.Windows.Forms.MessageBoxIcon.Information);
+                }
 
                 DA.SetData(0, $"完成：{rowCount}行 × {colCount}列");
             }
@@ -291,7 +300,7 @@ namespace NS_Parrot
                 if (wb != null) Marshal.ReleaseComObject(wb);
                 if (ws != null) Marshal.ReleaseComObject(ws);
 
-                if (app != null && appCreated)
+                if (app != null && appCreated && !showExcel)
                 {
                     app.Quit();
                     Marshal.ReleaseComObject(app);
