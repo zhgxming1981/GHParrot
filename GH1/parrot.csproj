@@ -31,6 +31,7 @@
     <Compile Remove="Component\ExcelCAD\ToSolidWorks.cs" />
     <Compile Remove="Component\Library\SectionParams.cs" />
     <Compile Remove="Component\Library\SectionProperty.cs" />
+    <Compile Remove="Component\Library\XingCaiLibray.cs" />
     <Compile Remove="Component\Modeling\CreateMullion.cs" />
     <Compile Remove="Component\Modeling\MyBake2.cs" />
     <Compile Remove="Component\Modeling\MyHoles.cs" />
@@ -169,6 +170,7 @@
   </ItemGroup>
   
   <ItemGroup>
+    <Folder Include="Component\Library\" />
     <Folder Include="Component\Modeling\" />
   </ItemGroup>
   
