@@ -57,39 +57,30 @@ namespace NS_Parrot
             Vector3d Vz = new Vector3d();
             if (!DA.GetData(2, ref Vz)) { return; }
 
+            if (!Vy.Unitize())
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "y轴不能为零向量。");
+                return;
+            }
 
-            double ax, ay, az;//向量a
-            ax = Vy.X;
-            ay = Vy.Y;
-            az = Vy.Z;
-            double bx, by, bz;//向量b
-            bx = Vz.X;
-            by = Vz.Y;
-            bz = Vz.Z;
-            //向量c，必须同时和向量a、向量b垂直
-            //则 ax*cx + ay*cy + az*cz = 0, bx*cx+by0*cy+ bz*cz = 0
-            //并且假定cx+cy+cz=1,可以解出cx,cy,cz
-            double cx, cy, cz;//向量c
-            cx = (ay * bz - az * by) / (ax * by - ax * bz - ay * bx + ay * bz - az * by + az * bx);
-            cy = -(ax * bz - az * bx) / (ax * by - ax * bz - ay * bx + ay * bz - az * by + az * bx);
-            cz = (ax * by - ay * bx) / (ax * by - ax * bz - ay * bx + ay * bz - az * by + az * bx);
-            Vector3d Vx = new Vector3d(cx, cy, cz);
+            if (!Vz.Unitize())
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "z轴不能为零向量。");
+                return;
+            }
+
+            Vector3d Vx = Vector3d.CrossProduct(Vy, Vz);
+            if (!Vx.Unitize())
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "y轴和z轴不能平行。");
+                return;
+            }
 
             Plane pl = new Plane(origin, Vx, Vy);
 
-            if (pl.Normal.Y != 0)
+            if (pl.Normal * Vz < 0)
             {
-                if (Vz.Y / pl.Normal.Y < 0)//判断新平面的y轴方向是否和输入的一致，小于0表示不一致，要反向
-                {
-                    pl = new Plane(origin, -Vx, Vy);
-                }
-            }
-            if (pl.Normal.Z != 0)
-            {
-                if (Vz.Z / pl.Normal.Z < 0)//判断新平面的z轴方向是否和输入的一致，小于0表示不一致，要反向
-                {
-                    pl = new Plane(origin, -Vx, Vy);
-                }
+                pl = new Plane(origin, -Vx, Vy);
             }
             DA.SetData(0, pl);
         }

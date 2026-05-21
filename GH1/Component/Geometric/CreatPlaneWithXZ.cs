@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the CreatPlaneWithXZ class.
         /// </summary>
         public CreatPlaneWithXZ()
-          : base("CreatPlaneWithXZ", "PlaneOYZ",
+          : base("CreatPlaneWithXZ", "PlaneOXZ",
               "通过xz轴生成平面",
               "Parrot", "几何")
         {
@@ -54,40 +54,32 @@ namespace NS_Parrot
             Vector3d Vz = new Vector3d();
             if (!DA.GetData(2, ref Vz)) { return; }
 
+            if (!Vx.Unitize())
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "x轴不能为零向量。");
+                return;
+            }
 
-            double ax, ay, az;//向量a
-            ax = Vx.X;
-            ay = Vx.Y;
-            az = Vx.Z;
-            double bx, by, bz;//向量b
-            bx = Vz.X;
-            by = Vz.Y;
-            bz = Vz.Z;
-            //向量c，必须同时和向量a、向量b垂直
-            //则 ax*cx + ay*cy + az*cz = 0, bx*cx+by0*cy+ bz*cz = 0
-            //并且假定cx+cy+cz=1,可以解出cx,cy,cz
-            double cx, cy, cz;//向量c
-            cx = (ay * bz - az * by) / (ax * by - ax * bz - ay * bx + ay * bz - az * by + az * bx);
-            cy = -(ax * bz - az * bx) / (ax * by - ax * bz - ay * bx + ay * bz - az * by + az * bx);
-            cz = (ax * by - ay * bx) / (ax * by - ax * bz - ay * bx + ay * bz - az * by + az * bx);
-            Vector3d Vy = new Vector3d(cx, cy, cz);
+            if (!Vz.Unitize())
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "z轴不能为零向量。");
+                return;
+            }
+
+            Vector3d Vy = Vector3d.CrossProduct(Vz, Vx);
+            if (!Vy.Unitize())
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "x轴和z轴不能平行。");
+                return;
+            }
+
             Plane pl = new Plane(origin, Vx, Vy);
-            if (pl.Normal.X != 0)
+
+            if (pl.Normal * Vz < 0)
             {
-                if (Vz.X / pl.Normal.X < 0)//判断新平面的x轴和输入的是否一致，小于0表示不一致，要反向
-                {
-                    pl = new Plane(origin, Vx, -Vy);
-                }
+                pl = new Plane(origin, Vx, -Vy);
             }
 
-            if (pl.Normal.Z != 0)
-            {
-                if (Vz.Z / pl.Normal.Z < 0)//判断新平面的z轴和输入的是否一致，小于0表示不一致，要反向
-                {
-                    pl = new Plane(origin, Vx, -Vy);
-                }
-            }
-            //pl = new Plane(origin, Vx, -Vy);
             DA.SetData(0, pl);
         }
 

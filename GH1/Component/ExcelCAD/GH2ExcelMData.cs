@@ -21,6 +21,7 @@ namespace NS_Parrot
 
         // ===== 触发控制 =====
         private bool _triggerRun = false;
+        private bool _lastWriteInput = false;
 
 
         // ===== 缓存（用于右键）=====
@@ -107,7 +108,8 @@ namespace NS_Parrot
                 return;
             }
 
-            bool trigger = writeInput || _triggerRun;
+            bool trigger = _triggerRun || (writeInput && !_lastWriteInput);
+            _lastWriteInput = writeInput;
 
             if (!trigger)
             {
@@ -136,9 +138,10 @@ namespace NS_Parrot
                     appCreated = true;
                 }
 
-                app.Visible = false;
                 app.DisplayAlerts = false;
                 app.ScreenUpdating = false;
+                if (!showExcel)
+                    app.Visible = false;
 
                 // ===== 获取 Workbook =====
                 foreach (Excel.Workbook w in app.Workbooks)
@@ -202,7 +205,7 @@ namespace NS_Parrot
 
                 if (showExcel)
                 {
-                    ShowExcelAndActivateSheet(filePath, sheetName);
+                    ShowExcelAndActivateSheet(app, wb, sheetName);
                 }
                 else
                 {
@@ -277,6 +280,33 @@ namespace NS_Parrot
                 }
 
                 app.ScreenUpdating = true;
+                app.ActiveWindow?.Activate();
+            }
+            catch
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "显示Excel失败");
+            }
+        }
+
+        private void ShowExcelAndActivateSheet(Excel.Application app, Excel.Workbook wb, string sheetName)
+        {
+            try
+            {
+                if (app == null)
+                    return;
+
+                app.Visible = true;
+                app.ScreenUpdating = true;
+                app.WindowState = Excel.XlWindowState.xlMaximized;
+
+                if (wb != null)
+                {
+                    wb.Activate();
+
+                    Excel.Worksheet ws = GetSheetSafe(wb, sheetName);
+                    ws?.Activate();
+                }
+
                 app.ActiveWindow?.Activate();
             }
             catch

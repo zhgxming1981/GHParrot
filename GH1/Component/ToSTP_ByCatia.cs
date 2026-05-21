@@ -243,7 +243,7 @@ namespace parrot.Component
             DA.GetData(2, ref run);
             if (!run)
             {
-                DA.SetData(0, "未执行");
+                DA.SetData(0, "未执行：转换开关未开启");
                 return;
             }
             if (!System.IO.Directory.Exists(source))
@@ -257,7 +257,9 @@ namespace parrot.Component
                 Common4Catia.CATIA = Common4Catia.ConnectCatia();
                 if (Common4Catia.CATIA == null)
                 {
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "无法连接 CATIA");
+                    const string message = "未执行：未检测到正在运行的 CATIA。请先启动 CATIA，再开启转换。";
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message);
+                    DA.SetData(0, message);
                     return;
                 }
             }
