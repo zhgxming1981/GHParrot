@@ -1,4 +1,4 @@
-using Grasshopper.Kernel;
+﻿using Grasshopper.Kernel;
 using Rhino.Geometry;
 using System;
 
@@ -83,7 +83,7 @@ namespace NS_Parrot
             DA.SetDataList(1, normals);
         }
 
-        protected override System.Drawing.Bitmap Icon => null;
+        protected override System.Drawing.Bitmap Icon => GeneratedIcon.Get("gen_VectorLine2Plane");
 
         public override Guid ComponentGuid => new Guid("A06B1128-6783-4CE8-9ED4-D77F2218832A");
     }

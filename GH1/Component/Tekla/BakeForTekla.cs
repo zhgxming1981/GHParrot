@@ -48,7 +48,7 @@ namespace NS_Parrot
             get
             {
                 //You can add image files to your project resources and access them like this:
-                return null;
+                return GeneratedIcon.Get("gen_BakeForTekla");
             }
         }
 

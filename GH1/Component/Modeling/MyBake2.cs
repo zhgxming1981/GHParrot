@@ -3,12 +3,11 @@ using System.Collections.Generic;
 
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Types;
-using NS_Parrot.Hardware;
 using Rhino.DocObjects;
 using Rhino.Geometry;
 using Rhino.UI;
 
-namespace parrot.Component.Modeling
+namespace NS_Parrot
 {
     public class MyBake2 : GH_Component
     {
@@ -105,7 +104,7 @@ namespace parrot.Component.Modeling
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return null;
+                return GeneratedIcon.Get("gen_MyBake2");
             }
         }
 

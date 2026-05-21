@@ -177,7 +177,7 @@ namespace NS_Parrot
 
         protected override System.Drawing.Bitmap Icon
         {
-            get { return null; }
+            get { return GeneratedIcon.Get("gen_RecoverRhinoUI"); }
         }
 
         public override Guid ComponentGuid

@@ -1,4 +1,4 @@
-using CommonFunction;
+﻿using CommonFunction;
 using GH_IO.Serialization;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
@@ -1146,7 +1146,7 @@ namespace NS_Parrot
 
         protected override Bitmap Icon
         {
-            get { return null; }
+            get { return GeneratedIcon.Get("gen_ImportRhinoBlock"); }
         }
 
         public override Guid ComponentGuid

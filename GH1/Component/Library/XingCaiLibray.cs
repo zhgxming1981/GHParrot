@@ -221,7 +221,7 @@ namespace NS_Parrot
         {
             get
             {
-                return null;
+                return GeneratedIcon.Get("gen_XingCaiLibray");
             }
         }
 

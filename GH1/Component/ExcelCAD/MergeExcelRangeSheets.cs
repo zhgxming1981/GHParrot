@@ -1,4 +1,4 @@
-using Grasshopper.GUI;
+﻿using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Attributes;
@@ -161,7 +161,7 @@ namespace NS_Parrot
             timer.Start();
         }
 
-        protected override Bitmap Icon => null;
+        protected override Bitmap Icon => GeneratedIcon.Get("gen_MergeExcelRangeSheets");
 
         public override Guid ComponentGuid => new Guid("B8B2CC0A-45F6-4C83-9F46-C6B7E379D3B1");
     }

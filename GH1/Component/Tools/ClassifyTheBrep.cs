@@ -6,7 +6,7 @@ using Rhino.Geometry;
 using rd = Rhino.NodeInCode;
 
 
-namespace Parrot
+namespace NS_Parrot
 {
     public class ClassifyTheBrep : GH_Component
     {
@@ -108,7 +108,7 @@ namespace Parrot
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return null;
+                return GeneratedIcon.Get("gen_ClassifyTheBrep");
             }
         }
 

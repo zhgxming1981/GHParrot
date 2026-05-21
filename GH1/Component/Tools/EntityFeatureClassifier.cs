@@ -1,5 +1,4 @@
-using CommonFunction.Algorithm;
-using CommonFunction.Hardware;
+﻿using CommonFunction;
 using GH_IO.Serialization;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
@@ -286,7 +285,7 @@ namespace NS_Parrot
             return string.Join(" + ", text);
         }
 
-        protected override Bitmap Icon => null;
+        protected override Bitmap Icon => GeneratedIcon.Get("gen_EntityFeatureClassifier");
 
         public override Guid ComponentGuid => new Guid("F1F780F3-7A3D-44B8-92CC-31B91536E6A0");
 
@@ -1076,7 +1075,7 @@ namespace NS_Parrot
             double edgeSum = 0.0;
             for (int i = 0; i < working.TopologyEdges.Count; i++)
             {
-                IndexPair pair = working.TopologyEdges.GetTopologyVertices(i);
+                var pair = working.TopologyEdges.GetTopologyVertices(i);
                 int a = Math.Min(pair.I, pair.J);
                 int b = Math.Max(pair.I, pair.J);
                 string key = a.ToString(CultureInfo.InvariantCulture) + "_" + b.ToString(CultureInfo.InvariantCulture);
@@ -1130,15 +1129,15 @@ namespace NS_Parrot
             covariance[2, 0] = covariance[0, 2];
             covariance[2, 1] = covariance[1, 2];
 
-            eigenValues = new double[3];
             Vector3d[] axes = new Vector3d[3];
-            JacobiEigenSolver.SolveSymmetric(covariance, out eigenValues, out axes);
+            double[] solvedEigenValues;
+            JacobiEigenSolver.SolveSymmetric(covariance, out solvedEigenValues, out axes);
 
             int[] order = Enumerable.Range(0, 3)
-                .OrderByDescending(i => eigenValues[i])
+                .OrderByDescending(i => solvedEigenValues[i])
                 .ToArray();
 
-            eigenValues = order.Select(i => eigenValues[i]).ToArray();
+            eigenValues = order.Select(i => solvedEigenValues[i]).ToArray();
             axes = order.Select(i => axes[i]).ToArray();
 
             for (int axisIndex = 0; axisIndex < axes.Length; axisIndex++)

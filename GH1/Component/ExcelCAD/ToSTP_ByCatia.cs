@@ -44,6 +44,9 @@ namespace NS_Parrot
         /// This is the method that actually does the work.
         /// </summary>
         /// <param name="DA">The DA object is used to retrieve from inputs and store in outputs.</param>
+       
+
+
         protected override void SolveInstance(IGH_DataAccess DA)
         {
             string source = "";
@@ -55,7 +58,7 @@ namespace NS_Parrot
             DA.GetData(2, ref run);
             if (!run)
             {
-                DA.SetData(0, "未执行");
+                DA.SetData(0, "未执行：转换开关未开启");
                 return;
             }
             if (!System.IO.Directory.Exists(source))
@@ -69,12 +72,14 @@ namespace NS_Parrot
                 Common4Catia.CATIA = Common4Catia.ConnectCatia();
                 if (Common4Catia.CATIA == null)
                 {
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "无法连接 CATIA");
+                    const string message = "未执行：未检测到正在运行的 CATIA。请先启动 CATIA，再开启转换。";
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message);
+                    DA.SetData(0, message);
                     return;
                 }
             }
             var files = System.IO.Directory.GetFiles(source, "*.stp", System.IO.SearchOption.AllDirectories);
-            int success = 0;
+            int success = 0; 
             int fail = 0;
 
             foreach (var file in files)
@@ -83,7 +88,7 @@ namespace NS_Parrot
                 log.AppendLine("STEP转换日志");
                 log.AppendLine("时间: " + DateTime.Now);
                 log.AppendLine("----------------------------------");
-                string dstDir = "";
+                string dstDir="";
                 try
                 {
                     //============================ // 1️⃣ 当前文件夹 //============================ 
@@ -93,7 +98,7 @@ namespace NS_Parrot
                     if (folderName.Contains("_catia"))
                         continue;
                     //============================ // 2️⃣ 目标目录 //============================ 
-
+                
                     if (string.IsNullOrEmpty(target))
                     {
                         // 👉 每个目录生成 _catia
@@ -105,7 +110,7 @@ namespace NS_Parrot
                         string relative = srcDir.Substring(source.Length).TrimStart('\\');
                         dstDir = System.IO.Path.Combine(target, relative + "_catia");
                     }
-                    if (!System.IO.Directory.Exists(dstDir))
+                    if (!System.IO.Directory.Exists(dstDir)) 
                         System.IO.Directory.CreateDirectory(dstDir);
                     //============================ // 3️⃣ 目标文件 //============================ 
                     string dstFile = System.IO.Path.Combine(dstDir, System.IO.Path.GetFileName(file));
@@ -137,7 +142,7 @@ namespace NS_Parrot
             // 🔥 日志放在 source 根目录
             //============================
             //string logPath = Path.Combine(source, "转换日志.txt");
-
+           
 
             DA.SetData(0, $"完成：成功 {success}，失败 {fail}\n");
         }
@@ -153,7 +158,7 @@ namespace NS_Parrot
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return null;
+                return GeneratedIcon.Get("gen_ToSTP_ByCatia");
             }
         }
 

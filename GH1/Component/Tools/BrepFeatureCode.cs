@@ -1,4 +1,4 @@
-using CommonFunction;
+﻿using CommonFunction;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
@@ -74,7 +74,7 @@ namespace NS_Parrot
             Attributes = new CreateBrepCodeDatabaseAttributes(this);
         }
 
-        protected override Bitmap Icon => null;
+        protected override Bitmap Icon => GeneratedIcon.Get("gen_CreateBrepCodeDatabase");
 
         public override Guid ComponentGuid => new Guid("1C99A7F9-E56F-4EC3-9D32-5E0DA15B3C35");
     }
@@ -808,7 +808,7 @@ namespace NS_Parrot
             return value.ToString("G17", CultureInfo.InvariantCulture);
         }
 
-        protected override Bitmap Icon => null;
+        protected override Bitmap Icon => GeneratedIcon.Get("gen_BrepFeatureCode");
 
         public override Guid ComponentGuid => new Guid("5F1F4F25-CAD8-49A6-8E9F-49574047EE43");
 

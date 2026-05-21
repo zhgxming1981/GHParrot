@@ -7,7 +7,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using Excel = Microsoft.Office.Interop.Excel;
 
-namespace parrot.Component.ExcelCAD
+namespace NS_Parrot
 {
     public class GH_ExcelMultiSummary : GH_Component
     {
@@ -375,7 +375,7 @@ namespace parrot.Component.ExcelCAD
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return null;
+                return GeneratedIcon.Get("gen_ai_GH_ExcelMultiSummary");
             }
         }
 

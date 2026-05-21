@@ -69,7 +69,7 @@ namespace NS_Parrot
             Attributes = new CButton_ClearExcelRange(this);
         }
 
-        protected override Bitmap Icon => null;
+        protected override Bitmap Icon => GeneratedIcon.Get("gen_ClearExcelRange");
 
         public override Guid ComponentGuid => new Guid("D9F3B0D4-D3D0-4C9A-AE80-5BB7A725B5F1");
 

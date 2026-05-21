@@ -165,6 +165,145 @@ namespace NS_Parrot
             }
         }
 
+        public static int InsertPictures(string filePath, string sheetName, IEnumerable<string> pictureCellTexts, string pictureFolder, double heightMinus, IEnumerable<string> insertCellTexts, out List<string> messages)
+        {
+            messages = new List<string>();
+
+            if (pictureCellTexts == null)
+                throw new ArgumentException("没有输入图片名单元格。");
+
+            if (insertCellTexts == null)
+                throw new ArgumentException("没有输入插入单元格。");
+
+            if (string.IsNullOrWhiteSpace(pictureFolder))
+                throw new ArgumentException("图片文件夹为空。");
+
+            string fullPictureFolder = Path.GetFullPath(pictureFolder);
+            if (!Directory.Exists(fullPictureFolder))
+                throw new DirectoryNotFoundException("图片文件夹不存在: " + fullPictureFolder);
+
+            Excel.Application app = null;
+            Excel.Workbook wb = null;
+            Excel.Worksheet ws = null;
+            bool appCreated = false;
+            bool originalVisible = true;
+            bool originalScreenUpdating = true;
+            bool originalDisplayAlerts = true;
+
+            try
+            {
+                app = GetExcelApplication(out appCreated);
+                originalVisible = app.Visible;
+                originalScreenUpdating = app.ScreenUpdating;
+                originalDisplayAlerts = app.DisplayAlerts;
+                app.Visible = false;
+                app.ScreenUpdating = false;
+                app.DisplayAlerts = false;
+
+                wb = GetOrOpenWorkbook(app, filePath);
+                ws = GetWorksheet(wb, sheetName);
+
+                List<string> pictureCells = BuildTextList(pictureCellTexts);
+                List<string> insertCells = BuildTextList(insertCellTexts);
+                if (pictureCells.Count == 0)
+                    throw new ArgumentException("没有输入图片名单元格。");
+                if (insertCells.Count == 0)
+                    throw new ArgumentException("没有输入插入单元格。");
+                if (pictureCells.Count != insertCells.Count)
+                    throw new ArgumentException("图片名单元格数量必须和插入单元格数量一致。");
+
+                int inserted = 0;
+                for (int i = 0; i < pictureCells.Count; i++)
+                {
+                    ParseCell(pictureCells[i], out int pictureRow, out int pictureColumn);
+                    ParseCell(insertCells[i], out int insertRow, out int insertColumn);
+                    if (pictureRow != insertRow)
+                        throw new ArgumentException("图片名单元格和插入单元格必须同行: " + pictureCells[i] + " / " + insertCells[i]);
+
+                    string pictureName = ReadCellText(ws, pictureRow, pictureColumn);
+                    if (string.IsNullOrWhiteSpace(pictureName))
+                    {
+                        messages.Add("第" + pictureRow + "行图片名称为空，已跳过。");
+                        continue;
+                    }
+
+                    string picturePath = ResolvePicturePath(fullPictureFolder, pictureName);
+                    if (picturePath == null)
+                    {
+                        messages.Add("第" + pictureRow + "行找不到图片: " + pictureName);
+                        continue;
+                    }
+
+                    string pictureShapePrefix = BuildPictureShapePrefix(insertRow, insertColumn);
+                    DeleteParrotPictures(ws, pictureShapePrefix);
+
+                    Excel.Range cell = null;
+                    Excel.Shapes shapes = null;
+                    Excel.Shape shape = null;
+
+                    try
+                    {
+                        cell = ws.Cells[insertRow, insertColumn] as Excel.Range;
+                        double maxHeight = Math.Max(1, Convert.ToDouble(cell.Height) - heightMinus);
+                        double maxWidth = Math.Max(1, Convert.ToDouble(cell.Width));
+                        shapes = ws.Shapes;
+
+                        shape = ((dynamic)shapes).AddPicture(
+                            picturePath,
+                            0,
+                            -1,
+                            Convert.ToSingle(cell.Left),
+                            Convert.ToSingle(cell.Top),
+                            -1,
+                            -1);
+
+                        double ratio = Convert.ToDouble(shape.Width) / Convert.ToDouble(shape.Height);
+                        double targetHeight = maxHeight;
+                        double targetWidth = targetHeight * ratio;
+                        if (targetWidth > maxWidth)
+                        {
+                            targetWidth = maxWidth;
+                            targetHeight = targetWidth / ratio;
+                        }
+
+                        shape.Height = Convert.ToSingle(targetHeight);
+                        shape.Width = Convert.ToSingle(targetWidth);
+                        shape.Left = Convert.ToSingle(cell.Left + (Convert.ToDouble(cell.Width) - Convert.ToDouble(shape.Width)) / 2);
+                        shape.Top = Convert.ToSingle(cell.Top + (Convert.ToDouble(cell.Height) - Convert.ToDouble(shape.Height)) / 2);
+                        shape.Placement = Excel.XlPlacement.xlMoveAndSize;
+                        shape.Name = BuildPictureShapeName(pictureShapePrefix, insertRow, insertColumn);
+                        inserted++;
+                    }
+                    finally
+                    {
+                        ReleaseCom(shape);
+                        ReleaseCom(shapes);
+                        ReleaseCom(cell);
+                    }
+                }
+
+                wb.Save();
+                messages.Add("插入完成: " + inserted + "/" + pictureCells.Count);
+                return inserted;
+            }
+            finally
+            {
+                ReleaseCom(ws);
+                ReleaseCom(wb);
+                if (app != null && appCreated)
+                {
+                    app.Quit();
+                }
+                else if (app != null)
+                {
+                    app.Visible = originalVisible;
+                    app.ScreenUpdating = originalScreenUpdating;
+                    app.DisplayAlerts = originalDisplayAlerts;
+                }
+                ReleaseCom(app);
+            }
+        }
+
         public static void ShowExcel(string filePath, string sheetName)
         {
             Excel.Application app = null;
@@ -617,6 +756,150 @@ namespace NS_Parrot
             }
 
             return result;
+        }
+
+        private static List<string> BuildTextList(IEnumerable<string> sources)
+        {
+            List<string> texts = new List<string>();
+            foreach (string source in sources)
+            {
+                string text = (source ?? string.Empty).Trim();
+                if (!string.IsNullOrWhiteSpace(text))
+                    texts.Add(text);
+            }
+
+            return texts;
+        }
+
+        private static string ReadCellText(Excel.Worksheet ws, int row, int column)
+        {
+            Excel.Range cell = null;
+            try
+            {
+                cell = ws.Cells[row, column] as Excel.Range;
+                object value = cell.Value2;
+                return value == null ? string.Empty : value.ToString().Trim();
+            }
+            finally
+            {
+                ReleaseCom(cell);
+            }
+        }
+
+        private static bool TryParseCell(string cellText, out int row, out int column)
+        {
+            row = 0;
+            column = 0;
+
+            if (!IsCellReference(cellText))
+                return false;
+
+            try
+            {
+                ParseCell(cellText, out row, out column);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsCellReference(string cellText)
+        {
+            string text = (cellText ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            int index = 0;
+            while (index < text.Length && char.IsLetter(text[index]))
+                index++;
+
+            if (index == 0 || index == text.Length)
+                return false;
+
+            while (index < text.Length)
+            {
+                if (!char.IsDigit(text[index]))
+                    return false;
+
+                index++;
+            }
+
+            return true;
+        }
+
+        private static string ResolvePicturePath(string pictureFolder, string pictureName)
+        {
+            string directPath = Path.IsPathRooted(pictureName)
+                ? pictureName
+                : Path.Combine(pictureFolder, pictureName);
+
+            if (File.Exists(directPath))
+                return directPath;
+
+            if (!string.IsNullOrWhiteSpace(Path.GetExtension(pictureName)))
+                return null;
+
+            string[] extensions = { ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff" };
+            foreach (string extension in extensions)
+            {
+                string path = Path.Combine(pictureFolder, pictureName + extension);
+                if (File.Exists(path))
+                    return path;
+            }
+
+            return null;
+        }
+
+        private static void DeleteParrotPictures(Excel.Worksheet ws, string pictureShapePrefix)
+        {
+            Excel.Shapes shapes = null;
+            try
+            {
+                shapes = ws.Shapes;
+                for (int i = shapes.Count; i >= 1; i--)
+                {
+                    Excel.Shape shape = null;
+                    try
+                    {
+                        shape = shapes.Item(i);
+                        if (shape.Name.StartsWith(pictureShapePrefix, StringComparison.OrdinalIgnoreCase))
+                            shape.Delete();
+                    }
+                    finally
+                    {
+                        ReleaseCom(shape);
+                    }
+                }
+            }
+            finally
+            {
+                ReleaseCom(shapes);
+            }
+        }
+
+        private static string BuildPictureShapePrefix(int startRow, int startColumn)
+        {
+            return "ParrotPic_" + ColumnNumberToName(startColumn) + startRow + "_";
+        }
+
+        private static string BuildPictureShapeName(string pictureShapePrefix, int row, int column)
+        {
+            return pictureShapePrefix + ColumnNumberToName(column) + row;
+        }
+
+        private static string ColumnNumberToName(int column)
+        {
+            string name = string.Empty;
+            while (column > 0)
+            {
+                int remainder = (column - 1) % 26;
+                name = Convert.ToChar('A' + remainder) + name;
+                column = (column - remainder - 1) / 26;
+            }
+
+            return name;
         }
 
         private static bool IsRowEmpty(Excel.Worksheet ws, int row, IEnumerable<int> columns)

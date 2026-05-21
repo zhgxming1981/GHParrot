@@ -79,7 +79,7 @@ namespace NS_Parrot
             Attributes = new CButton_ExcelNextAppendRow(this);
         }
 
-        protected override Bitmap Icon => null;
+        protected override Bitmap Icon => GeneratedIcon.Get("gen_ExcelNextAppendRow");
 
         public override Guid ComponentGuid => new Guid("8C3B654A-9CB2-4F04-BA98-D64E225A5F09");
 

@@ -1,4 +1,4 @@
-using Grasshopper;
+ï»¿using Grasshopper;
 using Grasshopper.Kernel;
 using GH_IO.Types;
 using Rhino.Geometry;
@@ -22,8 +22,8 @@ namespace NS_Parrot
         /// new tabs/panels will automatically be created.
         /// </summary>
         public PutAShapeInTekla()
-          : base("·ÅÖÃÐÎ×´", "·ÅÖÃÐÎ×´",
-            "¿ÉÒÔÓÃÀ´·ÅÖÃÂñ¼þµÈ",
+          : base("ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½×´", "ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½×´",
+            "ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½",
             "Parrot", "Tekla")
         {
         }
@@ -35,10 +35,10 @@ namespace NS_Parrot
         /// </summary>
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddTextParameter("ShapeName", "SN", "ÐÎ×´Ãû", GH_ParamAccess.item);
-            pManager.AddPointParameter("StartPoint", "SP", "Æðµã", GH_ParamAccess.item);
-            pManager.AddPointParameter("EndPoint", "EP", "ÖÕµã", GH_ParamAccess.item);
-            pManager.AddGenericParameter("Position", "P", "·½Î»", GH_ParamAccess.item);
+            pManager.AddTextParameter("ShapeName", "SN", "ï¿½ï¿½×´ï¿½ï¿½", GH_ParamAccess.item);
+            pManager.AddPointParameter("StartPoint", "SP", "ï¿½ï¿½ï¿½", GH_ParamAccess.item);
+            pManager.AddPointParameter("EndPoint", "EP", "ï¿½Õµï¿½", GH_ParamAccess.item);
+            pManager.AddGenericParameter("Position", "P", "ï¿½ï¿½Î»", GH_ParamAccess.item);
 
         }
 
@@ -47,7 +47,7 @@ namespace NS_Parrot
         /// </summary>
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddGenericParameter("Shape", "S", "ÐÎ×´", GH_ParamAccess.item);
+            pManager.AddGenericParameter("Shape", "S", "ï¿½ï¿½×´", GH_ParamAccess.item);
         }
 
         /// <summary>
@@ -61,18 +61,18 @@ namespace NS_Parrot
                 return;
 
             string shapeName = null;
-            if (!DA.GetData(0, ref shapeName)) { return; }//µÚÒ»¸öÊäÈë²ÎÊý
+            if (!DA.GetData(0, ref shapeName)) { return; }//ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
             Point3d startPoint = new Point3d();
-            if (!DA.GetData(1, ref startPoint)) { return; }//µÚ¶þ¸öÊäÈë²ÎÊý
+            if (!DA.GetData(1, ref startPoint)) { return; }//ï¿½Ú¶ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
 
             Point3d endPoint = new Point3d();
-            if (!DA.GetData(2, ref endPoint)) { return; }//µÚÈý¸öÊäÈë²ÎÊý
+            if (!DA.GetData(2, ref endPoint)) { return; }//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
             TSM.Position position;
             PositionGoo positionGoo = null;
-            if (!DA.GetData(3, ref positionGoo))//µÚËÄ¸öÊäÈë²ÎÊý
+            if (!DA.GetData(3, ref positionGoo))//ï¿½ï¿½ï¿½Ä¸ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
             {
                 return;
             }
@@ -89,7 +89,7 @@ namespace NS_Parrot
             brep.Position = position;
             brep.Insert();
             myModel.CommitChanges();
-            DA.SetData(0, brep);//µÚÒ»¸öÊä³ö²ÎÊý
+            DA.SetData(0, brep);//ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
             TeklaModelObjectList.Add(brep);
 
 
@@ -106,12 +106,12 @@ namespace NS_Parrot
         {
             get
             {
-                return null;
+                return GeneratedIcon.Get("gen_PutAShapeInTekla");
                 //return null;
 
             }
         }
-        //protected override System.Drawing.Bitmap Icon => null;
+        //protected override System.Drawing.Bitmap Icon => GeneratedIcon.Get("gen_PutAShapeInTekla");
 
         /// <summary>
         /// Each component must have a unique Guid to identify it. 
@@ -122,12 +122,12 @@ namespace NS_Parrot
 
 
         ///<summary>
-        ///µ±µç³Ø±»²åÈëÎÄµµÊ±£¬¸ÃÊÂ¼þ½«±»Ö´ÐÐ
+        ///ï¿½ï¿½ï¿½ï¿½Ø±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Äµï¿½Ê±ï¿½ï¿½ï¿½ï¿½ï¿½Â¼ï¿½ï¿½ï¿½ï¿½ï¿½Ö´ï¿½ï¿½
         /// </summary>
         public override void AddedToDocument(GH_Document document)
         {
             base.AddedToDocument(document);
-            SolutionExpired += (sender, args) =>//µ±ÐèÒªÖØÐÂ¼ÆËãÊ±£¬¸ÃÊÂ¼þ½«±»Ö´ÐÐ
+            SolutionExpired += (sender, args) =>//ï¿½ï¿½ï¿½ï¿½Òªï¿½ï¿½ï¿½Â¼ï¿½ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½ï¿½Â¼ï¿½ï¿½ï¿½ï¿½ï¿½Ö´ï¿½ï¿½
             {
                 foreach (var item in TeklaModelObjectList)
                 {
@@ -147,7 +147,7 @@ namespace NS_Parrot
         {
             get
             {
-                return "ÎÒµÄµÚÒ»¸öGH×é¼þ£¡";
+                return "ï¿½ÒµÄµï¿½Ò»ï¿½ï¿½GHï¿½ï¿½ï¿½ï¿½ï¿½";
             }
         }
 
@@ -158,11 +158,11 @@ namespace NS_Parrot
             menu.Items.Add(item1);
             item1.Click += new EventHandler((o, e) =>
             {
-                TeklaModelObjectList.Clear();//ÇÐ¶ÏGHºÍTeklaÖ®¼äµÄ¹ØÁª
+                TeklaModelObjectList.Clear();//ï¿½Ð¶ï¿½GHï¿½ï¿½TeklaÖ®ï¿½ï¿½Ä¹ï¿½ï¿½ï¿½
             });
 
             ToolStripMenuItem item2 = new ToolStripMenuItem();
-            item2.Text = "Ñ¡ÔñTekla¶ÔÏó";
+            item2.Text = "Ñ¡ï¿½ï¿½Teklaï¿½ï¿½ï¿½ï¿½";
             menu.Items.Add(item2);
             TSM.UI.ModelObjectSelector modelObjectSelector = new TSM.UI.ModelObjectSelector();
             item2.Click += new EventHandler((o, e) =>
@@ -175,7 +175,7 @@ namespace NS_Parrot
 
 
             ToolStripMenuItem item3 = new ToolStripMenuItem();
-            item3.Text = "É¾³ýTekla¶ÔÏó";
+            item3.Text = "É¾ï¿½ï¿½Teklaï¿½ï¿½ï¿½ï¿½";
             menu.Items.Add(item3);
             item3.Click += new EventHandler((o, e) =>
             {

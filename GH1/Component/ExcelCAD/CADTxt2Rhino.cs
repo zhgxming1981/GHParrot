@@ -152,7 +152,7 @@ namespace NS_Parrot
             {
                 //You can add image files to your project resources and access them like this:
                 // return Resources.IconForThisComponent;
-                return null;
+                return GeneratedIcon.Get("gen_CADTxt2Rhino");
             }
         }
 
