@@ -1,15 +1,7 @@
 ﻿Imports INFITF
-Imports ProductStructureTypeLib
 Imports MECMOD
-Imports HybridShapeTypeLib
-Imports Microsoft.VisualBasic.FileIO
-Imports KnowledgewareTypeLib
+Imports ProductStructureTypeLib
 Imports Rhino.Geometry
-Imports Rhino.Render
-Imports System.Security.Cryptography
-Imports System.ComponentModel
-Imports PARTITF
-Imports Grasshopper.Kernel.Types
 Imports Rhino.Geometry.Collections
 
 

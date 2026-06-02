@@ -8,7 +8,7 @@
     <TargetExt>.gha</TargetExt>
     <PlatformTarget>x64</PlatformTarget>
     <Platforms>AnyCPU;x64;x86</Platforms>
-    <BaseOutputPath>E:\程序\GH1 20260424\GH1\输出</BaseOutputPath>
+    <BaseOutputPath>$(ParrotOutputDir)</BaseOutputPath>
   </PropertyGroup>
 	
   <ItemGroup>
@@ -96,7 +96,7 @@
 	
   <ItemGroup>
     <None Include="..\.editorconfig" Link=".editorconfig" />
-    <None Include="D:\Program Files\Tekla Structures\2025.0\bin\SQLite.Interop.dll">
+    <None Include="$(Tekla2025Bin)\SQLite.Interop.dll">
       <Link>SQLite.Interop.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
@@ -104,7 +104,6 @@
   
   <ItemGroup>
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
-    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
   </ItemGroup>
   
   <ItemGroup>
@@ -116,31 +115,31 @@
   
   <ItemGroup>
     <Reference Include="GH_IO">
-      <HintPath>D:\Program Files\Rhino 8\Plug-ins\Grasshopper\GH_IO.dll</HintPath>
+      <HintPath>$(Rhino8Dir)\Plug-ins\Grasshopper\GH_IO.dll</HintPath>
     </Reference>
     <Reference Include="Grasshopper">
-      <HintPath>D:\Program Files\Rhino 8\Plug-ins\Grasshopper\Grasshopper.dll</HintPath>
+      <HintPath>$(Rhino8Dir)\Plug-ins\Grasshopper\Grasshopper.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="GrasshopperTeklaLink">
       <HintPath>..\GrasshopperTeklaLink2022v1.15 - 副本.dll</HintPath>
     </Reference>
     <Reference Include="RhinoCommon">
-      <HintPath>D:\Program Files\Rhino 8\System\RhinoCommon.dll</HintPath>
+      <HintPath>$(Rhino8Dir)\System\RhinoCommon.dll</HintPath>
     </Reference>
     <Reference Include="System.Data.SQLite">
-      <HintPath>D:\Program Files\Tekla Structures\2025.0\bin\System.Data.SQLite.dll</HintPath>
+      <HintPath>$(Tekla2025Bin)\System.Data.SQLite.dll</HintPath>
     </Reference>
     <Reference Include="System.Management" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="Tekla.Structures">
-      <HintPath>D:\Program Files\Tekla Structures\2025.0\bin\Tekla.Structures.dll</HintPath>
+      <HintPath>$(Tekla2025Bin)\Tekla.Structures.dll</HintPath>
     </Reference>
     <Reference Include="Tekla.Structures.Geometry3d.Compatibility">
-      <HintPath>D:\Program Files\Tekla Structures\2025.0\bin\Tekla.Structures.Geometry3d.Compatibility.dll</HintPath>
+      <HintPath>$(Tekla2025Bin)\Tekla.Structures.Geometry3d.Compatibility.dll</HintPath>
     </Reference>
     <Reference Include="Tekla.Structures.Model">
-      <HintPath>D:\Program Files\Tekla Structures\2025.0\bin\Tekla.Structures.Model.dll</HintPath>
+      <HintPath>$(Tekla2025Bin)\Tekla.Structures.Model.dll</HintPath>
     </Reference>
   </ItemGroup>
   
@@ -177,7 +176,7 @@
   </ItemGroup>
   
   <PropertyGroup Condition="$(Configuration) == 'Debug' AND $([MSBuild]::IsOSPlatform(Windows))">
-    <StartProgram>D:\Program Files\Rhino 8\System\Rhino.exe</StartProgram>
+    <StartProgram>$(Rhino8Dir)\System\Rhino.exe</StartProgram>
     <StartArguments></StartArguments>
     <StartAction>Program</StartAction>
   </PropertyGroup>

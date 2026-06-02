@@ -1,4 +1,4 @@
-﻿using CommonFunction;
+using CommonFunction;
 using GH_IO.Serialization;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
@@ -27,10 +27,11 @@ namespace NS_Parrot
 
         private bool _lastInputRun;
         private readonly List<Guid> _lastResult = new List<Guid>();
+        private readonly List<GeometryBase> _previewGeometry = new List<GeometryBase>();
 
         public ImportRhinoObjectsByLayer()
-          : base("按图层导入Rhino对象", "ImportByLayer",
-              "从未打开的Rhino文件中导入指定图层上的顶层对象到当前Rhino文档",
+          : base("ImportRhinoObjectsByLayer", "ImportByLayer",
+              "从未打开的Rhino文件中读取指定图层对象，可选择导入到当前Rhino文档",
               "Parrot", "Rhino")
         {
         }
@@ -39,13 +40,13 @@ namespace NS_Parrot
         {
             pManager.AddTextParameter("文件路径", "File", "Rhino文件路径", GH_ParamAccess.item);
             pManager.AddTextParameter("图层名", "Layer", "要导入的图层名，支持完整图层路径", GH_ParamAccess.list);
-            pManager.AddBooleanParameter("Run", "Run", "执行导入", GH_ParamAccess.item, false);
+            pManager.AddBooleanParameter("导入Rhino", "Import", "是否将对象真正导入到当前Rhino文档", GH_ParamAccess.item, false);
+            pManager.AddBooleanParameter("Run", "Run", "导入Rhino为True时，执行导入", GH_ParamAccess.item, false);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
-            pManager.AddGenericParameter("实体", "Obj", "导入到当前Rhino文档中的Rhino对象", GH_ParamAccess.list);
-            pManager.AddGenericParameter("引用", "Ref", "导入对象的Grasshopper引用对象", GH_ParamAccess.list);
+            pManager.AddGenericParameter("引用", "Ref", "Grasshopper可用的几何或Rhino引用对象", GH_ParamAccess.list);
         }
 
         public override void CreateAttributes()
@@ -59,15 +60,23 @@ namespace NS_Parrot
             {
                 BoundingBox box = base.ClippingBox;
                 RhinoDoc doc = RhinoDoc.ActiveDoc;
-                if (doc == null || _lastResult.Count == 0)
-                    return box;
 
-                foreach (Guid id in _lastResult)
+                foreach (GeometryBase geometry in _previewGeometry)
                 {
-                    RhinoObject obj = doc.Objects.FindId(id);
-                    BoundingBox objectBox = obj?.Geometry?.GetBoundingBox(true) ?? BoundingBox.Empty;
-                    if (objectBox.IsValid)
-                        box.Union(objectBox);
+                    BoundingBox geometryBox = geometry?.GetBoundingBox(true) ?? BoundingBox.Empty;
+                    if (geometryBox.IsValid)
+                        box.Union(geometryBox);
+                }
+
+                if (doc != null)
+                {
+                    foreach (Guid id in _lastResult)
+                    {
+                        RhinoObject obj = doc.Objects.FindId(id);
+                        BoundingBox objectBox = obj?.Geometry?.GetBoundingBox(true) ?? BoundingBox.Empty;
+                        if (objectBox.IsValid)
+                            box.Union(objectBox);
+                    }
                 }
 
                 return box;
@@ -83,18 +92,22 @@ namespace NS_Parrot
         {
             base.DrawViewportWires(args);
 
-            if (Hidden || Locked || Attributes?.Selected != true || _lastResult.Count == 0)
+            if (Hidden || Locked || Attributes?.Selected != true)
                 return;
 
             RhinoDoc doc = RhinoDoc.ActiveDoc;
-            if (doc == null)
-                return;
 
-            foreach (Guid id in _lastResult)
+            foreach (GeometryBase geometry in _previewGeometry)
+                DrawGeometryPreview(args, doc, geometry, Transform.Identity, args.WireColour_Selected, new HashSet<Guid>());
+
+            if (doc != null)
             {
-                RhinoObject obj = doc.Objects.FindId(id);
-                if (obj != null)
-                    DrawImportedObjectPreview(args, doc, obj, args.WireColour_Selected);
+                foreach (Guid id in _lastResult)
+                {
+                    RhinoObject obj = doc.Objects.FindId(id);
+                    if (obj != null)
+                        DrawImportedObjectPreview(args, doc, obj, args.WireColour_Selected);
+                }
             }
         }
 
@@ -105,20 +118,41 @@ namespace NS_Parrot
 
             string filePath = "";
             List<string> layerNames = new List<string>();
+            bool importToRhino = false;
             bool inputRun = false;
 
             if (!DA.GetData(0, ref filePath)) { return; }
             if (!DA.GetDataList(1, layerNames)) { return; }
-            DA.GetData(2, ref inputRun);
+            DA.GetData(2, ref importToRhino);
+            DA.GetData(3, ref inputRun);
 
             bool shouldRun = ButtonRun || (inputRun && !_lastInputRun);
             _lastInputRun = inputRun;
             ButtonRun = false;
 
+            if (!importToRhino)
+            {
+                _lastResult.Clear();
+                try
+                {
+                    List<GeometryBase> geometry = ReadLayerGeometry(filePath, layerNames);
+                    _previewGeometry.Clear();
+                    _previewGeometry.AddRange(geometry.Select(item => item?.Duplicate()).Where(item => item != null));
+                    DA.SetDataList(0, geometry);
+                }
+                catch (Exception ex)
+                {
+                    _previewGeometry.Clear();
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
+                }
+                return;
+            }
+
+            _previewGeometry.Clear();
+
             if (!shouldRun)
             {
-                DA.SetDataList(0, GetOutputObjects());
-                DA.SetDataList(1, GetOutputReferences());
+                DA.SetDataList(0, GetOutputReferences());
                 return;
             }
 
@@ -127,29 +161,13 @@ namespace NS_Parrot
                 List<Guid> result = ImportObjects(filePath, layerNames);
                 _lastResult.Clear();
                 _lastResult.AddRange(result);
-                DA.SetDataList(0, GetOutputObjects());
-                DA.SetDataList(1, GetOutputReferences());
+                DA.SetDataList(0, GetOutputReferences());
             }
             catch (Exception ex)
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
-                DA.SetDataList(0, GetOutputObjects());
-                DA.SetDataList(1, GetOutputReferences());
+                DA.SetDataList(0, GetOutputReferences());
             }
-        }
-
-        private List<object> GetOutputObjects()
-        {
-            RhinoDoc doc = RhinoDoc.ActiveDoc;
-            List<object> output = new List<object>();
-
-            foreach (Guid id in _lastResult)
-            {
-                RhinoObject obj = doc?.Objects.FindId(id);
-                output.Add(obj ?? (object)new GH_Guid(id));
-            }
-
-            return output;
         }
 
         private List<object> GetOutputReferences()
@@ -237,6 +255,81 @@ namespace NS_Parrot
             }
 
             return base.Read(reader);
+        }
+
+        private List<GeometryBase> ReadLayerGeometry(string filePath, List<string> layerNames)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                throw new ArgumentException("Rhino文件路径为空。");
+            if (!File.Exists(filePath))
+                throw new FileNotFoundException("找不到Rhino文件。", filePath);
+            if (layerNames == null || layerNames.All(string.IsNullOrWhiteSpace))
+                throw new ArgumentException("图层名为空。");
+
+            File3dm file = File3dm.Read(filePath);
+            if (file == null)
+                throw new InvalidOperationException("无法读取Rhino文件。");
+
+            HashSet<int> sourceLayerIndices = FindSourceLayerIndices(file, layerNames);
+            if (sourceLayerIndices.Count == 0)
+                throw new InvalidOperationException("在外部Rhino文件中找不到指定图层。");
+
+            HashSet<Guid> definitionObjectIds = GetDefinitionObjectIds(file);
+            List<GeometryBase> result = new List<GeometryBase>();
+
+            foreach (File3dmObject fileObject in file.Objects)
+            {
+                if (fileObject == null || fileObject.Geometry == null || fileObject.Attributes == null)
+                    continue;
+                if (definitionObjectIds.Contains(fileObject.Id))
+                    continue;
+                if (!sourceLayerIndices.Contains(fileObject.Attributes.LayerIndex))
+                    continue;
+
+                result.AddRange(DuplicateFileObjectGeometry(file, fileObject, Transform.Identity, new HashSet<Guid>()));
+            }
+
+            if (result.Count == 0)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "指定图层上没有可读取的顶层对象。");
+
+            return result;
+        }
+
+        private static IEnumerable<GeometryBase> DuplicateFileObjectGeometry(File3dm file, File3dmObject fileObject, Transform transform, HashSet<Guid> visitedDefinitions)
+        {
+            if (fileObject?.Geometry == null)
+                yield break;
+
+            if (fileObject.Geometry is InstanceReferenceGeometry instanceReference)
+            {
+                InstanceDefinitionGeometry definition = file.AllInstanceDefinitions.FindId(instanceReference.ParentIdefId);
+                Transform instanceTransform = transform * instanceReference.Xform;
+                foreach (GeometryBase geometry in DuplicateDefinitionGeometry(file, definition, instanceTransform, visitedDefinitions))
+                    yield return geometry;
+                yield break;
+            }
+
+            GeometryBase duplicated = fileObject.Geometry.Duplicate();
+            if (duplicated == null)
+                yield break;
+
+            duplicated.Transform(transform);
+            yield return duplicated;
+        }
+
+        private static IEnumerable<GeometryBase> DuplicateDefinitionGeometry(File3dm file, InstanceDefinitionGeometry definition, Transform transform, HashSet<Guid> visitedDefinitions)
+        {
+            if (file == null || definition == null || !visitedDefinitions.Add(definition.Id))
+                yield break;
+
+            foreach (Guid objectId in definition.GetObjectIds())
+            {
+                File3dmObject childObject = file.Objects.FindId(objectId);
+                foreach (GeometryBase geometry in DuplicateFileObjectGeometry(file, childObject, transform, visitedDefinitions))
+                    yield return geometry;
+            }
+
+            visitedDefinitions.Remove(definition.Id);
         }
 
         private List<Guid> ImportObjects(string filePath, List<string> layerNames)
@@ -423,6 +516,9 @@ namespace NS_Parrot
 
             if (geometry is InstanceReferenceGeometry instanceReference)
             {
+                if (doc == null)
+                    return;
+
                 InstanceDefinition nestedDefinition = doc.InstanceDefinitions.FindId(instanceReference.ParentIdefId);
                 Transform nestedTransform = transform * instanceReference.Xform;
                 DrawInstanceDefinitionPreview(args, doc, nestedDefinition, nestedTransform, color, visited);

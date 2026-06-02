@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 using Grasshopper.Kernel;
@@ -16,7 +16,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the XingCaiLibray class.
         /// </summary>
         public XingCaiLibray()
-          : base("型材库", "型材库",
+          : base("XingCaiLibray", "型材库",
               "型材库",
               "Parrot", "库")
         {

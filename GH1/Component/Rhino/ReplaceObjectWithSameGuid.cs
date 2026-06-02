@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 using Grasshopper.Kernel;
@@ -14,7 +14,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the ReplaceObjectWithSameGuid class.
         /// </summary>
         public ReplaceObjectWithSameGuid()
-          : base("替换物件", "替换物件",
+          : base("ReplaceObjectWithSameGuid", "替换物件",
               "替换物件，保持Guid不变",
               "Parrot", "工具")
         {

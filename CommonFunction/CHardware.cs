@@ -131,7 +131,6 @@ namespace CommonFunction
         [DllImport("IPHLPAPI.dll")]
         private static extern int SendARP(Int32 DestIP, Int32 SrcIP, ref Int64 pMacAddr, ref Int32 PhyAddrLen);
 
-        private static string lanIp;//服务器ip地址
 
 
         /// <summary>

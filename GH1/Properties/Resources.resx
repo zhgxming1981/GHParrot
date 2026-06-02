@@ -190,11 +190,11 @@
   <data name="gen_BakeForTekla" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\gen_BakeForTekla.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
   </data>
+  <data name="gen_BindBrepToGhBooleanController" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_BindBrepToGhBooleanController.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
   <data name="gen_Block" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\gen_Block.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
-  </data>
-  <data name="gen_BrepFeatureCode" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>..\Resources\gen_BrepFeatureCode.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
   </data>
   <data name="gen_CADTxt2Rhino" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\gen_CADTxt2Rhino.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
@@ -217,8 +217,14 @@
   <data name="gen_CopyData_GroupData" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\gen_CopyData_GroupData.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
   </data>
+  <data name="gen_CopyRhinoObjectToLayer" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_CopyRhinoObjectToLayer.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
   <data name="gen_CountOfElement" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\gen_CountOfElement.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_CurrentRhinoDocument" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_CurrentRhinoDocument.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
   </data>
   <data name="gen_CreateBrepCodeDatabase" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\gen_CreateBrepCodeDatabase.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
@@ -264,6 +270,9 @@
   </data>
   <data name="gen_GetReferenceSurface" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\gen_GetReferenceSurface.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_ai_GetFileNamesByExtension" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_ai_GetFileNamesByExtension.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
   </data>
   <data name="gen_GetTeklaComponentInfo" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\gen_GetTeklaComponentInfo.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
@@ -337,6 +346,9 @@
   <data name="gen_PutAShapeInTekla" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\gen_PutAShapeInTekla.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
   </data>
+  <data name="gen_PulseTrigger" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_PulseTrigger.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
   <data name="gen_RebuildRow_Column" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\gen_RebuildRow_Column.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
   </data>
@@ -363,6 +375,12 @@
   </data>
   <data name="gen_SelectRhinoObjectByLayer" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\gen_SelectRhinoObjectByLayer.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_SelectRhinoObjectByLayerRun" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_SelectRhinoObjectByLayerRun.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_SelectDuplicateRhinoObjects" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_SelectDuplicateRhinoObjects.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
   </data>
   <data name="gen_SelectX" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\gen_SelectX.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>

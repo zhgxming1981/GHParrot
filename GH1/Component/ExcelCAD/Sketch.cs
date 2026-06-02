@@ -1,4 +1,4 @@
-﻿using CatiaFunction;
+using CatiaFunction;
 using CommonFunction;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the Sketch class.
         /// </summary>
         public Sketch()
-          : base("草图", "草图",
+          : base("Sketch", "草图",
               "将Rhino中的草图导入到catia中",
               "Parrot", "ExcelCAD")
         {

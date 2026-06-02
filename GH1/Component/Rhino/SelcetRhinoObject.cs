@@ -1,4 +1,4 @@
-﻿using CommonFunction;
+using CommonFunction;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
@@ -18,7 +18,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the SelcetRhinoObject class.
         /// </summary>
         public SelcetRhinoObject()
-          : base("选中物件", "选中物件",
+          : base("SelcetRhinoObject", "选中物件",
               "选中Rhino中的物件",
               "Parrot", "Rhino")
         {
@@ -28,6 +28,7 @@ namespace NS_Parrot
         public enum ButtonColor { Black, Grey }//按钮颜色
         public ButtonColor CurrentButtonColor { get; set; } = ButtonColor.Black;//当前的按钮颜色
         public List<GH_Guid> guid = new List<GH_Guid>();
+        internal List<Tuple<GH_RuntimeMessageLevel, string>> CachedRuntimeMessages { get; } = new List<Tuple<GH_RuntimeMessageLevel, string>>();
         /// <summary>
         /// Registers all the input parameters for this component.
         /// </summary>
@@ -60,6 +61,9 @@ namespace NS_Parrot
 
             guid.Clear();
             if (!DA.GetDataList(0, guid)) { return; }
+
+            foreach (Tuple<GH_RuntimeMessageLevel, string> message in CachedRuntimeMessages)
+                AddRuntimeMessage(message.Item1, message.Item2);
         }
 
         /// <summary>
@@ -142,6 +146,8 @@ namespace NS_Parrot
             if (e.Button == MouseButtons.Left && buttonRect.Contains(e.CanvasLocation))
             {
                 SelcetRhinoObject info = (SelcetRhinoObject)Owner;
+                info.ClearRuntimeMessages();
+                info.CachedRuntimeMessages.Clear();
                 info.CurrentButtonColor = SelcetRhinoObject.ButtonColor.Grey;//修改按钮颜色
                 info.ExpireSolution(true);//告诉系统，电池需要重新计算
                 CMath.Delay(50);//暂停50ms，再绘制下一个状态
@@ -156,17 +162,91 @@ namespace NS_Parrot
 
         private void Select(SelcetRhinoObject obj1)
         {
-            if (obj1.guid != null)
+            if (obj1.guid == null)
+                return;
+
+            RhinoDoc doc = RhinoDoc.ActiveDoc;
+            if (doc == null)
             {
-                int count = obj1.guid.Count;
-                for (int i = 0; i < count; i++)
-                {
-                    Rhino.DocObjects.RhinoObject obj = RhinoDoc.ActiveDoc.Objects.Find(obj1.guid[i].Value);
-                    obj.Select(true, true);
-                }
+                AddCachedRuntimeMessage(obj1, GH_RuntimeMessageLevel.Error, "当前没有可用的Rhino文档。");
+                return;
             }
 
+            int emptyGuidCount = 0;
+            int missingCount = 0;
+            int hiddenCount = 0;
+            int lockedCount = 0;
+            int failedCount = 0;
+            int selectedCount = 0;
+            int validGuidCount = 0;
 
+            int count = obj1.guid.Count;
+            for (int i = 0; i < count; i++)
+            {
+                GH_Guid ghGuid = obj1.guid[i];
+                if (ghGuid == null || ghGuid.Value == Guid.Empty)
+                {
+                    emptyGuidCount++;
+                    continue;
+                }
+
+                validGuidCount++;
+                Rhino.DocObjects.RhinoObject obj = doc.Objects.Find(ghGuid.Value);
+                if (obj == null)
+                {
+                    missingCount++;
+                    continue;
+                }
+
+                bool isHidden = obj.IsHidden || IsObjectLayerHidden(doc, obj);
+                bool isLocked = obj.IsLocked || IsObjectLayerLocked(doc, obj);
+
+                if (isHidden)
+                    hiddenCount++;
+                if (isLocked)
+                    lockedCount++;
+
+                if (obj.Select(true, true) > 0)
+                    selectedCount++;
+                else
+                    failedCount++;
+            }
+
+            int notSelectedCount = Math.Max(0, validGuidCount - selectedCount);
+            if (selectedCount > 0)
+                AddCachedRuntimeMessage(obj1, GH_RuntimeMessageLevel.Remark, "已选中对象：" + selectedCount + " 个。");
+            if (notSelectedCount > 0)
+                AddCachedRuntimeMessage(obj1, GH_RuntimeMessageLevel.Warning, "输入有效Guid " + validGuidCount + " 个，实际选中 " + selectedCount + " 个，未选中 " + notSelectedCount + " 个。");
+            if (hiddenCount > 0)
+                AddCachedRuntimeMessage(obj1, GH_RuntimeMessageLevel.Warning, "有隐藏对象未被选中：" + hiddenCount + " 个。");
+            if (lockedCount > 0)
+                AddCachedRuntimeMessage(obj1, GH_RuntimeMessageLevel.Warning, "有锁定对象未被选中：" + lockedCount + " 个。");
+            if (failedCount > 0)
+                AddCachedRuntimeMessage(obj1, GH_RuntimeMessageLevel.Warning, "选择失败对象：" + failedCount + " 个。");
+            if (missingCount > 0)
+                AddCachedRuntimeMessage(obj1, GH_RuntimeMessageLevel.Warning, "找不到Guid对应的Rhino对象：" + missingCount + " 个。");
+            if (emptyGuidCount > 0)
+                AddCachedRuntimeMessage(obj1, GH_RuntimeMessageLevel.Warning, "空Guid：" + emptyGuidCount + " 个。");
+
+            doc.Views.Redraw();
+        }
+
+        private static void AddCachedRuntimeMessage(SelcetRhinoObject component, GH_RuntimeMessageLevel level, string message)
+        {
+            component.CachedRuntimeMessages.Add(Tuple.Create(level, message));
+            component.AddRuntimeMessage(level, message);
+        }
+
+        private static bool IsObjectLayerHidden(RhinoDoc doc, Rhino.DocObjects.RhinoObject obj)
+        {
+            Rhino.DocObjects.Layer layer = doc?.Layers.FindIndex(obj?.Attributes.LayerIndex ?? -1);
+            return layer != null && !layer.IsVisible;
+        }
+
+        private static bool IsObjectLayerLocked(RhinoDoc doc, Rhino.DocObjects.RhinoObject obj)
+        {
+            Rhino.DocObjects.Layer layer = doc?.Layers.FindIndex(obj?.Attributes.LayerIndex ?? -1);
+            return layer != null && layer.IsLocked;
         }
 
 

@@ -1,4 +1,4 @@
-﻿using Grasshopper;
+using Grasshopper;
 using Grasshopper.Kernel;
 using GH_IO.Types;
 using Rhino.Geometry;
@@ -22,7 +22,7 @@ namespace NS_Parrot
         /// new tabs/panels will automatically be created.
         /// </summary>
         public PutAShapeInTekla()
-          : base("������״", "������״",
+          : base("PutAShapeInTekla", "������״",
             "�����������������",
             "Parrot", "Tekla")
         {

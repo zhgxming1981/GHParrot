@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
@@ -17,7 +17,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the XiangJiaoQuXian class.
         /// </summary>
         public GroupTheIntersectingCurves()
-          : base("相交曲线分组", "相交曲线",
+          : base("GroupTheIntersectingCurves", "相交曲线",
               "将曲线按相交来分组",
               "Parrot", "工具")
         {

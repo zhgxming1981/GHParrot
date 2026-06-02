@@ -1,4 +1,4 @@
-﻿using CommonFunction;
+using CommonFunction;
 using GH_IO.Serialization;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
@@ -28,7 +28,8 @@ namespace NS_Parrot
         internal bool ButtonRun { get; set; }
 
         private bool _lastInputRun;
-        private Guid _lastGuid = Guid.Empty;
+        private readonly List<Guid> _lastGuids = new List<Guid>();
+        private readonly List<InstanceReferenceGeometry> _lastBlockReferences = new List<InstanceReferenceGeometry>();
         private string _lastFilePath = "";
         private string _blockNameCacheFilePath = "";
         private DateTime _blockNameCacheLastWriteUtc = DateTime.MinValue;
@@ -47,25 +48,26 @@ namespace NS_Parrot
         private const string SourceFileTimeKey = "Parrot.ImportRhinoBlock.SourceFileLastWriteUtc";
 
         public ImportRhinoBlock()
-          : base("\u5bfc\u5165Rhino\u5757", "ImportRhinoBlock",
-              "\u4ece\u672a\u6253\u5f00\u7684Rhino\u6587\u4ef6\u5bfc\u5165\u6307\u5b9a\u5757\uff0c\u5e76\u5728\u5f53\u524dRhino\u4e2d\u65b0\u589e\u4e00\u4e2a\u5757\u5b9e\u4f8b",
+          : base("ImportRhinoBlock", "ImportRhinoBlock",
+              "从未打开的Rhino文件导入指定块，并在当前Rhino中新增一个块实例",
               "Parrot", "Rhino")
         {
         }
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddTextParameter("\u6587\u4ef6\u8def\u5f84", "File", "Rhino\u6587\u4ef6\u8def\u5f84", GH_ParamAccess.item);
-            pManager.AddTextParameter("\u5757\u540d", "Block", "\u8981\u5bfc\u5165\u7684\u5757\u540d", GH_ParamAccess.item);
-            pManager.AddPlaneParameter("\u5de5\u4f5c\u5e73\u9762", "Plane", "\u5757\u5b9e\u4f8b\u63d2\u5165\u7684\u5de5\u4f5c\u5e73\u9762", GH_ParamAccess.item, Plane.WorldXY);
-            pManager.AddBooleanParameter("Run", "Run", "\u6267\u884c\u5bfc\u5165\u5e76\u63d2\u5165\u5757\u5b9e\u4f8b", GH_ParamAccess.item, false);
+            pManager.AddTextParameter("文件路径", "File", "Rhino文件路径", GH_ParamAccess.item);
+            pManager.AddTextParameter("块名", "Block", "要导入的块名", GH_ParamAccess.item);
+            pManager.AddPlaneParameter("工作平面", "Plane", "块实例插入的工作平面", GH_ParamAccess.list, Plane.WorldXY);
+            pManager.AddBooleanParameter("Run", "Run", "执行导入并插入块实例", GH_ParamAccess.item, false);
+            pManager.AddBooleanParameter("输出Guid", "AsGuid", "为True时插入Rhino块实例并输出Guid；为False时输出Grasshopper中未Bake的块", GH_ParamAccess.item, true);
             pManager[1].Optional = true;
             pManager[2].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
-            pManager.AddGenericParameter("Guid", "Guid", "\u65b0\u589e\u5757\u5b9e\u4f8b\u7684Guid", GH_ParamAccess.item);
+            pManager.AddGenericParameter("块", "Block", "输出Guid为True时输出新增块实例的Guid；为False时输出Grasshopper中未Bake的块", GH_ParamAccess.list);
         }
 
         public override void CreateAttributes()
@@ -81,12 +83,16 @@ namespace NS_Parrot
             string filePath = "";
             string blockName = "";
             bool inputRun = false;
-            Plane workPlane = Plane.WorldXY;
+            bool outputGuid = true;
+            List<Plane> workPlanes = new List<Plane>();
 
             if (!DA.GetData(0, ref filePath)) { return; }
             DA.GetData(1, ref blockName);
-            DA.GetData(2, ref workPlane);
+            DA.GetDataList(2, workPlanes);
+            if (workPlanes.Count == 0)
+                workPlanes.Add(Plane.WorldXY);
             DA.GetData(3, ref inputRun);
+            DA.GetData(4, ref outputGuid);
 
             ConfigureBlockFileWatcher(filePath);
             bool blockListChanged = RefreshBlockNameCache(filePath);
@@ -96,9 +102,9 @@ namespace NS_Parrot
                 blockName = _selectedBlockName;
 
             if (blockListChanged && string.IsNullOrWhiteSpace(blockName) && _blockNames.Count > 0)
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "\u5916\u90e8Rhino\u6587\u4ef6\u7684\u5757\u5217\u8868\u5df2\u66f4\u65b0\uff0c\u8bf7\u91cd\u65b0\u9009\u62e9\u8981\u5bfc\u5165\u7684\u5757\u3002");
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "外部Rhino文件的块列表已更新，请重新选择要导入的块。");
 
-            UpdatePreview(filePath, blockName, workPlane);
+            UpdatePreview(filePath, blockName, workPlanes);
 
             bool shouldRun = ButtonRun || (inputRun && !_lastInputRun);
             _lastInputRun = inputRun;
@@ -107,8 +113,10 @@ namespace NS_Parrot
             if (!shouldRun)
             {
                 CheckReferencedBlockChanges(filePath, blockName);
-                if (_lastGuid != Guid.Empty)
-                    DA.SetData(0, new GH_Guid(_lastGuid));
+                if (outputGuid && _lastGuids.Count > 0)
+                    DA.SetDataList(0, _lastGuids.Select(guid => new GH_Guid(guid)));
+                else if (!outputGuid && _lastBlockReferences.Count > 0)
+                    DA.SetDataList(0, _lastBlockReferences.Select(CreateBlockReferenceGoo).Where(reference => reference != null));
                 return;
             }
 
@@ -117,10 +125,24 @@ namespace NS_Parrot
                 RefreshBlockNameCache(filePath, true);
                 if (string.IsNullOrWhiteSpace(blockName))
                     blockName = _selectedBlockName;
-                Guid guid = ImportAndInsert(filePath, blockName, workPlane);
-                _lastGuid = guid;
-                if (guid != Guid.Empty)
-                    DA.SetData(0, new GH_Guid(guid));
+                if (outputGuid)
+                {
+                    List<Guid> guids = ImportAndInsert(filePath, blockName, workPlanes);
+                    _lastGuids.Clear();
+                    _lastGuids.AddRange(guids);
+                    _lastBlockReferences.Clear();
+                    if (guids.Count > 0)
+                        DA.SetDataList(0, guids.Select(guid => new GH_Guid(guid)));
+                }
+                else
+                {
+                    List<InstanceReferenceGeometry> blockReferences = ImportBlockReferences(filePath, blockName, workPlanes);
+                    _lastBlockReferences.Clear();
+                    _lastBlockReferences.AddRange(blockReferences);
+                    _lastGuids.Clear();
+                    if (blockReferences.Count > 0)
+                        DA.SetDataList(0, blockReferences.Select(CreateBlockReferenceGoo).Where(reference => reference != null));
+                }
             }
             catch (Exception ex)
             {
@@ -132,20 +154,20 @@ namespace NS_Parrot
         {
             base.AppendAdditionalComponentMenuItems(menu);
 
-            ToolStripMenuItem root = new ToolStripMenuItem("\u5757\u540d");
+            ToolStripMenuItem root = new ToolStripMenuItem("块名");
             menu.Items.Add(root);
 
             RefreshBlockNameCache(_lastFilePath);
 
             if (string.IsNullOrWhiteSpace(_lastFilePath))
             {
-                root.DropDownItems.Add(new ToolStripMenuItem("\u8bf7\u5148\u8f93\u5165\u6587\u4ef6\u8def\u5f84") { Enabled = false });
+                root.DropDownItems.Add(new ToolStripMenuItem("请先输入文件路径") { Enabled = false });
                 return;
             }
 
             if (_blockNames.Count == 0)
             {
-                root.DropDownItems.Add(new ToolStripMenuItem("\u672a\u627e\u5230\u5757\u540d") { Enabled = false });
+                root.DropDownItems.Add(new ToolStripMenuItem("未找到块名") { Enabled = false });
                 return;
             }
 
@@ -307,8 +329,8 @@ namespace NS_Parrot
         {
             writer.SetString("SelectedBlockName", _selectedBlockName ?? "");
             writer.SetString("LastFilePath", _lastFilePath ?? "");
-            if (_lastGuid != Guid.Empty)
-                writer.SetString("LastGuid", _lastGuid.ToString());
+            if (_lastGuids.Count > 0)
+                writer.SetString("LastGuids", string.Join(";", _lastGuids.Select(guid => guid.ToString())));
 
             return base.Write(writer);
         }
@@ -328,8 +350,20 @@ namespace NS_Parrot
             }
 
             string guidText = "";
-            if (reader.TryGetString("LastGuid", ref guidText) && Guid.TryParse(guidText, out Guid guid))
-                _lastGuid = guid;
+            if (reader.TryGetString("LastGuids", ref guidText))
+            {
+                _lastGuids.Clear();
+                foreach (string item in guidText.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    if (Guid.TryParse(item, out Guid guid))
+                        _lastGuids.Add(guid);
+                }
+            }
+            else if (reader.TryGetString("LastGuid", ref guidText) && Guid.TryParse(guidText, out Guid guid))
+            {
+                _lastGuids.Clear();
+                _lastGuids.Add(guid);
+            }
 
             Message = _selectedBlockName;
             return base.Read(reader);
@@ -388,7 +422,7 @@ namespace NS_Parrot
                 args.Display.DrawText(text, color);
         }
 
-        private void UpdatePreview(string filePath, string blockName, Plane workPlane)
+        private void UpdatePreview(string filePath, string blockName, IEnumerable<Plane> workPlanes)
         {
             _previewGeometry.Clear();
             _previewBox = BoundingBox.Empty;
@@ -401,15 +435,19 @@ namespace NS_Parrot
             if (definition == null)
                 return;
 
-            Transform transform = GetInsertionTransform(workPlane) * GetSourceBlockInstanceTransform(file, definition);
-            foreach (GeometryBase geometry in BuildPreviewGeometry(file, definition, transform, new HashSet<Guid>()))
+            Transform sourceTransform = GetSourceBlockInstanceTransform(file, definition);
+            foreach (Plane workPlane in workPlanes)
             {
-                if (geometry == null)
-                    continue;
-                _previewGeometry.Add(geometry);
-                BoundingBox box = geometry.GetBoundingBox(false);
-                if (box.IsValid)
-                    _previewBox.Union(box);
+                Transform transform = GetInsertionTransform(workPlane) * sourceTransform;
+                foreach (GeometryBase geometry in BuildPreviewGeometry(file, definition, transform, new HashSet<Guid>()))
+                {
+                    if (geometry == null)
+                        continue;
+                    _previewGeometry.Add(geometry);
+                    BoundingBox box = geometry.GetBoundingBox(false);
+                    if (box.IsValid)
+                        _previewBox.Union(box);
+                }
             }
         }
 
@@ -445,26 +483,62 @@ namespace NS_Parrot
             visited.Remove(definition.Id);
         }
 
-        private Guid ImportAndInsert(string filePath, string blockName, Plane workPlane)
+        private List<Guid> ImportAndInsert(string filePath, string blockName, IEnumerable<Plane> workPlanes)
+        {
+            BlockInsertContext context = PrepareBlockInsert(filePath, blockName);
+            List<Guid> insertedIds = new List<Guid>();
+            if (context == null)
+                return insertedIds;
+
+            foreach (Plane workPlane in workPlanes)
+            {
+                Guid insertedId = InsertBlockInstance(context, workPlane);
+                if (insertedId != Guid.Empty)
+                    insertedIds.Add(insertedId);
+            }
+
+            context.Doc.Views.Redraw();
+            return insertedIds;
+        }
+
+        private List<InstanceReferenceGeometry> ImportBlockReferences(string filePath, string blockName, IEnumerable<Plane> workPlanes)
+        {
+            BlockInsertContext context = PrepareBlockInsert(filePath, blockName);
+            List<InstanceReferenceGeometry> references = new List<InstanceReferenceGeometry>();
+            if (context == null)
+                return references;
+
+            foreach (Plane workPlane in workPlanes)
+            {
+                InstanceReferenceGeometry reference = CreateBlockReference(context, workPlane);
+                if (reference != null)
+                    references.Add(reference);
+            }
+
+            context.Doc.Views.Redraw();
+            return references;
+        }
+
+        private BlockInsertContext PrepareBlockInsert(string filePath, string blockName)
         {
             if (string.IsNullOrWhiteSpace(filePath))
-                throw new ArgumentException("Rhino\u6587\u4ef6\u8def\u5f84\u4e3a\u7a7a\u3002");
+                throw new ArgumentException("Rhino文件路径为空。");
             if (!File.Exists(filePath))
-                throw new FileNotFoundException("\u627e\u4e0d\u5230Rhino\u6587\u4ef6\u3002", filePath);
+                throw new FileNotFoundException("找不到Rhino文件。", filePath);
             if (string.IsNullOrWhiteSpace(blockName))
-                throw new ArgumentException("\u5757\u540d\u4e3a\u7a7a\u3002");
+                throw new ArgumentException("块名为空。");
 
             RhinoDoc doc = RhinoDoc.ActiveDoc;
             if (doc == null)
-                throw new InvalidOperationException("\u5f53\u524d\u6ca1\u6709\u53ef\u7528\u7684Rhino\u6587\u6863\u3002");
+                throw new InvalidOperationException("当前没有可用的Rhino文档。");
 
             File3dm file = File3dm.Read(filePath);
             if (file == null)
-                throw new InvalidOperationException("\u65e0\u6cd5\u8bfb\u53d6Rhino\u6587\u4ef6\u3002");
+                throw new InvalidOperationException("无法读取Rhino文件。");
 
             InstanceDefinitionGeometry sourceDefinition = file.AllInstanceDefinitions.FindName(blockName);
             if (sourceDefinition == null)
-                throw new InvalidOperationException("\u5728\u5916\u90e8Rhino\u6587\u4ef6\u4e2d\u627e\u4e0d\u5230\u6307\u5b9a\u5757\uff1a" + blockName);
+                throw new InvalidOperationException("在外部Rhino文件中找不到指定块：" + blockName);
 
             InstanceDefinition existingDefinition = doc.InstanceDefinitions.Find(blockName);
             InstanceDefinition targetDefinition = existingDefinition;
@@ -486,7 +560,7 @@ namespace NS_Parrot
                 {
                     ImportBlockConflictChoice choice = ImportBlockConflictDialog.ShowDialog(blockName);
                     if (choice == ImportBlockConflictChoice.Cancel)
-                        return Guid.Empty;
+                        return null;
 
                     if (choice == ImportBlockConflictChoice.KeepCurrent)
                     {
@@ -514,7 +588,21 @@ namespace NS_Parrot
             }
 
             if (targetDefinition == null)
-                throw new InvalidOperationException("\u5757\u5b9a\u4e49\u5bfc\u5165\u5931\u8d25\u3002");
+                throw new InvalidOperationException("块定义导入失败。");
+
+            return new BlockInsertContext
+            {
+                Doc = doc,
+                TargetDefinition = targetDefinition,
+                SourceInstanceInfo = sourceInstanceInfo
+            };
+        }
+
+        private static Guid InsertBlockInstance(BlockInsertContext context, Plane workPlane)
+        {
+            RhinoDoc doc = context.Doc;
+            InstanceDefinition targetDefinition = context.TargetDefinition;
+            SourceBlockInstanceInfo sourceInstanceInfo = context.SourceInstanceInfo;
 
             ObjectAttributes instanceAttributes = sourceInstanceInfo.Attributes?.Duplicate() ?? doc.CreateDefaultAttributes();
             instanceAttributes.Visible = true;
@@ -524,12 +612,25 @@ namespace NS_Parrot
             Transform insertionTransform = GetInsertionTransform(workPlane) * sourceInstanceInfo.Xform;
             Guid insertedId = doc.Objects.AddInstanceObject(targetDefinition.Index, insertionTransform, instanceAttributes);
             if (insertedId == Guid.Empty)
-                throw new InvalidOperationException("\u5757\u5b9e\u4f8b\u63d2\u5165\u5931\u8d25\u3002");
+                throw new InvalidOperationException("块实例插入失败。");
 
             RhinoObject insertedObject = doc.Objects.FindId(insertedId);
             insertedObject?.Select(true);
-            doc.Views.Redraw();
             return insertedId;
+        }
+
+        private static InstanceReferenceGeometry CreateBlockReference(BlockInsertContext context, Plane workPlane)
+        {
+            InstanceDefinition targetDefinition = context.TargetDefinition;
+            SourceBlockInstanceInfo sourceInstanceInfo = context.SourceInstanceInfo;
+
+            Transform insertionTransform = GetInsertionTransform(workPlane) * sourceInstanceInfo.Xform;
+            return new InstanceReferenceGeometry(targetDefinition.Id, insertionTransform);
+        }
+
+        private static RhinoBlockReferenceGoo CreateBlockReferenceGoo(InstanceReferenceGeometry reference)
+        {
+            return reference == null ? null : new RhinoBlockReferenceGoo(reference);
         }
 
         private static Transform GetInsertionTransform(Plane workPlane)
@@ -566,11 +667,11 @@ namespace NS_Parrot
         private void ReportRecordStatus(BlockRecordStatus status)
         {
             if (status.SourceChanged)
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "\u5916\u90e8Rhino\u6587\u4ef6\u4e2d\u7684\u5757\u5b9a\u4e49\u5df2\u4fee\u6539\u3002");
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "外部Rhino文件中的块定义已修改。");
             if (status.SourceFileTimeChanged)
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "\u5916\u90e8Rhino\u6587\u4ef6\u5df2\u91cd\u65b0\u4fdd\u5b58\uff0c\u8bf7\u786e\u8ba4\u662f\u5426\u9700\u8981\u66ff\u6362\u672c\u56fe\u5757\u5b9a\u4e49\u3002");
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "外部Rhino文件已重新保存，请确认是否需要替换本图块定义。");
             if (status.LocalChanged)
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "\u5f53\u524dRhino\u6587\u6863\u4e2d\u7684\u5757\u5b9a\u4e49\u5df2\u4fee\u6539\u3002");
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "当前Rhino文档中的块定义已修改。");
         }
 
         private static bool AreBlockDefinitionsSame(RhinoDoc doc, File3dm file, InstanceDefinitionGeometry sourceDefinition, InstanceDefinition existingDefinition)
@@ -1016,7 +1117,7 @@ namespace NS_Parrot
             }
 
             if (!doc.InstanceDefinitions.ModifyGeometry(existingDefinition.Index, geometry, attributes))
-                throw new InvalidOperationException("\u66ff\u6362\u5f53\u524d\u5757\u5b9a\u4e49\u5931\u8d25\u3002");
+                throw new InvalidOperationException("替换当前块定义失败。");
 
             doc.InstanceDefinitions.Delete(tempDefinition.Index, true, true);
             return doc.InstanceDefinitions.FindId(existingDefinition.Id);
@@ -1071,7 +1172,7 @@ namespace NS_Parrot
             }
 
             if (geometry.Count == 0)
-                throw new InvalidOperationException("\u5757\u5b9a\u4e49\u4e2d\u6ca1\u6709\u53ef\u5bfc\u5165\u7684\u51e0\u4f55\uff1a" + sourceDefinition.Name);
+                throw new InvalidOperationException("块定义中没有可导入的几何：" + sourceDefinition.Name);
 
             int index = doc.InstanceDefinitions.Add(
                 targetName,
@@ -1081,7 +1182,7 @@ namespace NS_Parrot
                 attributes);
 
             if (index < 0)
-                throw new InvalidOperationException("\u5bfc\u5165\u5757\u5b9a\u4e49\u5931\u8d25\uff1a" + targetName);
+                throw new InvalidOperationException("导入块定义失败：" + targetName);
 
             imported[sourceDefinition.Id] = index;
             return index;
@@ -1232,13 +1333,222 @@ namespace NS_Parrot
         public ObjectAttributes Attributes;
     }
 
+    internal class BlockInsertContext
+    {
+        public RhinoDoc Doc;
+        public InstanceDefinition TargetDefinition;
+        public SourceBlockInstanceInfo SourceInstanceInfo;
+    }
+
+    internal sealed class RhinoBlockReferenceGoo : GH_GeometricGoo<InstanceReferenceGeometry>, IGH_BakeAwareData, IGH_PreviewData
+    {
+        public RhinoBlockReferenceGoo()
+        {
+        }
+
+        public RhinoBlockReferenceGoo(InstanceReferenceGeometry reference)
+        {
+            m_value = DuplicateReference(reference);
+        }
+
+        public override string TypeName
+        {
+            get { return "Rhino Block"; }
+        }
+
+        public override string TypeDescription
+        {
+            get { return "Grasshopper block reference that can be transformed before baking"; }
+        }
+
+        public override BoundingBox Boundingbox
+        {
+            get
+            {
+                RhinoDoc doc = RhinoDoc.ActiveDoc;
+                if (doc == null || m_value == null)
+                    return BoundingBox.Empty;
+
+                InstanceDefinition definition = doc.InstanceDefinitions.FindId(m_value.ParentIdefId);
+                return GetDefinitionBoundingBox(doc, definition, m_value.Xform, new HashSet<Guid>());
+            }
+        }
+
+        public override IGH_GeometricGoo DuplicateGeometry()
+        {
+            return new RhinoBlockReferenceGoo(m_value);
+        }
+
+        public override BoundingBox GetBoundingBox(Transform xform)
+        {
+            RhinoDoc doc = RhinoDoc.ActiveDoc;
+            if (doc == null || m_value == null)
+                return BoundingBox.Empty;
+
+            InstanceDefinition definition = doc.InstanceDefinitions.FindId(m_value.ParentIdefId);
+            return GetDefinitionBoundingBox(doc, definition, xform * m_value.Xform, new HashSet<Guid>());
+        }
+
+        public override IGH_GeometricGoo Transform(Transform xform)
+        {
+            if (m_value == null)
+                return new RhinoBlockReferenceGoo();
+
+            return new RhinoBlockReferenceGoo(new InstanceReferenceGeometry(m_value.ParentIdefId, xform * m_value.Xform));
+        }
+
+        public override IGH_GeometricGoo Morph(SpaceMorph xmorph)
+        {
+            return DuplicateGeometry();
+        }
+
+        public override string ToString()
+        {
+            if (m_value == null)
+                return "<null block>";
+
+            RhinoDoc doc = RhinoDoc.ActiveDoc;
+            InstanceDefinition definition = doc?.InstanceDefinitions.FindId(m_value.ParentIdefId);
+            return definition == null ? "Rhino Block" : "Rhino Block: " + definition.Name;
+        }
+
+        BoundingBox IGH_PreviewData.ClippingBox
+        {
+            get { return Boundingbox; }
+        }
+
+        void IGH_PreviewData.DrawViewportWires(GH_PreviewWireArgs args)
+        {
+            RhinoDoc doc = RhinoDoc.ActiveDoc;
+            if (doc == null || m_value == null)
+                return;
+
+            InstanceDefinition definition = doc.InstanceDefinitions.FindId(m_value.ParentIdefId);
+            DrawDefinitionWires(args, doc, definition, m_value.Xform, args.Color, new HashSet<Guid>());
+        }
+
+        void IGH_PreviewData.DrawViewportMeshes(GH_PreviewMeshArgs args)
+        {
+        }
+
+        bool IGH_BakeAwareData.BakeGeometry(RhinoDoc doc, ObjectAttributes att, out Guid id)
+        {
+            id = Guid.Empty;
+            if (doc == null || m_value == null)
+                return false;
+
+            InstanceDefinition definition = doc.InstanceDefinitions.FindId(m_value.ParentIdefId);
+            if (definition == null)
+                return false;
+
+            ObjectAttributes attributes = att?.Duplicate() ?? doc.CreateDefaultAttributes();
+            id = doc.Objects.AddInstanceObject(definition.Index, m_value.Xform, attributes);
+            return id != Guid.Empty;
+        }
+
+        private static InstanceReferenceGeometry DuplicateReference(InstanceReferenceGeometry reference)
+        {
+            return reference == null ? null : new InstanceReferenceGeometry(reference.ParentIdefId, reference.Xform);
+        }
+
+        private static BoundingBox GetDefinitionBoundingBox(RhinoDoc doc, InstanceDefinition definition, Transform transform, HashSet<Guid> visited)
+        {
+            BoundingBox result = BoundingBox.Empty;
+            if (doc == null || definition == null || !visited.Add(definition.Id))
+                return result;
+
+            foreach (RhinoObject child in definition.GetObjects())
+            {
+                BoundingBox box = GetGeometryBoundingBox(doc, child?.Geometry, transform, visited);
+                if (box.IsValid)
+                    result.Union(box);
+            }
+
+            visited.Remove(definition.Id);
+            return result;
+        }
+
+        private static BoundingBox GetGeometryBoundingBox(RhinoDoc doc, GeometryBase geometry, Transform transform, HashSet<Guid> visited)
+        {
+            if (geometry == null)
+                return BoundingBox.Empty;
+
+            if (geometry is InstanceReferenceGeometry instanceReference)
+            {
+                InstanceDefinition nestedDefinition = doc.InstanceDefinitions.FindId(instanceReference.ParentIdefId);
+                return GetDefinitionBoundingBox(doc, nestedDefinition, transform * instanceReference.Xform, visited);
+            }
+
+            GeometryBase duplicate = geometry.Duplicate();
+            if (duplicate == null)
+                return BoundingBox.Empty;
+
+            duplicate.Transform(transform);
+            return duplicate.GetBoundingBox(true);
+        }
+
+        private static void DrawDefinitionWires(GH_PreviewWireArgs args, RhinoDoc doc, InstanceDefinition definition, Transform transform, Color color, HashSet<Guid> visited)
+        {
+            if (definition == null || !visited.Add(definition.Id))
+                return;
+
+            foreach (RhinoObject child in definition.GetObjects())
+                DrawGeometryWires(args, doc, child?.Geometry, transform, color, visited);
+
+            visited.Remove(definition.Id);
+        }
+
+        private static void DrawGeometryWires(GH_PreviewWireArgs args, RhinoDoc doc, GeometryBase geometry, Transform transform, Color color, HashSet<Guid> visited)
+        {
+            if (geometry == null)
+                return;
+
+            if (geometry is InstanceReferenceGeometry instanceReference)
+            {
+                InstanceDefinition nestedDefinition = doc.InstanceDefinitions.FindId(instanceReference.ParentIdefId);
+                DrawDefinitionWires(args, doc, nestedDefinition, transform * instanceReference.Xform, color, visited);
+                return;
+            }
+
+            GeometryBase previewGeometry = geometry.Duplicate();
+            if (previewGeometry == null)
+                return;
+
+            previewGeometry.Transform(transform);
+
+            if (previewGeometry is Brep brep)
+                args.Pipeline.DrawBrepWires(brep, color);
+            else if (previewGeometry is Curve curve)
+                args.Pipeline.DrawCurve(curve, color);
+            else if (previewGeometry is Mesh mesh)
+                args.Pipeline.DrawMeshWires(mesh, color);
+            else if (previewGeometry is Rhino.Geometry.Point point)
+                args.Pipeline.DrawPoint(point.Location, color);
+            else if (previewGeometry is PointCloud cloud)
+            {
+                foreach (PointCloudItem item in cloud)
+                    args.Pipeline.DrawPoint(item.Location, color);
+            }
+            else if (previewGeometry is TextEntity text)
+                args.Pipeline.DrawText(text, color);
+            else if (previewGeometry is Extrusion extrusion)
+                args.Pipeline.DrawBrepWires(extrusion.ToBrep(), color);
+            else
+            {
+                BoundingBox box = previewGeometry.GetBoundingBox(true);
+                if (box.IsValid)
+                    args.Pipeline.DrawBox(box, color);
+            }
+        }
+    }
+
     internal class ImportBlockConflictDialog : Form
     {
         private ImportBlockConflictChoice _choice = ImportBlockConflictChoice.Cancel;
 
         private ImportBlockConflictDialog(string blockName)
         {
-            Text = "\u5757\u5b9a\u4e49\u5df2\u5b58\u5728";
+            Text = "块定义已存在";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -1247,17 +1557,17 @@ namespace NS_Parrot
 
             Label label = new Label
             {
-                Text = "\u5f53\u524dRhino\u6587\u6863\u4e2d\u5df2\u5b58\u5728\u540c\u540d\u5757\uff1a\r\n" + blockName,
+                Text = "当前Rhino文档中已存在同名块：\r\n" + blockName,
                 AutoSize = false,
                 Location = new System.Drawing.Point(12, 12),
                 Size = new Size(366, 42)
             };
             Controls.Add(label);
 
-            AddButton("\u4fdd\u7559\u672c\u56fe\u4e2d\u7684\u5757\u5b9a\u4e49", ImportBlockConflictChoice.KeepCurrent, 12, 62);
-            AddButton("\u7528\u5bfc\u5165\u7684\u5757\u66ff\u6362\u672c\u56fe\u7684\u5757\u5b9a\u4e49", ImportBlockConflictChoice.ReplaceCurrent, 12, 92);
-            AddButton("\u4e24\u8005\u90fd\u4fdd\u7559\uff08\u5bfc\u5165\u5757\u81ea\u52a8\u91cd\u547d\u540d\uff09", ImportBlockConflictChoice.RenameImported, 12, 122);
-            AddButton("\u53d6\u6d88\u5bfc\u5165", ImportBlockConflictChoice.Cancel, 12, 152);
+            AddButton("保留本图中的块定义", ImportBlockConflictChoice.KeepCurrent, 12, 62);
+            AddButton("用导入的块替换本图的块定义", ImportBlockConflictChoice.ReplaceCurrent, 12, 92);
+            AddButton("两者都保留（导入块自动重命名）", ImportBlockConflictChoice.RenameImported, 12, 122);
+            AddButton("取消导入", ImportBlockConflictChoice.Cancel, 12, 152);
         }
 
         public static ImportBlockConflictChoice ShowDialog(string blockName)

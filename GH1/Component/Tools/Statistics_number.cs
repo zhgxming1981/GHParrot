@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the Statistics_number class.
         /// </summary>
         public Statistics_number()
-          : base("统计Num", "统计Num",
+          : base("Statistics_number", "统计Num",
               "统计不同数字的数量",
               "Parrot", "数据")
         {

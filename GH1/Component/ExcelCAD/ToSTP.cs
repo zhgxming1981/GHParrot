@@ -1,4 +1,4 @@
-﻿using CommonFunction;
+using CommonFunction;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Types;
 using Rhino;
@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the ToSTP class.
         /// </summary>
         public ToSTP()
-          : base("存为Stp", "存为Stp",
+          : base("ToSTP", "存为Stp",
               "存为Stp，并用Catia打开",
               "Parrot", "ExcelCAD")
         {

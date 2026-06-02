@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Data;
 using Grasshopper;
@@ -13,7 +13,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the 行列重组 class.
         /// </summary>
         public RebuildRow_Column()
-          : base("行列重组", "行列重组",
+          : base("RebuildRow_Column", "行列重组",
               "行列重组",
               "Parrot", "工具")
         {

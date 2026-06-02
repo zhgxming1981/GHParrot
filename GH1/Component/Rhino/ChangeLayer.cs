@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 using Grasshopper.Kernel;
@@ -16,7 +16,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the ChangeLayer class.
         /// </summary>
         public ChangeLayer()
-          : base("修改图层", "修改图层",
+          : base("ChangeLayer", "修改图层",
               "修改Rhino物件的图层",
               "Parrot", "Rhino")
         {

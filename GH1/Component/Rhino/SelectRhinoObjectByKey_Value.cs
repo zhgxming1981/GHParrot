@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data.SqlTypes;
 using CommonFunction;
@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the SelectRhinoObjectByKey_Value class.
         /// </summary>
         public SelectRhinoObjectByKey_Value()
-          : base("按Uerstring选中", "按Uerstring选中",
+          : base("SelectRhinoObjectByKey_Value", "按Uerstring选中",
               "按Uerstring选中",
               "Parrot", "Rhino")
         {

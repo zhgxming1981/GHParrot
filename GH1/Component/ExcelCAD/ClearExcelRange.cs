@@ -20,6 +20,7 @@ namespace NS_Parrot
         public bool ShowExcel { get; private set; } = true;
         public bool DonePulse { get; set; } = false;
         public string ResultMessage { get; set; } = string.Empty;
+        private bool _lastRunInput = false;
 
         public ClearExcelRange()
           : base("ClearExcelRange", "清空Excel区域",
@@ -34,6 +35,7 @@ namespace NS_Parrot
             pManager.AddTextParameter("SheetName", "Sheet", "工作表名称", GH_ParamAccess.item);
             pManager.AddTextParameter("单元格范围", "Range", "需要清空的单元格范围，例如 A1:D20", GH_ParamAccess.item);
             pManager.AddBooleanParameter("显示", "显示", "清空完成后是否显示Excel，默认true", GH_ParamAccess.item, true);
+            pManager.AddBooleanParameter("运行", "Run", "由False变为True时执行清空，可连接Button", GH_ParamAccess.item, false);
             pManager[3].Optional = true;
         }
 
@@ -49,16 +51,23 @@ namespace NS_Parrot
             string sheetName = SheetName;
             string rangeText = RangeText;
             bool showExcel = ShowExcel;
+            bool runInput = false;
 
             DA.GetData(0, ref filePath);
             DA.GetData(1, ref sheetName);
             DA.GetData(2, ref rangeText);
             DA.GetData(3, ref showExcel);
+            DA.GetData(4, ref runInput);
 
             FilePath = filePath;
             SheetName = sheetName;
             RangeText = rangeText;
             ShowExcel = showExcel;
+
+            bool runTriggered = runInput && !_lastRunInput;
+            _lastRunInput = runInput;
+            if (runTriggered)
+                ExecuteClear();
 
             DA.SetData(0, DonePulse);
             DA.SetData(1, ResultMessage);
@@ -88,6 +97,31 @@ namespace NS_Parrot
                 ExpireSolution(true);
             };
             timer.Start();
+        }
+
+        public void ExecuteClear()
+        {
+            try
+            {
+                ExcelPulseTools.ClearRange(FilePath, SheetName, RangeText);
+                if (ShowExcel)
+                {
+                    ExcelPulseTools.ShowExcel(FilePath, SheetName);
+                }
+                else
+                {
+                    MessageBox.Show("写入已经完成", "ClearExcelRange", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                ResultMessage = "清空完成";
+                PulseDone();
+            }
+            catch (Exception ex)
+            {
+                DonePulse = false;
+                ResultMessage = "清空失败: " + ex.Message;
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, ResultMessage);
+                ExpireSolution(true);
+            }
         }
     }
 
@@ -138,27 +172,7 @@ namespace NS_Parrot
                 Thread.Sleep(50);
                 info.CurrentButtonColor = ClearExcelRange.ButtonColor.Black;
 
-                try
-                {
-                    ExcelPulseTools.ClearRange(info.FilePath, info.SheetName, info.RangeText);
-                    if (info.ShowExcel)
-                    {
-                        ExcelPulseTools.ShowExcel(info.FilePath, info.SheetName);
-                    }
-                    else
-                    {
-                        MessageBox.Show("写入已经完成", "ClearExcelRange", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    }
-                    info.ResultMessage = "清空完成";
-                    info.PulseDone();
-                }
-                catch (Exception ex)
-                {
-                    info.DonePulse = false;
-                    info.ResultMessage = "清空失败: " + ex.Message;
-                    info.AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, info.ResultMessage);
-                    info.ExpireSolution(true);
-                }
+                info.ExecuteClear();
 
                 return GH_ObjectResponse.Handled;
             }

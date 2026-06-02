@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using CommonFunction;
 using Grasshopper.Kernel;
@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the StatisticsDotText class.
         /// </summary>
         public StatisticsTextDot()
-          : base("StatisticsDotText", "统计TextDot",
+          : base("StatisticsTextDot", "统计TextDot",
               "Description",
               "Parrot", "文本")
         {

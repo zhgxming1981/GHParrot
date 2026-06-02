@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Windows.Forms;
 using Grasshopper.Kernel;
 using Grasshopper.GUI.Canvas;
@@ -102,7 +102,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the MacOfLAN class.
         /// </summary>
         public Infomation()
-          : base("信息", "信息",
+          : base("Infomation", "信息",
               "提供一些系统信息",
               "Parrot", "杂项")
         {

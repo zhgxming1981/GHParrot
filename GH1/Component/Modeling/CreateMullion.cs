@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 using Grasshopper.Kernel;
@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the CreateMullion class.
         /// </summary>
         public CreateMullion()
-          : base("创建立柱", "创建立柱",
+          : base("CreateMullion", "创建立柱",
               "创建单截面立柱",
               "Parrot", "建模")
         {

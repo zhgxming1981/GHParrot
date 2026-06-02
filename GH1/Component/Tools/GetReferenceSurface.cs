@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
@@ -17,7 +17,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the GetReferenceSurface class.
         /// </summary>
         public GetReferenceSurface()
-          : base("获取参考面", "获取参考面",
+          : base("GetReferenceSurface", "获取参考面",
               "获取参考面",
               "Parrot", "工具")
         {

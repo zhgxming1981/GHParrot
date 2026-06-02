@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 using Grasshopper.Kernel;
@@ -17,7 +17,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the MyComponent1 class.
         /// </summary>
         public FormatText4Excel()
-          : base("文本2excel预处理", "文本2excel预处理",
+          : base("FormatText4Excel", "文本2excel预处理",
               "文本2excel预处理，将一列数据变换为一行数据，中间用|分格",
               "Parrot", "ExcelCAD")
         {

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using CommonFunction;
@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the GetUserStringByKey class.
         /// </summary>
         public FormatTextList4Excel()
-          : base("格式化文本", "格式化文本",
+          : base("FormatTextList4Excel", "格式化文本",
               "将列表格式转化为Excel写入格式",
               "Parrot", "ExcelCAD")
         {

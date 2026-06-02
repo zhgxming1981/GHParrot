@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the Distance4Point2Plane class.
         /// </summary>
         public Distance4Point2Plane()
-          : base("点到平面距离", "P2P",
+          : base("Distance4Point2Plane", "P2P",
               "点到平面距离",
               "Parrot", "几何")
         {

@@ -66,19 +66,19 @@
   <ItemGroup>
     <Reference Include="acdbmgd, Version=23.1.0.0, Culture=neutral, processorArchitecture=AMD64">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>D:\Program Files\Autodesk\AutoCAD 2020\acdbmgd.dll</HintPath>
+      <HintPath>$(AutoCAD2020Dir)\acdbmgd.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Autodesk.AutoCAD.Interop">
-      <HintPath>D:\Program Files\Autodesk\AutoCAD 2020\Autodesk.AutoCAD.Interop.dll</HintPath>
+      <HintPath>$(AutoCAD2020Dir)\Autodesk.AutoCAD.Interop.dll</HintPath>
       <EmbedInteropTypes>True</EmbedInteropTypes>
     </Reference>
     <Reference Include="Autodesk.AutoCAD.Interop.Common">
-      <HintPath>D:\Program Files\Autodesk\AutoCAD 2020\Autodesk.AutoCAD.Interop.Common.dll</HintPath>
+      <HintPath>$(AutoCAD2020Dir)\Autodesk.AutoCAD.Interop.Common.dll</HintPath>
       <EmbedInteropTypes>True</EmbedInteropTypes>
     </Reference>
     <Reference Include="RhinoCommon">
-      <HintPath>D:\Program Files\Rhino 8\System\RhinoCommon.dll</HintPath>
+      <HintPath>$(Rhino8Dir)\System\RhinoCommon.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="System" />
@@ -171,7 +171,7 @@
     </COMReference>
   </ItemGroup>
   <ItemGroup>
-    <Analyzer Include="D:\Program Files\Autodesk\AutoCAD 2020\acdbmgd.dll" />
+    <Analyzer Include="$(AutoCAD2020Dir)\acdbmgd.dll" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.VisualBasic.targets" />
 </Project>

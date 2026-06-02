@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
@@ -21,7 +21,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the GroupThePlanes class.
         /// </summary>
         public CurvesGroupByPlane()
-          : base("曲线合并", "曲线合并",
+          : base("CurvesGroupByPlane", "曲线合并",
               "合并后的曲线",
               "Parrot", "几何")
         {

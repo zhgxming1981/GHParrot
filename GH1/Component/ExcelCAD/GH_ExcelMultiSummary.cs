@@ -1,4 +1,4 @@
-﻿using Grasshopper.Kernel;
+using Grasshopper.Kernel;
 using Rhino.Geometry;
 using System;
 using System.Collections.Generic;
@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the GH_ExcelMultiSummary class.
         /// </summary>
         public GH_ExcelMultiSummary()
-          : base("ExcelMultiSummary", "数据汇总表",
+          : base("GH_ExcelMultiSummary", "数据汇总表",
               "自动填写数据汇总表",
               "Parrot", "ExcelCAD")
         {

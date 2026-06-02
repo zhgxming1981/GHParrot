@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Types;
@@ -18,7 +18,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the CopyData_GroupData class.
         /// </summary>
         public CopyData_GroupData()
-          : base("数据复制分组", "数据复制分组",
+          : base("CopyData_GroupData", "数据复制分组",
               "数据复制分组",
               "Parrot", "工具")
         {

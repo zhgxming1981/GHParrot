@@ -124,6 +124,7 @@ namespace NS_Parrot
             Excel.Workbook wb = null;
             Excel.Worksheet ws = null;
             bool appCreated = false;
+            bool keepExcelOpen = showExcel;
 
             try
             {
@@ -182,22 +183,7 @@ namespace NS_Parrot
 
                     foreach (var val in values)
                     {
-                        Excel.Range cell = ws.Cells[row, colCursor];
-
-                        if (cell.MergeCells)
-                        {
-                            Excel.Range area = cell.MergeArea;
-                            area.Cells[1, 1].Value2 = val;
-                            colCursor += area.Columns.Count;
-                            Marshal.ReleaseComObject(area);
-                        }
-                        else
-                        {
-                            cell.Value2 = val;
-                            colCursor++;
-                        }
-
-                        Marshal.ReleaseComObject(cell);
+                        WriteValueAndAdvanceColumn(ws, row, ref colCursor, val);
                     }
                 }
 
@@ -211,7 +197,17 @@ namespace NS_Parrot
                 {
                     app.Visible = false;
                     app.ScreenUpdating = false;
-                    System.Windows.Forms.MessageBox.Show("写入已经完成", "GH2ExcelMData", System.Windows.Forms.MessageBoxButtons.OK, System.Windows.Forms.MessageBoxIcon.Information);
+                    var result = System.Windows.Forms.MessageBox.Show(
+                        "写入已经完成，是否打开Excel？",
+                        "GH2ExcelMData",
+                        System.Windows.Forms.MessageBoxButtons.YesNo,
+                        System.Windows.Forms.MessageBoxIcon.Question);
+
+                    if (result == System.Windows.Forms.DialogResult.Yes)
+                    {
+                        ShowExcelAndActivateSheet(app, wb, sheetName);
+                        keepExcelOpen = true;
+                    }
                 }
 
                 DA.SetData(0, "写入完成");
@@ -224,7 +220,7 @@ namespace NS_Parrot
             {
                 // ❗ 不释放 wb / ws（关键修复点）
 
-                if (app != null && appCreated && !showExcel)
+                if (app != null && appCreated && !keepExcelOpen)
                 {
                     app.Quit();
                     Marshal.ReleaseComObject(app);
@@ -341,6 +337,44 @@ namespace NS_Parrot
                 col = col * 26 + (c - 'A' + 1);
 
             row = int.Parse(rowPart);
+        }
+
+        private void WriteValueAndAdvanceColumn(Excel.Worksheet ws, int row, ref int colCursor, object value)
+        {
+            Excel.Range cell = null;
+            Excel.Range mergeArea = null;
+            Excel.Range target = null;
+            Excel.Range columns = null;
+
+            try
+            {
+                cell = ws.Cells[row, colCursor] as Excel.Range;
+                if (cell != null && Convert.ToBoolean(cell.MergeCells))
+                {
+                    mergeArea = cell.MergeArea;
+                    target = ws.Cells[mergeArea.Row, mergeArea.Column] as Excel.Range;
+                    target.Value2 = value;
+                    columns = mergeArea.Columns as Excel.Range;
+                    colCursor = mergeArea.Column + columns.Count;
+                    return;
+                }
+
+                cell.Value2 = value;
+                colCursor++;
+            }
+            finally
+            {
+                ReleaseCom(columns);
+                ReleaseCom(target);
+                ReleaseCom(mergeArea);
+                ReleaseCom(cell);
+            }
+        }
+
+        private static void ReleaseCom(object comObject)
+        {
+            if (comObject != null && Marshal.IsComObject(comObject))
+                Marshal.ReleaseComObject(comObject);
         }
 
 

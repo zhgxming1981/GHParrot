@@ -1,0 +1,16 @@
+<Project>
+  <PropertyGroup>
+    <RepositoryRoot Condition="'$(RepositoryRoot)' == ''">$(MSBuildThisFileDirectory)</RepositoryRoot>
+  </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)Directory.Build.props.user" Condition="Exists('$(MSBuildThisFileDirectory)Directory.Build.props.user')" />
+
+  <PropertyGroup>
+    <ParrotOutputDir Condition="'$(ParrotOutputDir)' == ''">$(RepositoryRoot)输出\</ParrotOutputDir>
+
+    <Rhino8Dir Condition="'$(Rhino8Dir)' == ''">$(ProgramW6432)\Rhino 8</Rhino8Dir>
+    <Tekla2025Dir Condition="'$(Tekla2025Dir)' == ''">$(ProgramW6432)\Tekla Structures\2025.0</Tekla2025Dir>
+    <Tekla2025Bin Condition="'$(Tekla2025Bin)' == ''">$(Tekla2025Dir)\bin</Tekla2025Bin>
+    <AutoCAD2020Dir Condition="'$(AutoCAD2020Dir)' == ''">$(ProgramW6432)\Autodesk\AutoCAD 2020</AutoCAD2020Dir>
+  </PropertyGroup>
+</Project>

@@ -1,4 +1,4 @@
-﻿using Grasshopper.Kernel;
+using Grasshopper.Kernel;
 using Grasshopper.Kernel.Types;
 using Rhino.Geometry;
 using System;
@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the DeconstructRhinoObjectAttributes class.
         /// </summary>
         public DeconstructRhinoObjectAttributes()
-          : base("解析Rhino对象属性", "解析属性",
+          : base("DeconstructRhinoObjectAttributes", "解析属性",
               "解析Rhino对象属性",
               "Parrot", "工具")
         {

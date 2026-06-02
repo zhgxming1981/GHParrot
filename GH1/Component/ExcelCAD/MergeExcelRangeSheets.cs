@@ -28,22 +28,22 @@ namespace NS_Parrot
         private bool _lastMergeInput = false;
 
         public MergeExcelRangeSheets()
-          : base("MergeExcelRangeSheets", "\u5408\u5e76Excel\u533a\u57df",
-              "\u5c06\u540c\u4e00Excel\u6587\u4ef6\u4e2d\u591a\u4e2a\u5de5\u4f5c\u8868\u7684\u6307\u5b9a\u533a\u57df\u4f9d\u6b21\u5408\u5e76\u5230\u65b0\u7684\u5de5\u4f5c\u8868",
+          : base("MergeExcelRangeSheets", "合并Excel区域",
+              "将同一Excel文件中多个工作表的指定区域依次合并到新的工作表",
               "Parrot", "ExcelCAD")
         {
         }
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddTextParameter("\u8bfb\u53d6Excel\u6587\u4ef6", "InFile", "\u8981\u8bfb\u53d6\u7684Excel\u6587\u4ef6\u8def\u5f84", GH_ParamAccess.item);
-            pManager.AddTextParameter("\u6392\u9664\u5de5\u4f5c\u8868", "Ignore", "\u8981\u6392\u9664\u7684\u5de5\u4f5c\u8868\u540d\u79f0\uff0c\u53ef\u4ee5\u4e3a\u7a7a\u6216\u8f93\u5165\u591a\u4e2a", GH_ParamAccess.list);
-            pManager.AddTextParameter("\u5408\u5e76\u533a\u57df", "Range", "\u6bcf\u4e2a\u5de5\u4f5c\u8868\u8981\u590d\u5236\u7684\u540c\u4e00\u533a\u57df\uff0c\u4f8b\u5982 A1:D10\u3001A1~D10\u30011~10", GH_ParamAccess.item);
-            pManager.AddTextParameter("\u5199\u5165Excel\u6587\u4ef6", "OutFile", "\u8981\u5199\u5165\u7684Excel\u6587\u4ef6\u8def\u5f84\uff0c\u4e0d\u5b58\u5728\u65f6\u4f1a\u65b0\u5efa", GH_ParamAccess.item);
-            pManager.AddTextParameter("\u5199\u5165\u5de5\u4f5c\u8868", "OutSheet", "\u8981\u5199\u5165\u7684\u5de5\u4f5c\u8868\u540d\u79f0\uff0c\u4e0d\u5b58\u5728\u65f6\u4f1a\u65b0\u5efa", GH_ParamAccess.item);
-            pManager.AddTextParameter("\u5f00\u59cb\u5199\u5165\u4f4d\u7f6e", "Start", "\u5f00\u59cb\u5199\u5165\u7684\u5355\u5143\u683c\uff0c\u4f8b\u5982 A2\uff0c\u7528\u4e8e\u7ed9\u8868\u5934\u7559\u51fa\u4f4d\u7f6e", GH_ParamAccess.item, "A1");
-            pManager.AddTextParameter("\u89c6\u540c\u7a7a\u503c\u6587\u672c", "EmptyText", "\u7b2c\u4e00\u5217\u547d\u4e2d\u8fd9\u4e9b\u6587\u672c\u65f6\u89c6\u540c\u4e3a\u7a7a\uff0c\u4f8b\u5982 -", GH_ParamAccess.list);
-            pManager.AddBooleanParameter("\u5408\u5e76", "Merge", "\u4e3atrue\u65f6\u89e6\u53d1\u4e00\u6b21\u5408\u5e76\uff0c\u4e0e\u6309\u94ae\u529f\u80fd\u76f8\u540c", GH_ParamAccess.item, false);
+            pManager.AddTextParameter("读取Excel文件", "InFile", "要读取的Excel文件路径", GH_ParamAccess.item);
+            pManager.AddTextParameter("排除工作表", "Ignore", "要排除的工作表名称，可以为空或输入多个", GH_ParamAccess.list);
+            pManager.AddTextParameter("合并区域", "Range", "每个工作表要复制的同一区域，例如 A1:D10、A1~D10、1~10", GH_ParamAccess.item);
+            pManager.AddTextParameter("写入Excel文件", "OutFile", "要写入的Excel文件路径，不存在时会新建", GH_ParamAccess.item);
+            pManager.AddTextParameter("写入工作表", "OutSheet", "要写入的工作表名称，不存在时会新建", GH_ParamAccess.item);
+            pManager.AddTextParameter("开始写入位置", "Start", "开始写入的单元格，例如 A2，用于给表头留出位置", GH_ParamAccess.item, "A1");
+            pManager.AddTextParameter("视同空值文本", "EmptyText", "第一列命中这些文本时视同为空，例如 -", GH_ParamAccess.list);
+            pManager.AddBooleanParameter("合并", "Merge", "为true时触发一次合并，与按钮功能相同", GH_ParamAccess.item, false);
             pManager[1].Optional = true;
             pManager[5].Optional = true;
             pManager[6].Optional = true;
@@ -52,8 +52,8 @@ namespace NS_Parrot
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
-            pManager.AddBooleanParameter("Done", "Done", "\u5408\u5e76\u5b8c\u6210\u540e\u8f93\u51fa\u4e00\u6b21true\u8109\u51b2", GH_ParamAccess.item);
-            pManager.AddTextParameter("\u6d88\u606f", "M", "\u6267\u884c\u7ed3\u679c\u6d88\u606f", GH_ParamAccess.item);
+            pManager.AddBooleanParameter("Done", "Done", "合并完成后输出一次true脉冲", GH_ParamAccess.item);
+            pManager.AddTextParameter("消息", "M", "执行结果消息", GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -108,13 +108,13 @@ namespace NS_Parrot
                     EmptyTexts);
 
                 ExcelPulseTools.ShowExcel(TargetPath, TargetSheet);
-                ResultMessage = "\u5408\u5e76\u5b8c\u6210\uff0c\u5171\u5199\u5165 " + count + " \u884c\u3002";
+                ResultMessage = "合并完成，共写入 " + count + " 行。";
                 PulseDone(expireNow);
             }
             catch (Exception ex)
             {
                 DonePulse = false;
-                ResultMessage = "\u5408\u5e76\u5931\u8d25: " + ex.Message;
+                ResultMessage = "合并失败: " + ex.Message;
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, ResultMessage);
                 if (expireNow)
                     ExpireSolution(true);
@@ -128,7 +128,7 @@ namespace NS_Parrot
 
         protected override void AppendAdditionalComponentMenuItems(ToolStripDropDown menu)
         {
-            Menu_AppendItem(menu, "\u663e\u793a\u5199\u5165Excel", ShowExcelMenuClicked);
+            Menu_AppendItem(menu, "显示写入Excel", ShowExcelMenuClicked);
         }
 
         private void ShowExcelMenuClicked(object sender, EventArgs e)
@@ -139,7 +139,7 @@ namespace NS_Parrot
             }
             catch (Exception ex)
             {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "\u663e\u793aExcel\u5931\u8d25: " + ex.Message);
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "显示Excel失败: " + ex.Message);
             }
         }
 
@@ -198,7 +198,7 @@ namespace NS_Parrot
             using (Font font = new Font(GH_FontServer.Small, FontStyle.Bold))
             using (StringFormat stringFormat = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
             {
-                graphics.DrawString("\u5408\u5e76", font, Brushes.White, buttonRect, stringFormat);
+                graphics.DrawString("合并", font, Brushes.White, buttonRect, stringFormat);
             }
         }
 

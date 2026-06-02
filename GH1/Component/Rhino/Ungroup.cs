@@ -1,4 +1,4 @@
-﻿using CommonFunction;
+using CommonFunction;
 using Grasshopper.Kernel;
 using Rhino.DocObjects;
 using System;
@@ -11,7 +11,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the Ungroup class.
         /// </summary>
         public Ungroup()
-          : base("分解组", "分解组",
+          : base("Ungroup", "分解组",
               "分解组",
               "Parrot", "Rhino")
         {

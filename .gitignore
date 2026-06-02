@@ -7,6 +7,7 @@
 *.rsuser
 *.suo
 *.user
+Directory.Build.props.user
 *.userosscache
 *.sln.docstates
 
@@ -349,6 +350,10 @@ ASALocalRun/
 
 # Local History for Visual Studio
 .localhistory/
+
+# Local workspace notes and temporary previews
+.obsidian/
+tmp/
 
 # BeatPulse healthcheck temp database
 healthchecksdb

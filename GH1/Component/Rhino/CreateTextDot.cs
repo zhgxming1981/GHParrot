@@ -1,4 +1,4 @@
-﻿using CommonFunction;
+using CommonFunction;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
 using System;
@@ -16,7 +16,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the MyTag2 class.
         /// </summary>
         public CreateTextDot()
-          : base("生成TextDot", "生成TextDot",
+          : base("CreateTextDot", "生成TextDot",
               "直接生成TextDot",
               "Parrot", "Rhino")
         {

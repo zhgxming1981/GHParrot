@@ -99,9 +99,6 @@ namespace NS_Parrot
         /// <param name="DA">The DA object is used to retrieve from inputs and store in outputs.</param>
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            //if (!CHardware.CheckLegality())
-            //    return;
-
             theBakeGeoList.Clear();
 
             Point3d insert = Point3d.Origin;

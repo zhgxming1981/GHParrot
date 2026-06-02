@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the IndexOfNo_repeat class.
         /// </summary>
         public IndexOfNo_repeat()
-          : base("不重复项索引", "不重复项索引",
+          : base("IndexOfNo_repeat", "不重复项索引",
               "得到一个不含重复项的索引",
               "Parrot", "工具")
         {
