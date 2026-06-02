@@ -1,8 +1,10 @@
 <Project>
   <PropertyGroup>
-    <ParrotOutputDir>E:\程序\GH1 20260424\GH1\输出\</ParrotOutputDir>
-    <Rhino8Dir>D:\Program Files\Rhino 8</Rhino8Dir>
-    <Tekla2025Dir>D:\Program Files\Tekla Structures\2025.0</Tekla2025Dir>
-    <AutoCAD2020Dir>D:\Program Files\Autodesk\AutoCAD 2020</AutoCAD2020Dir>
+    <!-- Copy this file to Directory.Build.props.user and adjust paths for the local machine. -->
+    <ParrotOutputDir>$(MSBuildThisFileDirectory)输出\</ParrotOutputDir>
+    <Rhino8Dir>$(ProgramW6432)\Rhino 8</Rhino8Dir>
+    <Tekla2025Dir>$(ProgramW6432)\Tekla Structures\2025.0</Tekla2025Dir>
+    <Tekla2025Bin>$(Tekla2025Dir)\bin</Tekla2025Bin>
+    <AutoCAD2020Dir>$(ProgramW6432)\Autodesk\AutoCAD 2020</AutoCAD2020Dir>
   </PropertyGroup>
 </Project>

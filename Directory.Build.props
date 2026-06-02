@@ -8,6 +8,7 @@
   <PropertyGroup>
     <ParrotOutputDir Condition="'$(ParrotOutputDir)' == ''">$(RepositoryRoot)输出\</ParrotOutputDir>
 
+    <!-- Copy Directory.Build.props.example to Directory.Build.props.user to override these paths on each machine. -->
     <Rhino8Dir Condition="'$(Rhino8Dir)' == ''">$(ProgramW6432)\Rhino 8</Rhino8Dir>
     <Tekla2025Dir Condition="'$(Tekla2025Dir)' == ''">$(ProgramW6432)\Tekla Structures\2025.0</Tekla2025Dir>
     <Tekla2025Bin Condition="'$(Tekla2025Bin)' == ''">$(Tekla2025Dir)\bin</Tekla2025Bin>
