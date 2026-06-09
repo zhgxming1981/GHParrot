@@ -1,13 +1,15 @@
-using Excel = Microsoft.Office.Interop.Excel;
+﻿using Excel = Microsoft.Office.Interop.Excel;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Attributes;
+using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Types;
 using GH_IO.Serialization;
 using parrot.Properties;
 using Rhino;
 using Rhino.DocObjects;
+using Rhino.Display;
 using Rhino.Geometry;
 using Rhino.Geometry.Intersect;
 using System;
@@ -35,6 +37,8 @@ namespace NS_Parrot
         public HoleMode CurrentHoleMode { get; private set; } = HoleMode.ByScrewSpec;
 
         private readonly ScrewHoleOutputs _lastOutputs = new ScrewHoleOutputs();
+        private readonly List<CutterPreviewItem> _previewCutters = new List<CutterPreviewItem>();
+        private BoundingBox _previewBox = BoundingBox.Empty;
         private bool _hasLastOutputs;
         private bool _lastRunInput;
         private string _lastInputSignature = string.Empty;
@@ -65,7 +69,8 @@ namespace NS_Parrot
             pManager.AddIntegerParameter("穿透层数", "穿透层数", "预期穿透层数。若实际检测值不一致，会弹气泡警告，并按“处理方式”决定继续开孔或把此螺丝判为无效。<=0 时不检查；按线信息版为空时会尝试读取螺钉线 UserString。", GH_ParamAccess.item, 0);
             pManager.AddParameter(new ScrewPenetrationMismatchActionParam(), "处理方式", "处理方式", "穿透层数与预期不符时的统一处理方式。端口右键可选：默认=只警告并继续按默认规则开孔；无效=螺丝线加入无效螺栓线并跳过开孔。", GH_ParamAccess.item);
             pManager.AddNumberParameter("容差", "容差", "相交和布尔计算容差。<=0 时使用当前 Rhino 文件绝对容差。模型尺寸较大或相交不稳定时可手动输入，例如 0.01 或 0.1。", GH_ParamAccess.item, 0.0);
-            pManager.AddBooleanParameter("执行", "执行", "是否执行布尔差集。True 时输出开孔后实体；False 时只输出切削体、孔中心、孔轴线、明细和错误，方便预览检查。也可点击组件底部 Run 按钮执行一次。", GH_ParamAccess.item, false);
+            pManager.AddNumberParameter("切削余量", "切削余量", "切削体长度在实体与孔轴线实际相交长度基础上增加的余量，默认 1。斜面或布尔失败时可调大。", GH_ParamAccess.item, 1.0);
+            pManager.AddBooleanParameter("执行", "执行", "是否执行布尔差集。True 时输出开孔后实体；False 时只输出切削体、孔中心、孔轴线和错误，方便预览检查。也可点击组件底部 Run 按钮执行一次。", GH_ParamAccess.item, false);
 
             pManager[2].Optional = true;
             pManager[4].Optional = true;
@@ -73,26 +78,22 @@ namespace NS_Parrot
             pManager[6].Optional = true;
             pManager[7].Optional = true;
             pManager[8].Optional = true;
+            pManager[9].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
             pManager.AddBrepParameter("开孔后实体", "开孔后实体", "执行=True 时输出布尔差集后的实体；执行=False 时不输出实体。用于最终建模结果。", GH_ParamAccess.list);
-            pManager.AddBrepParameter("全部切削体", "全部切削体", "本次生成的全部孔切削体，包含底孔、过孔和工艺孔。用于预览孔是否落在正确位置。", GH_ParamAccess.list);
-            pManager.AddBrepParameter("底孔切削体", "底孔切削体", "仅输出底孔切削体。例：多层板最后一层通常生成底孔。", GH_ParamAccess.list);
-            pManager.AddBrepParameter("过孔切削体", "过孔切削体", "仅输出过孔切削体。例：螺钉头侧或中间层通常生成过孔。", GH_ParamAccess.list);
-            pManager.AddBrepParameter("工艺孔切削体", "工艺孔切削体", "仅输出工艺孔切削体。用于反方向搜索到的工艺孔或人工指定的工艺孔。", GH_ParamAccess.list);
+            pManager.AddBrepParameter("全部切削体", "全部切削体", "本次生成的全部孔切削体，按螺钉线分支输出，包含底孔、过孔和工艺孔。", GH_ParamAccess.tree);
             pManager.AddPointParameter("孔中心", "孔中心", "实际生成孔的中心点列表，可用于标注、检查或与其它构件对齐。", GH_ParamAccess.list);
             pManager.AddLineParameter("孔轴线", "孔轴线", "实际生成孔的轴线列表，可用于检查孔方向和深度。", GH_ParamAccess.list);
             pManager.AddTextParameter("孔名称", "孔名称", "每个孔对应的名称，来自孔数据库中的底孔名称、过孔名称或工艺孔名称。", GH_ParamAccess.list);
-            pManager.AddTextParameter("孔类别", "孔类别", "每个孔的类别：底孔、过孔或工艺孔。可用于分组、统计或分层显示。", GH_ParamAccess.list);
-            pManager.AddTextParameter("明细", "明细", "匹配和判断过程说明。例：某条线按单层默认过孔、某个实体按孔类型跳过等。用于排查规则是否符合预期。", GH_ParamAccess.list);
-            pManager.AddTextParameter("错误", "错误", "错误或警告列表。例：规格缺失、孔数据库找不到规格、穿透层数不一致、未命中实体等。", GH_ParamAccess.list);
-            pManager.AddLineParameter("有效螺栓线", "有效螺栓线", "至少成功生成一个底孔或过孔切削体的螺栓线。用于后续统计或复查。", GH_ParamAccess.list);
-            pManager.AddLineParameter("无效螺栓线", "无效螺栓线", "没有成功生成切削体或被处理方式判定为无效的螺栓线。用于定位异常线。", GH_ParamAccess.list);
-            pManager.AddTextParameter("规格统计", "规格统计", "只统计有效螺栓线，格式为：规格 x 数量。例：ST4.8 x 12、M6(铝材) x 4。", GH_ParamAccess.list);
+            pManager.AddTextParameter("孔类别", "孔类别", "按螺钉线分组输出，每条螺钉线一行；同一行内按命中顺序列出底孔、过孔或工艺孔。", GH_ParamAccess.list);
+            pManager.AddTextParameter("错误", "错误", "错误或警告列表。", GH_ParamAccess.list);
+            pManager.AddLineParameter("有效螺栓线", "有效螺栓线", "至少成功生成一个底孔或过孔切削体的螺栓线。", GH_ParamAccess.list);
+            pManager.AddLineParameter("无效螺栓线", "无效螺栓线", "没有成功生成切削体或被处理方式判定为无效的螺栓线。", GH_ParamAccess.list);
+            pManager.AddTextParameter("规格统计", "规格统计", "只统计有效螺栓线。", GH_ParamAccess.list);
         }
-
         protected override void SolveInstance(IGH_DataAccess DA)
         {
             List<Brep> parts = new List<Brep>();
@@ -105,6 +106,7 @@ namespace NS_Parrot
             string mismatchActionInput = string.Empty;
             int expectedPenetrationInput = 0;
             double tolerance = 0.0;
+            double cutterMargin = 1.0;
 
             DA.GetDataList(0, parts);
             DA.GetDataList(1, screwLineInputs);
@@ -123,11 +125,14 @@ namespace NS_Parrot
             DA.GetData(5, ref expectedPenetrationInput);
             DA.GetData(6, ref mismatchActionInput);
             DA.GetData(7, ref tolerance);
+            DA.GetData(8, ref cutterMargin);
+            if (cutterMargin < 0)
+                cutterMargin = 0;
 
-            string inputSignature = BuildInputSignature(parts, screwLineInputs, spec, lineSpecs, tablePath, roles, expectedPenetrationInput, mismatchActionInput, tolerance);
+            string inputSignature = BuildInputSignature(parts, screwLineInputs, spec, lineSpecs, tablePath, roles, expectedPenetrationInput, mismatchActionInput, tolerance, cutterMargin);
             bool inputChanged = _hasLastOutputs && !string.Equals(_lastInputSignature, inputSignature, StringComparison.Ordinal);
 
-            DA.GetData(8, ref run);
+            DA.GetData(9, ref run);
             bool shouldRun = ButtonRun || (run && !_lastRunInput);
             ButtonRun = false;
             _lastRunInput = run;
@@ -164,6 +169,7 @@ namespace NS_Parrot
             HoleRuleTables holeTables = ReadHoleTables(tablePath, 3, CurrentHoleMode, errors, GetDocumentDirectory());
 
             List<Brep> allCutters = new List<Brep>();
+            List<int> cutterLineIndices = new List<int>();
             List<Brep> tapCutters = new List<Brep>();
             List<Brep> clearanceCutters = new List<Brep>();
             List<Brep> processCutters = new List<Brep>();
@@ -171,6 +177,7 @@ namespace NS_Parrot
             List<Line> holeAxes = new List<Line>();
             List<string> holeNames = new List<string>();
             List<string> holeTypes = new List<string>();
+            List<string> holeTypeRows = new List<string>();
             List<string> report = new List<string>();
             List<Line> validLines = new List<Line>();
             List<Line> invalidLines = new List<Line>();
@@ -192,6 +199,7 @@ namespace NS_Parrot
                 string rawSpec = UseLineInfo
                     ? GetLineInfoSpec(GetIndexedListValue(lineSpecs, inputIndex), screwLine, lineInput.Object, doc, tolerance)
                     : GetSingleSpec(spec, DialogSpec);
+                string statisticSpec = NormalizeStatisticSpec(rawSpec);
                 if (string.IsNullOrWhiteSpace(DisplaySpec) && !string.IsNullOrWhiteSpace(rawSpec))
                     UpdateDisplaySpec(rawSpec);
 
@@ -253,6 +261,7 @@ namespace NS_Parrot
 
                 int tapCountBeforeLine = tapCutters.Count;
                 int clearanceCountBeforeLine = clearanceCutters.Count;
+                int holeTypesBeforeLine = holeTypes.Count;
                 HashSet<int> bodyHitPartIndices = new HashSet<int>(bodyHits.Select(hit => hit.PartIndex));
                 HashSet<int> processedProcessPartIndices = new HashSet<int>();
                 int processRoleCount = 0;
@@ -260,17 +269,18 @@ namespace NS_Parrot
                 {
                     PartHit processHit = processHits[hitIndex];
                     string processRole = GetRole(roleOverrides, inputIndex, processHit.PartIndex, hitIndex, lineRoleTokens);
-                    bool autoProcess = bodyHitPartIndices.Contains(processHit.PartIndex);
-                    if (processRole != "工艺孔" && !autoProcess)
+                    bool explicitProcess = processRole == "工艺孔";
+                    bool autoProcess = processRole == "自动" && ShouldAutoCreateProcessHole(parts[processHit.PartIndex], bodyHitPartIndices.Contains(processHit.PartIndex), screwLine, processLength, tolerance);
+                    if (!explicitProcess && !autoProcess)
                         continue;
 
-                    if (processRole == "工艺孔")
+                    if (explicitProcess)
                         processRoleCount++;
                     if (!processedProcessPartIndices.Add(processHit.PartIndex))
                         continue;
 
-                    AddHole(inputIndex, processHit.PartIndex, parts[processHit.PartIndex], ReverseExtensionLine(screwLine, processLength), processHit.Point, ruleSet.Process, tolerance, 0.0, 0.0, false, Point3d.Unset,
-                        cuttersByPart, allCutters, tapCutters, clearanceCutters, processCutters, holePoints, holeAxes, holeNames, holeTypes, report);
+                    AddHole(inputIndex, processHit.PartIndex, parts[processHit.PartIndex], ReverseExtensionLine(screwLine, processLength), processHit.Point, ruleSet.Process, tolerance, cutterMargin, 0.0, false, Point3d.Unset,
+                        cuttersByPart, allCutters, cutterLineIndices, tapCutters, clearanceCutters, processCutters, holePoints, holeAxes, holeNames, holeTypes, report);
                 }
 
                 List<PartHit> mainHits = bodyHits;
@@ -293,8 +303,8 @@ namespace NS_Parrot
                             continue;
                         }
 
-                        AddHole(inputIndex, hit.PartIndex, parts[hit.PartIndex], screwLine, hit.Point, ruleSet.Process, tolerance, 0.0, 0.0, false, Point3d.Unset,
-                            cuttersByPart, allCutters, tapCutters, clearanceCutters, processCutters, holePoints, holeAxes, holeNames, holeTypes, report);
+                        AddHole(inputIndex, hit.PartIndex, parts[hit.PartIndex], screwLine, hit.Point, ruleSet.Process, tolerance, cutterMargin, 0.0, false, Point3d.Unset,
+                            cuttersByPart, allCutters, cutterLineIndices, tapCutters, clearanceCutters, processCutters, holePoints, holeAxes, holeNames, holeTypes, report);
                         continue;
                     }
 
@@ -307,17 +317,20 @@ namespace NS_Parrot
                             continue;
                         }
 
-                        AddHole(inputIndex, hit.PartIndex, parts[hit.PartIndex], screwLine, hit.Point, mainRule, tolerance, 0.0, screwLength, true, screwStartPoint,
-                            cuttersByPart, allCutters, tapCutters, clearanceCutters, processCutters, holePoints, holeAxes, holeNames, holeTypes, report);
+                        AddHole(inputIndex, hit.PartIndex, parts[hit.PartIndex], screwLine, hit.Point, mainRule, tolerance, cutterMargin, 0.0, true, screwStartPoint,
+                            cuttersByPart, allCutters, cutterLineIndices, tapCutters, clearanceCutters, processCutters, holePoints, holeAxes, holeNames, holeTypes, report);
                     }
                 }
+
+                if (holeTypes.Count > holeTypesBeforeLine)
+                    holeTypeRows.Add(string.Join(",", holeTypes.Skip(holeTypesBeforeLine)));
 
                 if (tapCutters.Count > tapCountBeforeLine || clearanceCutters.Count > clearanceCountBeforeLine)
                 {
                     validLines.Add(screwLine);
-                    if (!validSpecCounts.ContainsKey(tableSpec))
-                        validSpecCounts[tableSpec] = 0;
-                    validSpecCounts[tableSpec]++;
+                    if (!validSpecCounts.ContainsKey(statisticSpec))
+                        validSpecCounts[statisticSpec] = 0;
+                    validSpecCounts[statisticSpec]++;
                 }
                 else
                 {
@@ -328,7 +341,7 @@ namespace NS_Parrot
 
             List<string> specCountReport = validSpecCounts
                 .OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
-                .Select(item => $"{item.Key} x {item.Value}")
+                .Select(item => $"{item.Key}|{item.Value}")
                 .ToList();
 
             if (allCutters.Count == 0)
@@ -337,29 +350,17 @@ namespace NS_Parrot
             List<Brep> resultBreps = BuildResultBreps(parts, cuttersByPart, shouldRun, tolerance, errors);
             if (shouldRun)
             {
-                _lastOutputs.Set(resultBreps, allCutters, tapCutters, clearanceCutters, processCutters, holePoints, holeAxes, holeNames, holeTypes, report, errors);
+                _lastOutputs.Set(resultBreps, allCutters, cutterLineIndices, holePoints, holeAxes, holeNames, holeTypeRows, holeTypes, errors);
                 _hasLastOutputs = true;
                 _lastInputSignature = inputSignature;
             }
             else if (_hasLastOutputs)
             {
-                _lastOutputs.CopyTo(resultBreps, allCutters, tapCutters, clearanceCutters, processCutters, holePoints, holeAxes, holeNames, holeTypes, report, errors);
+                _lastOutputs.CopyTo(resultBreps, allCutters, cutterLineIndices, holePoints, holeAxes, holeNames, holeTypeRows, holeTypes, errors);
             }
 
-            DA.SetDataList(0, resultBreps);
-            DA.SetDataList(1, allCutters);
-            DA.SetDataList(2, tapCutters);
-            DA.SetDataList(3, clearanceCutters);
-            DA.SetDataList(4, processCutters);
-            DA.SetDataList(5, holePoints);
-            DA.SetDataList(6, holeAxes);
-            DA.SetDataList(7, holeNames);
-            DA.SetDataList(8, holeTypes);
-            DA.SetDataList(9, report);
-            DA.SetDataList(10, errors);
-            DA.SetDataList(11, validLines);
-            DA.SetDataList(12, invalidLines);
-            DA.SetDataList(13, specCountReport);
+            SetOutputs(DA, resultBreps, allCutters, cutterLineIndices, holePoints, holeAxes, holeNames, holeTypeRows, errors, validLines, invalidLines, specCountReport);
+            UpdatePreview(allCutters, holeTypes);
 
             if (errors.Count > 0)
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, string.Join("\n", errors));
@@ -433,12 +434,13 @@ namespace NS_Parrot
             Point3d center,
             HoleRule rule,
             double tolerance,
+            double cutterMargin,
             double inputCutterLength,
-            double screwLength,
             bool useScrewStartPoint,
             Point3d screwStartPoint,
             List<List<Brep>> cuttersByPart,
             List<Brep> allCutters,
+            List<int> cutterLineIndices,
             List<Brep> tapCutters,
             List<Brep> clearanceCutters,
             List<Brep> processCutters,
@@ -448,9 +450,18 @@ namespace NS_Parrot
             List<string> holeTypes,
             List<string> report)
         {
-            double length = GetCutterLength(part, axisSource, rule, tolerance, inputCutterLength, screwLength);
-            bool useStartPoint = useScrewStartPoint && screwStartPoint.IsValid && (inputCutterLength > tolerance || screwLength > tolerance);
-            Brep cutter = CreateHoleCutter(center, axisSource.Direction, rule, length, tolerance, useStartPoint, screwStartPoint);
+            double length;
+            Point3d cutterStart;
+            Point3d cutterCenter;
+            bool useStartPoint = TryGetLocalCutterSpan(part, axisSource, center, cutterMargin, tolerance, out cutterStart, out cutterCenter, out length);
+            if (!useStartPoint)
+            {
+                length = GetCutterLength(part, axisSource, rule, tolerance, inputCutterLength, cutterMargin);
+                cutterCenter = center;
+                cutterStart = Point3d.Unset;
+            }
+
+            Brep cutter = CreateHoleCutter(cutterCenter, axisSource.Direction, rule, length, tolerance, useStartPoint, cutterStart);
             if (cutter == null)
             {
                 report.Add($"Line {lineIndex}, Part {partIndex}: {rule.Type} 切削体生成失败。");
@@ -458,10 +469,11 @@ namespace NS_Parrot
             }
 
             Line axis = useStartPoint
-                ? CreateAxisLineFromStart(screwStartPoint, axisSource.Direction, length)
-                : CreateAxisLine(center, axisSource.Direction, length);
+                ? CreateAxisLineFromStart(cutterStart, axisSource.Direction, length)
+                : CreateAxisLine(cutterCenter, axisSource.Direction, length);
             cuttersByPart[partIndex].Add(cutter);
             allCutters.Add(cutter);
+            cutterLineIndices.Add(lineIndex);
             holePoints.Add(center);
             holeAxes.Add(axis);
             holeNames.Add(rule.Name);
@@ -483,15 +495,67 @@ namespace NS_Parrot
                 processCutters.Add(cutter);
         }
 
-        private static double GetCutterLength(Brep part, Line axis, HoleRule rule, double tolerance, double inputCutterLength, double screwLength)
+        private static double GetCutterLength(Brep part, Line axis, HoleRule rule, double tolerance, double inputCutterLength, double cutterMargin)
         {
             if (inputCutterLength > tolerance)
                 return inputCutterLength;
 
-            if ((rule.Type == "底孔" || rule.Type == "过孔") && screwLength > tolerance)
-                return screwLength;
+            double fallback = Math.Max(rule.Diameter * 2.0 + cutterMargin, tolerance * 100.0);
+            return Math.Max(fallback, tolerance);
+        }
 
-            return EstimateCutterLength(part, axis, rule.Diameter, tolerance);
+        private static bool TryGetLocalCutterSpan(
+            Brep part,
+            Line axis,
+            Point3d hitPoint,
+            double cutterMargin,
+            double tolerance,
+            out Point3d start,
+            out Point3d center,
+            out double length)
+        {
+            start = Point3d.Unset;
+            center = Point3d.Unset;
+            length = 0.0;
+            if (part == null || !axis.IsValid || axis.Length <= tolerance)
+                return false;
+
+            List<double> parameters = GetDistinctIntersectionParameters(part, axis, tolerance);
+            if (parameters.Count < 2)
+                return false;
+
+            double hitParameter = NormalizedLineParameter(axis, hitPoint);
+            double bestDistance = double.MaxValue;
+            double bestStart = 0.0;
+            double bestEnd = 0.0;
+            for (int i = 0; i < parameters.Count - 1; i++)
+            {
+                double a = parameters[i];
+                double b = parameters[i + 1];
+                double distance = hitParameter < a
+                    ? a - hitParameter
+                    : hitParameter > b
+                        ? hitParameter - b
+                        : 0.0;
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    bestStart = a;
+                    bestEnd = b;
+                }
+            }
+
+            double marginParameter = cutterMargin / Math.Max(axis.Length, tolerance);
+            bestStart = Math.Max(0.0, bestStart - marginParameter * 0.5);
+            bestEnd = Math.Min(1.0, bestEnd + marginParameter * 0.5);
+            if (bestEnd <= bestStart)
+                return false;
+
+            start = axis.PointAt(bestStart);
+            Point3d end = axis.PointAt(bestEnd);
+            center = axis.PointAt((bestStart + bestEnd) * 0.5);
+            length = start.DistanceTo(end);
+            return length > tolerance;
         }
 
         private static List<Brep> BuildResultBreps(List<Brep> parts, List<List<Brep>> cuttersByPart, bool run, double tolerance, List<string> errors)
@@ -585,6 +649,67 @@ namespace NS_Parrot
             }
 
             return hits;
+        }
+
+        private static bool ShouldAutoCreateProcessHole(Brep part, bool screwLineHitsPart, Line screwLine, double processLength, double tolerance)
+        {
+            if (part == null || !screwLineHitsPart || !screwLine.IsValid)
+                return false;
+
+            Line extension = ReverseExtensionLine(screwLine, processLength);
+            Line fullSearchLine = new Line(extension.To, screwLine.To);
+            return CountDistinctIntersectionParameters(part, fullSearchLine, tolerance) >= 4;
+        }
+
+        private static int CountDistinctIntersectionParameters(Brep part, Line line, double tolerance)
+        {
+            return GetDistinctIntersectionParameters(part, line, tolerance).Count;
+        }
+
+        private static List<double> GetDistinctIntersectionParameters(Brep part, Line line, double tolerance)
+        {
+            List<double> parameters = new List<double>();
+            using (LineCurve curve = new LineCurve(line))
+            {
+                Curve[] overlapCurves;
+                Point3d[] points;
+                if (!Intersection.CurveBrep(curve, part, tolerance, out overlapCurves, out points))
+                    return parameters;
+
+                if (points != null)
+                {
+                    foreach (Point3d point in points)
+                        AddDistinctParameter(parameters, NormalizedLineParameter(line, point), tolerance, line.Length);
+                }
+
+                if (overlapCurves != null)
+                {
+                    foreach (Curve overlap in overlapCurves)
+                    {
+                        if (overlap == null)
+                            continue;
+
+                        AddDistinctParameter(parameters, NormalizedLineParameter(line, overlap.PointAtStart), tolerance, line.Length);
+                        AddDistinctParameter(parameters, NormalizedLineParameter(line, overlap.PointAtEnd), tolerance, line.Length);
+                    }
+                }
+            }
+
+            parameters.Sort();
+            return parameters;
+        }
+
+        private static void AddDistinctParameter(List<double> parameters, double parameter, double tolerance, double lineLength)
+        {
+            double tol = Math.Max(tolerance / Math.Max(lineLength, tolerance), 1e-6);
+            if (parameter < -tol || parameter > 1.0 + tol)
+                return;
+
+            double clamped = Math.Max(0.0, Math.Min(1.0, parameter));
+            if (parameters.Any(item => Math.Abs(item - clamped) <= tol))
+                return;
+
+            parameters.Add(clamped);
         }
 
         private static Point3d GetProcessPoint(Brep part, Line screwLine, double processLength, double tolerance)
@@ -928,7 +1053,8 @@ namespace NS_Parrot
             List<string> roles,
             int expectedPenetrationInput,
             string mismatchActionInput,
-            double tolerance)
+            double tolerance,
+            double cutterMargin)
         {
             return string.Join("\n", new[]
             {
@@ -939,6 +1065,7 @@ namespace NS_Parrot
                 expectedPenetrationInput.ToString(CultureInfo.InvariantCulture),
                 NormalizeSignatureText(mismatchActionInput),
                 tolerance.ToString("R", CultureInfo.InvariantCulture),
+                cutterMargin.ToString("R", CultureInfo.InvariantCulture),
                 string.Join("|", (lineSpecs ?? new List<string>()).Select(NormalizeSignatureText)),
                 string.Join("|", (roles ?? new List<string>()).Select(NormalizeSignatureText)),
                 string.Join("|", (parts ?? new List<Brep>()).Select(GetBrepSignature)),
@@ -1049,6 +1176,7 @@ namespace NS_Parrot
         {
             List<Brep> resultBreps = new List<Brep>();
             List<Brep> allCutters = new List<Brep>();
+            List<int> cutterLineIndices = new List<int>();
             List<Brep> tapCutters = new List<Brep>();
             List<Brep> clearanceCutters = new List<Brep>();
             List<Brep> processCutters = new List<Brep>();
@@ -1061,63 +1189,135 @@ namespace NS_Parrot
             List<Line> invalidLines = new List<Line>();
             List<string> specCountReport = new List<string>();
 
-            _lastOutputs.CopyTo(resultBreps, allCutters, tapCutters, clearanceCutters, processCutters, holePoints, holeAxes, holeNames, holeTypes, report, errors);
+            _lastOutputs.CopyTo(resultBreps, allCutters, cutterLineIndices, holePoints, holeAxes, holeNames, holeTypes, report, errors);
             report.Add("未点击 Run，本次未重新计算；当前输出为上一次缓存结果。");
             errors.Add("未点击 Run，本次未重新计算；如已修改参数，请点击组件底部 Run。");
-            SetOutputs(DA, resultBreps, allCutters, tapCutters, clearanceCutters, processCutters, holePoints, holeAxes, holeNames, holeTypes, report, errors, validLines, invalidLines, specCountReport);
+            SetOutputs(DA, resultBreps, allCutters, cutterLineIndices, holePoints, holeAxes, holeNames, holeTypes, errors, validLines, invalidLines, specCountReport);
+            UpdatePreview(allCutters, report);
         }
 
-        private static void SetEmptyOutputs(IGH_DataAccess DA, List<string> errors)
+        private void SetEmptyOutputs(IGH_DataAccess DA, List<string> errors)
         {
             SetOutputs(
                 DA,
                 new List<Brep>(),
                 new List<Brep>(),
-                new List<Brep>(),
-                new List<Brep>(),
-                new List<Brep>(),
+                new List<int>(),
                 new List<Point3d>(),
                 new List<Line>(),
-                new List<string>(),
                 new List<string>(),
                 new List<string>(),
                 errors ?? new List<string>(),
                 new List<Line>(),
                 new List<Line>(),
                 new List<string>());
+            UpdatePreview(new List<Brep>(), new List<string>());
         }
 
         private static void SetOutputs(
             IGH_DataAccess DA,
             List<Brep> resultBreps,
             List<Brep> allCutters,
-            List<Brep> tapCutters,
-            List<Brep> clearanceCutters,
-            List<Brep> processCutters,
+            List<int> cutterLineIndices,
             List<Point3d> holePoints,
             List<Line> holeAxes,
             List<string> holeNames,
             List<string> holeTypes,
-            List<string> report,
             List<string> errors,
             List<Line> validLines,
             List<Line> invalidLines,
             List<string> specCountReport)
         {
             DA.SetDataList(0, resultBreps);
-            DA.SetDataList(1, allCutters);
-            DA.SetDataList(2, tapCutters);
-            DA.SetDataList(3, clearanceCutters);
-            DA.SetDataList(4, processCutters);
-            DA.SetDataList(5, holePoints);
-            DA.SetDataList(6, holeAxes);
-            DA.SetDataList(7, holeNames);
-            DA.SetDataList(8, holeTypes);
-            DA.SetDataList(9, report);
-            DA.SetDataList(10, errors);
-            DA.SetDataList(11, validLines);
-            DA.SetDataList(12, invalidLines);
-            DA.SetDataList(13, specCountReport);
+            DA.SetDataTree(1, BuildCutterTree(allCutters, cutterLineIndices));
+            DA.SetDataList(2, holePoints);
+            DA.SetDataList(3, holeAxes);
+            DA.SetDataList(4, holeNames);
+            DA.SetDataList(5, holeTypes);
+            DA.SetDataList(6, errors);
+            DA.SetDataList(7, validLines);
+            DA.SetDataList(8, invalidLines);
+            DA.SetDataList(9, specCountReport);
+        }
+
+        private static GH_Structure<GH_Brep> BuildCutterTree(List<Brep> cutters, List<int> lineIndices)
+        {
+            GH_Structure<GH_Brep> tree = new GH_Structure<GH_Brep>();
+            if (cutters == null)
+                return tree;
+
+            for (int i = 0; i < cutters.Count; i++)
+            {
+                Brep cutter = cutters[i];
+                if (cutter == null)
+                    continue;
+
+                int lineIndex = lineIndices != null && i < lineIndices.Count ? lineIndices[i] : i;
+                tree.Append(new GH_Brep(cutter.DuplicateBrep()), new GH_Path(lineIndex));
+            }
+
+            return tree;
+        }
+
+        private void UpdatePreview(List<Brep> cutters, List<string> cutterTypes)
+        {
+            _previewCutters.Clear();
+            _previewBox = BoundingBox.Empty;
+            if (cutters == null)
+                return;
+
+            for (int i = 0; i < cutters.Count; i++)
+            {
+                Brep cutter = cutters[i];
+                if (cutter == null)
+                    continue;
+
+                string cutterType = cutterTypes != null && i < cutterTypes.Count ? cutterTypes[i] : string.Empty;
+                Brep previewBrep = cutter.DuplicateBrep();
+                _previewCutters.Add(new CutterPreviewItem(previewBrep, cutterType));
+                BoundingBox cutterBox = previewBrep.GetBoundingBox(true);
+                if (cutterBox.IsValid)
+                    _previewBox.Union(cutterBox);
+            }
+        }
+
+        public override bool IsPreviewCapable => true;
+
+        public override BoundingBox ClippingBox
+        {
+            get
+            {
+                BoundingBox box = base.ClippingBox;
+                if (_previewBox.IsValid)
+                    box.Union(_previewBox);
+                return box;
+            }
+        }
+
+        public override void DrawViewportMeshes(IGH_PreviewArgs args)
+        {
+            base.DrawViewportMeshes(args);
+            foreach (CutterPreviewItem item in _previewCutters)
+                args.Display.DrawBrepShaded(item.Cutter, new DisplayMaterial(GetPreviewColor(item.Type), 0.45));
+        }
+
+        public override void DrawViewportWires(IGH_PreviewArgs args)
+        {
+            base.DrawViewportWires(args);
+            foreach (CutterPreviewItem item in _previewCutters)
+                args.Display.DrawBrepWires(item.Cutter, GetPreviewColor(item.Type), 1);
+        }
+
+        private static Color GetPreviewColor(string cutterType)
+        {
+            if (string.Equals(cutterType, "底孔", StringComparison.OrdinalIgnoreCase))
+                return Color.FromArgb(45, 130, 255);
+            if (string.Equals(cutterType, "过孔", StringComparison.OrdinalIgnoreCase))
+                return Color.FromArgb(30, 190, 95);
+            if (string.Equals(cutterType, "工艺孔", StringComparison.OrdinalIgnoreCase))
+                return Color.FromArgb(245, 145, 40);
+
+            return Color.FromArgb(160, 160, 160);
         }
 
         private static List<ScrewLineInput> ResolveScrewLineInputs(List<IGH_Goo> inputs, RhinoDoc doc, double tolerance, List<string> errors)
@@ -1364,6 +1564,11 @@ namespace NS_Parrot
         private static string ResolveTableSpec(string rawSpec)
         {
             return NormalizeSpec(rawSpec);
+        }
+
+        private static string NormalizeStatisticSpec(string spec)
+        {
+            return string.IsNullOrWhiteSpace(spec) ? string.Empty : spec.Trim();
         }
 
         private static bool IsSameLine(Line a, Line b, double tolerance)
@@ -1867,7 +2072,7 @@ namespace NS_Parrot
             }
         }
 
-        protected override Bitmap Icon => GeneratedIcon.Get("gen_MyHoles");
+        protected override Bitmap Icon => GeneratedIcon.GetScrewHoleByVector();
 
         public override void CreateAttributes()
         {
@@ -1923,6 +2128,8 @@ namespace NS_Parrot
 
         protected override bool UseLineInfo => true;
         protected override bool ShowSpecButton => false;
+
+        protected override Bitmap Icon => GeneratedIcon.GetScrewHoleByLineInfo();
 
         public override Guid ComponentGuid => new Guid("9B6499D7-D2F6-4D7D-AF14-165615C6BFB4");
     }
@@ -2236,69 +2443,71 @@ namespace NS_Parrot
         public RhinoObject Object { get; set; }
     }
 
+    internal class CutterPreviewItem
+    {
+        public CutterPreviewItem(Brep cutter, string type)
+        {
+            Cutter = cutter;
+            Type = type ?? string.Empty;
+        }
+
+        public Brep Cutter { get; }
+        public string Type { get; }
+    }
+
     internal class ScrewHoleOutputs
     {
         private List<Brep> _resultBreps = new List<Brep>();
         private List<Brep> _allCutters = new List<Brep>();
-        private List<Brep> _tapCutters = new List<Brep>();
-        private List<Brep> _clearanceCutters = new List<Brep>();
-        private List<Brep> _processCutters = new List<Brep>();
+        private List<int> _cutterLineIndices = new List<int>();
         private List<Point3d> _holePoints = new List<Point3d>();
         private List<Line> _holeAxes = new List<Line>();
         private List<string> _holeNames = new List<string>();
         private List<string> _holeTypes = new List<string>();
-        private List<string> _report = new List<string>();
+        private List<string> _cutterTypes = new List<string>();
         private List<string> _errors = new List<string>();
 
         public void Set(
             List<Brep> resultBreps,
             List<Brep> allCutters,
-            List<Brep> tapCutters,
-            List<Brep> clearanceCutters,
-            List<Brep> processCutters,
+            List<int> cutterLineIndices,
             List<Point3d> holePoints,
             List<Line> holeAxes,
             List<string> holeNames,
             List<string> holeTypes,
-            List<string> report,
+            List<string> cutterTypes,
             List<string> errors)
         {
             _resultBreps = DuplicateBreps(resultBreps);
             _allCutters = DuplicateBreps(allCutters);
-            _tapCutters = DuplicateBreps(tapCutters);
-            _clearanceCutters = DuplicateBreps(clearanceCutters);
-            _processCutters = DuplicateBreps(processCutters);
+            _cutterLineIndices = new List<int>(cutterLineIndices);
             _holePoints = new List<Point3d>(holePoints);
             _holeAxes = new List<Line>(holeAxes);
             _holeNames = new List<string>(holeNames);
             _holeTypes = new List<string>(holeTypes);
-            _report = new List<string>(report);
+            _cutterTypes = new List<string>(cutterTypes);
             _errors = new List<string>(errors);
         }
 
         public void CopyTo(
             List<Brep> resultBreps,
             List<Brep> allCutters,
-            List<Brep> tapCutters,
-            List<Brep> clearanceCutters,
-            List<Brep> processCutters,
+            List<int> cutterLineIndices,
             List<Point3d> holePoints,
             List<Line> holeAxes,
             List<string> holeNames,
             List<string> holeTypes,
-            List<string> report,
+            List<string> cutterTypes,
             List<string> errors)
         {
             ReplaceBreps(resultBreps, _resultBreps);
             ReplaceBreps(allCutters, _allCutters);
-            ReplaceBreps(tapCutters, _tapCutters);
-            ReplaceBreps(clearanceCutters, _clearanceCutters);
-            ReplaceBreps(processCutters, _processCutters);
+            ReplaceValues(cutterLineIndices, _cutterLineIndices);
             ReplaceValues(holePoints, _holePoints);
             ReplaceValues(holeAxes, _holeAxes);
             ReplaceValues(holeNames, _holeNames);
             ReplaceValues(holeTypes, _holeTypes);
-            ReplaceValues(report, _report);
+            ReplaceValues(cutterTypes, _cutterTypes);
             ReplaceValues(errors, _errors);
         }
 

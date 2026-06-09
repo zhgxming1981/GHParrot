@@ -38,7 +38,7 @@ namespace NS_Parrot
             pManager.AddTextParameter("材质", "材质", "可选，覆盖模板线 UserString：材质，例如 铝材、钢材", GH_ParamAccess.item);
             pManager.AddTextParameter("孔类型", "孔类型", "可选，覆盖模板线 UserString：孔类型，例如 gk,dk 或 过孔,底孔", GH_ParamAccess.item);
             pManager.AddIntegerParameter("穿透层数", "穿透层数", "可选，统一写入本批螺栓线；为空时使用模板线 UserString，模板线也为空时默认为 2", GH_ParamAccess.item);
-            pManager.AddBooleanParameter("处理方式", "处理方式", "穿透层数与预期不符时的统一处理方式。True=默认，继续按默认规则开孔；False=无效，此螺丝无效并跳过。", GH_ParamAccess.item, true);
+            pManager.AddBooleanParameter("处理方式", "处理方式", "默认值 True。True=螺钉实际穿透层数与设置的穿透层数不同时，按默认方式处理；False=螺钉实际穿透层数与设置的穿透层数不同时，该螺钉无效。", GH_ParamAccess.item, true);
             pManager.AddTextParameter("使用位置", "使用位置", "可选，统一写入本批螺栓线；为空时使用模板线 UserString", GH_ParamAccess.item);
             pManager.AddTextParameter("图层", "图层", "可选，Bake 到 Rhino 的目标图层；为空时使用当前图层", GH_ParamAccess.item);
             pManager.AddBooleanParameter("Bake", "Bake", "True 时将当前螺栓线 Bake 到 Rhino，并写入 UserString；保持 True 不会重复 Bake", GH_ParamAccess.item, false);

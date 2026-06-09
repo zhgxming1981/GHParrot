@@ -63,6 +63,48 @@ namespace NS_Parrot
             return bitmap;
         }
 
+        public static Bitmap GetScrewHoleByVector()
+        {
+            Bitmap bitmap = CreateCanvas();
+            using (Graphics graphics = Graphics.FromImage(bitmap))
+            using (Pen boardPen = new Pen(Color.FromArgb(62, 62, 62), 1.4f))
+            using (Pen screwPen = new Pen(Color.FromArgb(38, 38, 38), 2.0f))
+            using (Pen cutterPen = new Pen(Color.FromArgb(45, 130, 255), 2.0f))
+            using (SolidBrush boardBrush = new SolidBrush(Color.FromArgb(232, 238, 244)))
+            using (SolidBrush headBrush = new SolidBrush(Color.FromArgb(245, 145, 40)))
+            using (SolidBrush holeBrush = new SolidBrush(Color.White))
+            {
+                ConfigureGraphics(graphics);
+                graphics.FillRectangle(boardBrush, 5, 6, 14, 12);
+                graphics.DrawRectangle(boardPen, 5, 6, 14, 12);
+                graphics.DrawLine(screwPen, 12, 2, 12, 22);
+                DrawArrow(graphics, screwPen, 12, 18, 12, 22);
+                graphics.DrawEllipse(cutterPen, 8, 9, 8, 6);
+                graphics.FillEllipse(holeBrush, 10, 10, 4, 4);
+                graphics.FillPolygon(headBrush, new[] { new PointF(8, 3), new PointF(16, 3), new PointF(14, 6), new PointF(10, 6) });
+            }
+
+            return bitmap;
+        }
+
+        public static Bitmap GetScrewHoleByLineInfo()
+        {
+            Bitmap bitmap = GetScrewHoleByVector();
+            using (Graphics graphics = Graphics.FromImage(bitmap))
+            using (Pen outlinePen = new Pen(Color.FromArgb(42, 42, 42), 1.0f))
+            using (SolidBrush tapBrush = new SolidBrush(Color.FromArgb(45, 130, 255)))
+            using (SolidBrush clearanceBrush = new SolidBrush(Color.FromArgb(30, 190, 95)))
+            using (SolidBrush processBrush = new SolidBrush(Color.FromArgb(245, 145, 40)))
+            {
+                ConfigureGraphics(graphics);
+                DrawInfoDot(graphics, tapBrush, outlinePen, 19, 6);
+                DrawInfoDot(graphics, clearanceBrush, outlinePen, 19, 12);
+                DrawInfoDot(graphics, processBrush, outlinePen, 19, 18);
+            }
+
+            return bitmap;
+        }
+
         private static Bitmap CreateCanvas()
         {
             Bitmap bitmap = new Bitmap(24, 24);
@@ -83,6 +125,12 @@ namespace NS_Parrot
             graphics.FillEllipse(fill, x - 2.2f, y - 2.2f, 4.4f, 4.4f);
             graphics.DrawEllipse(outline, x - 2.2f, y - 2.2f, 4.4f, 4.4f);
             graphics.FillEllipse(accent, x - 0.8f, y - 0.8f, 1.6f, 1.6f);
+        }
+
+        private static void DrawInfoDot(Graphics graphics, Brush fill, Pen outline, float x, float y)
+        {
+            graphics.FillEllipse(fill, x - 2.0f, y - 2.0f, 4.0f, 4.0f);
+            graphics.DrawEllipse(outline, x - 2.0f, y - 2.0f, 4.0f, 4.0f);
         }
 
         private static void DrawArrow(Graphics graphics, Pen pen, float x1, float y1, float x2, float y2)
