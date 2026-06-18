@@ -127,6 +127,7 @@ namespace NS_Parrot
                         hole_data TEXT NOT NULL DEFAULT '',
                         mirror_code TEXT NOT NULL,
                         mirror_score REAL NOT NULL,
+                        hole_mirror_score REAL NOT NULL DEFAULT 0,
                         feature_version INTEGER NOT NULL,
                         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                     )";
@@ -138,24 +139,27 @@ namespace NS_Parrot
                 command.ExecuteNonQuery();
             }
 
+            EnsureColumn(dbPath, "hole_mirror_score", "REAL NOT NULL DEFAULT 0");
             ValidateSchema(dbPath);
+        }
+
+        private static void EnsureColumn(string dbPath, string columnName, string definition)
+        {
+            HashSet<string> columns = ReadColumnNames(dbPath);
+            if (columns.Contains(columnName))
+                return;
+
+            using (SQLiteConnection connection = OpenConnection(dbPath))
+            using (SQLiteCommand command = connection.CreateCommand())
+            {
+                command.CommandText = "ALTER TABLE " + TableName + " ADD COLUMN " + columnName + " " + definition + ";";
+                command.ExecuteNonQuery();
+            }
         }
 
         private static void ValidateSchema(string dbPath)
         {
-            HashSet<string> columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            using (SQLiteConnection connection = OpenConnection(dbPath))
-            using (SQLiteCommand command = connection.CreateCommand())
-            {
-                command.CommandText = "PRAGMA table_info(" + TableName + ")";
-                using (SQLiteDataReader reader = command.ExecuteReader())
-                {
-                    while (reader.Read())
-                    {
-                        columns.Add(reader.GetString(1));
-                    }
-                }
-            }
+            HashSet<string> columns = ReadColumnNames(dbPath);
 
             string[] requiredColumns =
             {
@@ -173,6 +177,7 @@ namespace NS_Parrot
                 "hole_data",
                 "mirror_code",
                 "mirror_score",
+                "hole_mirror_score",
                 "feature_version"
             };
 
@@ -184,6 +189,25 @@ namespace NS_Parrot
                 if (!columns.Contains(column))
                     throw new InvalidOperationException("数据库表 " + TableName + " 不是新版结构，请使用新版数据库或重建该表。");
             }
+        }
+
+        private static HashSet<string> ReadColumnNames(string dbPath)
+        {
+            HashSet<string> columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (SQLiteConnection connection = OpenConnection(dbPath))
+            using (SQLiteCommand command = connection.CreateCommand())
+            {
+                command.CommandText = "PRAGMA table_info(" + TableName + ")";
+                using (SQLiteDataReader reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        columns.Add(reader.GetString(1));
+                    }
+                }
+            }
+
+            return columns;
         }
 
         protected override Bitmap Icon => GeneratedIcon.Get("gen_CreateBrepCodeDatabase");

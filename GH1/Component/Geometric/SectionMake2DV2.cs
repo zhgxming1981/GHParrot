@@ -21,7 +21,7 @@ using System.Windows.Forms;
 
 namespace NS_Parrot
 {
-    public class SectionMake2D : GH_Component
+    public class SectionMake2DV2 : GH_Component
     {
         private const double DefaultViewDepth = 500000.0;
         private const double DefaultPreviewGap = 0.0;
@@ -46,14 +46,16 @@ namespace NS_Parrot
         };
         private bool _lastRun;
         private SectionCache _cache = new SectionCache();
+        private string _geometryInputSignature = string.Empty;
+        private double _currentPreviewGap = DefaultPreviewGap;
         private readonly List<SectionInfo> _previewSections = new List<SectionInfo>();
         private bool _keepEmptyBranches = true;
         private HashSet<string> _visibleLineTypes = new HashSet<string>(VisibleLineTypes, StringComparer.OrdinalIgnoreCase);
         private HashSet<string> _hiddenLineTypes = new HashSet<string>(HiddenLineTypes, StringComparer.OrdinalIgnoreCase);
         internal bool ButtonRun { get; set; }
 
-        public SectionMake2D()
-          : base("SectionMake2D", "剖切Make2D",
+        public SectionMake2DV2()
+          : base("SectionMake2D V2", "剖切Make2D V2",
               "按剖切线批量生成截面线、截面面和 Make2D 可见线/隐藏线",
               "Parrot", "几何")
         {
@@ -100,11 +102,11 @@ namespace NS_Parrot
 #endif
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
-            pManager.AddGeometryParameter("截面面", "SecS", "由剖切面与 Brep/Surface 求交得到的截面轮廓生成的平面 Brep；参照对象输出其剖切得到的通用定位几何。路径为 {剖切号序号; 对象序号}，同一分支下的第 0、1、2... 项为该对象的面或几何。", GH_ParamAccess.tree);
-            pManager.AddCurveParameter("截面线", "Sec", "由 Brep/Surface 与剖切平面直接求交得到的截面曲线，不再依赖 Make2D 的 Section 类型。路径为 {剖切号序号; 对象序号}，同一分支下的第 0、1、2... 项为该对象的截面线。", GH_ParamAccess.tree);
-            pManager.AddCurveParameter("可见线", "Vis", "Make2D 输出的可见线中，被右键“可见线类型”勾选的曲线；Make2D 不再接裁剪平面 C。路径为 {剖切号序号; 对象序号}。", GH_ParamAccess.tree);
+            pManager.AddGeometryParameter("截面面", "SecS", "普通对象先与剖切平面求交，再使用本剖面共用的 Parallel View 投影；同一对象的闭合轮廓一次生成带孔平面 Brep。参考对象不建面，求交为点就输出点，求交为曲线就输出投影曲线。路径为 {剖切号序号; 对象序号}。", GH_ParamAccess.tree);
+            pManager.AddCurveParameter("截面线", "Sec", "由实体、参考对象、裁剪平面 C 和本剖面共用的 Parallel View 送入 Make2D 后，从 Vt/Ht 类型为 Section 的曲线中提取。路径为 {剖切号序号; 对象序号}。", GH_ParamAccess.tree);
+            pManager.AddCurveParameter("可见线", "Vis", "由筛选后的可投影对象、参考对象、裁剪平面 C 和本剖面共用的 Parallel View 生成，并按右键“可见线类型”过滤。路径为 {剖切号序号; 对象序号}。", GH_ParamAccess.tree);
             pManager.AddTextParameter("可见线类型", "Vt", "与“可见线”一一对应的 Make2D 可见线类型文字；被右键过滤掉的可见线类型不会输出。", GH_ParamAccess.tree);
-            pManager.AddCurveParameter("隐藏线", "Hid", "Make2D 输出的隐藏线中，被右键“隐藏线类型”勾选的曲线；Make2D 不再接裁剪平面 C。路径为 {剖切号序号; 对象序号}。", GH_ParamAccess.tree);
+            pManager.AddCurveParameter("隐藏线", "Hid", "由筛选后的可投影对象、参考对象、裁剪平面 C 和本剖面共用的 Parallel View 生成，并按右键“隐藏线类型”过滤。路径为 {剖切号序号; 对象序号}。", GH_ParamAccess.tree);
             pManager.AddTextParameter("隐藏线类型", "Ht", "与“隐藏线”一一对应的 Make2D 隐藏线类型文字；被右键过滤掉的隐藏线类型不会输出。", GH_ParamAccess.tree);
             pManager.AddTextParameter("剖切号", "N", "实际使用的剖切号列表。列表顺序与输出树第一层剖切号序号一一对应，用于还原 A、B、C 或 1、2、3 等原始剖切号。", GH_ParamAccess.list);
             pManager.AddTextParameter("诊断信息", "Log", "本次计算过程、输入解析、剖面去重、Make2D 端口识别、线型过滤数量、警告和错误信息。", GH_ParamAccess.list);
@@ -142,8 +144,8 @@ namespace NS_Parrot
             if (!CHardware.CheckLegality())
             {
                 SectionCache illegalCache = new SectionCache();
-                illegalCache.Diagnostics.Add("Stop: license check failed.");
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "License check failed.");
+                illegalCache.Diagnostics.Add("停止：授权检查失败。");
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "授权检查失败。");
                 SetOutputs(DA, illegalCache);
                 return;
             }
@@ -164,6 +166,7 @@ namespace NS_Parrot
                 DA.GetData(4, ref newViewDepth);
                 DA.GetData(5, ref newPreviewGap);
                 DA.GetData(6, ref newRun);
+                _currentPreviewGap = newPreviewGap;
 
                 List<string> newValidation = new List<string>();
                 List<Line> newSectionLines = ParseSectionLines(newSectionLineGoo, newValidation);
@@ -173,13 +176,26 @@ namespace NS_Parrot
                 ButtonRun = false;
                 bool newShouldRun = newButtonRun || (newRun && !_lastRun);
                 _lastRun = newRun;
+                string newGeometrySignature = CreateGeometryInputSignature(newInputObjects, newReferenceObjects, newSectionLines, newViewDepth, newTolerance);
+                bool geometryChanged = !string.IsNullOrEmpty(_geometryInputSignature) &&
+                    !string.Equals(_geometryInputSignature, newGeometrySignature, StringComparison.Ordinal);
+
+                if (geometryChanged && !newShouldRun)
+                {
+                    _cache = new SectionCache();
+                    _cache.Diagnostics.Add("对象、参照、剖切位置、剖切深度或文档容差已变化，旧输出已清空，请重新执行。");
+                    _geometryInputSignature = newGeometrySignature;
+                    SetOutputs(DA, _cache);
+                    return;
+                }
 
                 if (!newShouldRun)
                 {
+                    UpdateCachedNames(_cache, newSectionNames);
                     if (_cache.Diagnostics.Count == 0)
                     {
-                        _cache.Diagnostics.Add("Not executed: toggle Run from False to True or click Run button.");
-                        _cache.Diagnostics.Add("Current output is cached; line type filtering does not recompute Make2D.");
+                        _cache.Diagnostics.Add("尚未执行：请将 Run 从 False 切换到 True，或单击 Run 按钮。");
+                        _cache.Diagnostics.Add("当前输出来自缓存；修改剖切号、预览间距、线型过滤或空分支设置不会重新运行 Make2D。");
                     }
                     SetOutputs(DA, _cache);
                     return;
@@ -188,8 +204,8 @@ namespace NS_Parrot
                 if (newInputObjects.Count == 0)
                 {
                     SectionCache invalidCache = new SectionCache();
-                    invalidCache.Diagnostics.Add("Stop: object input is empty.");
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "Object input is empty.");
+                    invalidCache.Diagnostics.Add("停止：对象输入为空。");
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "对象输入为空。");
                     SetOutputs(DA, invalidCache);
                     return;
                 }
@@ -197,8 +213,8 @@ namespace NS_Parrot
                 if (newSectionLineGoo.Count == 0)
                 {
                     SectionCache invalidCache = new SectionCache();
-                    invalidCache.Diagnostics.Add("Stop: section line input is empty.");
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "Section line input is empty.");
+                    invalidCache.Diagnostics.Add("停止：剖切位置输入为空。");
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "剖切位置输入为空。");
                     SetOutputs(DA, invalidCache);
                     return;
                 }
@@ -206,7 +222,7 @@ namespace NS_Parrot
                 if (newValidation.Count > 0)
                 {
                     SectionCache invalidCache = new SectionCache();
-                    invalidCache.Diagnostics.Add("Stop: section line input is invalid.");
+                    invalidCache.Diagnostics.Add("停止：剖切位置输入无效。");
                     invalidCache.Diagnostics.AddRange(newValidation);
                     foreach (string message in newValidation)
                         AddRuntimeMessage(GH_RuntimeMessageLevel.Error, message);
@@ -217,14 +233,15 @@ namespace NS_Parrot
                 try
                 {
                     _cache = Compute(newInputObjects, newReferenceObjects, newSectionLines, newSectionNames, newViewDepth, newPreviewGap, newTolerance);
+                    _geometryInputSignature = newGeometrySignature;
                     SetOutputs(DA, _cache);
                 }
                 catch (Exception ex)
                 {
                     SectionCache errorCache = new SectionCache();
-                    errorCache.Diagnostics.Add("鎵ц涓柇: " + ex.Message);
-                    errorCache.Diagnostics.Add("寮傚父绫诲瀷: " + ex.GetType().FullName);
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
+                    errorCache.Diagnostics.Add("执行中断: " + ex.Message);
+                    errorCache.Diagnostics.Add("异常类型: " + ex.GetType().FullName);
+                    AddRuntimeMessageSafe(GH_RuntimeMessageLevel.Error, ex.Message);
                     SetOutputs(DA, errorCache);
                 }
 
@@ -326,21 +343,21 @@ namespace NS_Parrot
         private SectionCache Compute(List<IGH_Goo> inputObjects, List<IGH_Goo> referenceObjects, List<Line> sectionLines, List<string> sectionNames, double viewDepth, double previewGap, double tolerance)
         {
             SectionCache result = new SectionCache();
-            result.Diagnostics.Add("Run triggered; recomputing.");
-            result.Diagnostics.Add("杈撳叆瀵硅薄鏁伴噺: " + inputObjects.Count);
+            result.Diagnostics.Add("执行端口触发，开始重新计算。");
+            result.Diagnostics.Add("输入对象数量: " + inputObjects.Count);
             result.ReferenceObjectIndex = referenceObjects.Count > 0 ? inputObjects.Count : -1;
-            result.Diagnostics.Add("Reference count: " + referenceObjects.Count + (result.ReferenceObjectIndex >= 0 ? ", reference index starts at " + result.ReferenceObjectIndex + "." : "."));
-            result.Diagnostics.Add("杈撳叆鍓栧垏绾挎暟閲? " + sectionLines.Count);
+            result.Diagnostics.Add("参考对象数量: " + referenceObjects.Count + (result.ReferenceObjectIndex >= 0 ? "，参考对象序号从 " + result.ReferenceObjectIndex + " 开始。" : "。"));
+            result.Diagnostics.Add("输入剖切线数量: " + sectionLines.Count);
 
             List<string> collectLogs = new List<string>();
             List<SourceGeometry> source = CollectSourceGeometry(inputObjects, collectLogs);
             if (referenceObjects.Count > 0)
                 source.AddRange(CollectSourceGeometry(referenceObjects, collectLogs, inputObjects.Count, true));
-            result.Diagnostics.Add("鎴愬姛瑙ｆ瀽鍑犱綍鏁伴噺: " + source.Count);
+            result.Diagnostics.Add("成功解析几何数量: " + source.Count);
             result.Diagnostics.AddRange(collectLogs);
             if (source.Count == 0)
             {
-                result.Diagnostics.Add("Stop: no geometry available for section and Make2D.");
+                result.Diagnostics.Add("停止：没有可参与剖切和 Make2D 的几何。");
                 return result;
             }
 
@@ -358,69 +375,86 @@ namespace NS_Parrot
                     result.ReferenceObjectIndex = inputObjects.Count;
                     result.OutputObjectCount = inputObjects.Count + 1;
                     source.Add(new SourceGeometry(referenceBox, inputObjects.Count, true));
-                    result.Diagnostics.Add("No reference input; generated XY bounding box reference at object index " + result.ReferenceObjectIndex + ".");
+                    result.Diagnostics.Add("未输入参考对象，已使用输入对象的 XY 包围盒生成参考对象，序号为 " + result.ReferenceObjectIndex + "。");
                 }
                 else
                 {
                     result.ReferenceObjectIndex = -1;
                     result.OutputObjectCount = inputObjects.Count;
-                    result.Diagnostics.Add("No reference input and input bounding box is invalid; no automatic reference generated.");
+                    result.Diagnostics.Add("未输入参考对象，且输入对象包围盒无效，无法生成自动参考对象。");
                 }
             }
 
             List<SectionInfo> sections = BuildUniqueSections(sectionLines, sectionNames, tolerance);
-            result.Diagnostics.Add("鏈夋晥鍘婚噸鍚庡墫闈㈡暟閲? " + sections.Count);
+            result.Diagnostics.Add("有效去重后剖面数量: " + sections.Count);
             if (sections.Count == 0)
             {
-                result.Diagnostics.Add("Stop: no valid section plane.");
+                result.Diagnostics.Add("停止：没有有效剖切面。");
                 return result;
             }
 
             BoundingBox sourceBox = GetSourceBoundingBox(source);
             double gap = ResolvePreviewGap(previewGap, sourceBox, tolerance);
-            result.Diagnostics.Add("棰勮闂磋窛: " + FormatDouble(gap));
+            result.Diagnostics.Add("预览间距: " + FormatDouble(gap));
 
             for (int i = 0; i < sections.Count; i++)
             {
                 SectionInfo section = sections[i];
-                Point3d target = GetSectionTarget(Point3d.Origin, false, sourceBox, section.ViewDirection, i, gap);
                 ProjectionContext projectionContext = CreateProjectionContext(source, section);
                 SectionInfo projectionSection = projectionContext.Section;
-                Transform toLayout = CreateMake2DToLayoutTransform(target, 1.0);
 
                 GH_Path sectionPath = new GH_Path(i);
                 InitializeObjectBranches(result, sectionPath, result.OutputObjectCount, _keepEmptyBranches);
 
-                List<SourceGeometry> visibleSource = projectionContext.Source.Where(item => IsInsideViewDepth(item.Geometry, projectionSection, viewDepth)).ToList();
-                result.Diagnostics.Add("鍓栭潰 " + section.Name + ": 鑼冨洿鍐呭璞?" + visibleSource.Count + "/" + source.Count);
-                result.Diagnostics.Add("鍓栭潰 " + section.Name + ": 灞€閮ㄥ墫鍒囩嚎 From " + FormatPoint(projectionSection.Line.From) + " To " + FormatPoint(projectionSection.Line.To));
-                result.Diagnostics.Add("鍓栭潰 " + section.Name + ": 灞€閮ㄥ墫鍒囬潰 Origin " + FormatPoint(projectionSection.Plane.Origin) + " Normal " + FormatVector(projectionSection.Plane.Normal) + " View " + FormatVector(projectionSection.ViewDirection));
+                List<SourceGeometry> visibleSource = projectionContext.Source
+                    .Where(item => item.IsReference || IsInsideViewDepth(item.Geometry, projectionSection, viewDepth))
+                    .ToList();
+                result.Diagnostics.Add("剖面 " + section.Name + ": 范围内对象 " + visibleSource.Count + "/" + source.Count);
 
                 List<SourceGeometry> sectionSource = new List<SourceGeometry>();
                 List<SourceGeometry> projectionSource = new List<SourceGeometry>();
                 List<SectionPoint> sectionPoints = new List<SectionPoint>();
                 SplitSectionAndProjectionSource(visibleSource, projectionSection, tolerance, result, sectionSource, sectionPoints, projectionSource);
-                Plane sectionOutputPlane = CreateMake2DProjectionPlane(projectionSection.Line, projectionSection.Plane.Origin);
-                Transform sectionToLayout = toLayout * Transform.PlaneToPlane(sectionOutputPlane, Plane.WorldXY);
-                AddIntersectionSectionSurfaces(result, i, sectionToLayout, sectionSource, sectionPoints, tolerance);
                 List<SourceGeometry> make2DSource = visibleSource;
 
-                using (NativeMake2DViewContext viewContext = CreateNativeMake2DViewContext(make2DSource, projectionSection, projectionContext.LocalizationCenter, result, "Section " + section.Name + ": Make2D view"))
+                using (NativeMake2DViewContext viewContext = CreateNativeMake2DViewContext(make2DSource, projectionSection, projectionContext.LocalizationCenter, result, "剖面 " + section.Name + "：Make2D 视图"))
                 {
                     if (viewContext == null)
                     {
+                        result.Layouts.Add(new SectionLayoutInfo(sourceBox, BoundingBox.Empty, BoundingBox.Empty, BoundingBox.Empty, section.ViewDirection));
                         result.Names.Add(section.Name);
                         continue;
                     }
 
-                    if (RunNativeMake2D(make2DSource, viewContext, projectionSection, tolerance, result, "鍓栭潰 " + section.Name + ": Make2D", out List<Curve> visible, out List<int> visibleIndex, out List<string> visibleTypes, out List<Curve> hidden, out List<int> hiddenIndex, out List<string> hiddenTypes))
+                    BoundingBox directReferenceBox;
+                    BoundingBox directSectionBox = AddDirectSectionSurfaces(
+                        result, i, sectionSource, sectionPoints, viewContext.ViewRectangle.Plane, tolerance, out directReferenceBox);
+
+                    List<Curve> visible = new List<Curve>();
+                    List<int> visibleIndex = new List<int>();
+                    List<string> visibleTypes = new List<string>();
+                    List<Curve> hidden = new List<Curve>();
+                    List<int> hiddenIndex = new List<int>();
+                    List<string> hiddenTypes = new List<string>();
+                    if (RunNativeMake2D(make2DSource, viewContext, projectionSection, tolerance, result, "剖面 " + section.Name + "：对象 Make2D",
+                        out visible, out visibleIndex, out visibleTypes, out hidden, out hiddenIndex, out hiddenTypes))
                     {
-                        AddMake2DRecords(result, sectionPath, i, toLayout, visible, visibleIndex, visibleTypes, hidden, hiddenIndex, hiddenTypes, tolerance);
+                        AddMake2DRecords(result, sectionPath, i, Transform.Identity,
+                            visible, visibleIndex, visibleTypes, hidden, hiddenIndex, hiddenTypes, tolerance);
                     }
+
+                    BoundingBox drawingBox = GetCurveBoundingBox(visible, hidden);
+                    UnionBoundingBox(ref drawingBox, directSectionBox);
+                    BoundingBox referenceSourceBox = GetSourceBoundingBox(source.Where(item => item.IsReference).ToList());
+                    BoundingBox referenceDrawingBox = GetIndexedCurveBoundingBox(result.ReferenceObjectIndex,
+                        visible, visibleIndex, hidden, hiddenIndex,
+                        new List<Curve>(), new List<int>(), new List<Curve>(), new List<int>());
+                    UnionBoundingBox(ref referenceDrawingBox, directReferenceBox);
+                    result.Layouts.Add(new SectionLayoutInfo(sourceBox, drawingBox, referenceSourceBox, referenceDrawingBox, section.ViewDirection));
                 }
 
                 result.Names.Add(section.Name);
-                result.Diagnostics.Add("鍓栭潰 " + section.Name + ": 鎴潰闈?" + result.SectionSurfaces.DataCount + "锛屾埅闈㈢嚎 " + result.SectionGeometry.DataCount + "锛屽彲瑙佺嚎缂撳瓨 " + result.RawVisibleCurves.Count + "锛岄殣钘忕嚎缂撳瓨 " + result.RawHiddenCurves.Count);
+                result.Diagnostics.Add("剖面 " + section.Name + ": 截面面/参考截面几何 " + result.SectionSurfaces.DataCount + "，截面线 " + result.SectionGeometry.DataCount + "，可见线缓存 " + result.RawVisibleCurves.Count + "，隐藏线缓存 " + result.RawHiddenCurves.Count);
             }
 
             AppendLineTypeDiagnostics(result);
@@ -531,7 +565,7 @@ namespace NS_Parrot
                 }
             }
 
-            cache.Diagnostics.Add("Section index " + sectionIndex + ": extracted Section from Vt " + visibleSectionCount + ", from Ht " + hiddenSectionCount + ".");
+            cache.Diagnostics.Add("剖面序号 " + sectionIndex + "：从 Vt 提取 Section " + visibleSectionCount + " 条，从 Ht 提取 Section " + hiddenSectionCount + " 条。");
         }
 
         private static void AddIntersectionSectionSurfaces(SectionCache cache, int sectionIndex, Transform sectionToLayout, List<SourceGeometry> sectionSource, List<SectionPoint> sectionPoints, double tolerance)
@@ -559,10 +593,284 @@ namespace NS_Parrot
             }
 
             if (sectionPoints != null && sectionPoints.Count > 0)
-                cache.Diagnostics.Add("Section index " + sectionIndex + ": plane intersection points " + sectionPoints.Count + "; SecS skips points.");
+                cache.Diagnostics.Add("剖面序号 " + sectionIndex + "：平面求交点 " + sectionPoints.Count + " 个；普通对象的 SecS 不输出点。");
 
-            cache.Diagnostics.Add("Section index " + sectionIndex + ": plane intersection curves for SecS " + sectionSource.Count + ".");
+            cache.Diagnostics.Add("剖面序号 " + sectionIndex + "：SecS 平面求交曲线 " + sectionSource.Count + " 条。");
             AddSectionSurfacesFromMake2DSections(cache, sectionIndex, sectionCurvesByObject, tolerance);
+        }
+
+        private static string CreateGeometryInputSignature(List<IGH_Goo> inputObjects, List<IGH_Goo> referenceObjects, List<Line> sectionLines, double viewDepth, double tolerance)
+        {
+            List<string> logs = new List<string>();
+            List<SourceGeometry> source = CollectSourceGeometry(inputObjects, logs);
+            source.AddRange(CollectSourceGeometry(referenceObjects, logs, inputObjects.Count, true));
+            IEnumerable<string> geometryParts = source.Select(item =>
+            {
+                BoundingBox box = item.Geometry?.GetBoundingBox(true) ?? BoundingBox.Empty;
+                return item.Index + ":" + item.IsReference + ":" + item.Geometry?.GetType().FullName + ":" +
+                    GetGeometryContentSignature(item.Geometry) + ":" +
+                    FormatPoint(box.Min) + ":" + FormatPoint(box.Max);
+            });
+            IEnumerable<string> lineParts = sectionLines.Select(line => FormatPoint(line.From) + ">" + FormatPoint(line.To));
+            return string.Join("|", geometryParts.Concat(lineParts)) + "|VD=" + FormatDouble(viewDepth) + "|T=" + FormatDouble(tolerance);
+        }
+
+        private static string GetGeometryContentSignature(GeometryBase geometry)
+        {
+            if (geometry == null)
+                return "null";
+
+            try
+            {
+                MethodInfo method = geometry.GetType().GetMethod(
+                    "DataCRC",
+                    BindingFlags.Instance | BindingFlags.Public,
+                    null,
+                    new[] { typeof(uint) },
+                    null);
+                if (method != null)
+                {
+                    object value = method.Invoke(geometry, new object[] { 0u });
+                    if (value != null)
+                        return Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture);
+                }
+            }
+            catch
+            {
+            }
+
+            return geometry.ToString();
+        }
+
+        private static void UpdateCachedNames(SectionCache cache, List<string> names)
+        {
+            if (cache == null || cache.Names.Count == 0)
+                return;
+            for (int i = 0; i < cache.Names.Count; i++)
+                cache.Names[i] = i < names.Count && !string.IsNullOrWhiteSpace(names[i]) ? names[i] : (i + 1).ToString();
+        }
+
+        private static BoundingBox AddDirectSectionSurfaces(SectionCache cache, int sectionIndex,
+            List<SourceGeometry> sectionSource, List<SectionPoint> sectionPoints, Plane viewPlane, double tolerance,
+            out BoundingBox referenceBox)
+        {
+            BoundingBox outputBox = BoundingBox.Empty;
+            referenceBox = BoundingBox.Empty;
+            Dictionary<int, List<Curve>> curvesByObject = new Dictionary<int, List<Curve>>();
+            Transform toTop = Transform.PlaneToPlane(viewPlane, Plane.WorldXY);
+            foreach (SourceGeometry item in sectionSource)
+            {
+                if (!(item.Geometry is Curve curve))
+                    continue;
+                Curve projected = curve.DuplicateCurve();
+                if (projected == null)
+                    continue;
+                projected.Transform(toTop);
+                projected = Curve.ProjectToPlane(projected, Plane.WorldXY);
+                if (projected == null)
+                    continue;
+                if (!curvesByObject.TryGetValue(item.Index, out List<Curve> objectCurves))
+                {
+                    objectCurves = new List<Curve>();
+                    curvesByObject.Add(item.Index, objectCurves);
+                }
+                objectCurves.Add(projected);
+            }
+            Dictionary<int, int> counters = new Dictionary<int, int>();
+
+            foreach (KeyValuePair<int, List<Curve>> pair in curvesByObject)
+            {
+                bool isReference = cache.ReferenceObjectIndex >= 0 && pair.Key >= cache.ReferenceObjectIndex;
+                if (isReference)
+                {
+                    foreach (Curve curve in pair.Value)
+                    {
+                        Curve output = curve?.DuplicateCurve();
+                        if (output == null)
+                            continue;
+                        cache.SectionSurfaces.Append(new GH_Curve(output), ElementPath(sectionIndex, pair.Key, NextCounter(counters, pair.Key)));
+                        UnionBoundingBox(ref outputBox, output.GetBoundingBox(true));
+                        UnionBoundingBox(ref referenceBox, output.GetBoundingBox(true));
+                    }
+                    continue;
+                }
+
+                Curve[] joined = Curve.JoinCurves(pair.Value.Where(curve => curve != null), tolerance);
+                List<Curve> closed = (joined ?? new Curve[0])
+                    .Where(curve => curve != null && curve.IsClosed)
+                    .Select(curve => curve.DuplicateCurve())
+                    .Where(curve => curve != null)
+                    .ToList();
+                if (closed.Count == 0)
+                    continue;
+
+                Brep[] breps = CreatePlanarBrepsWithHoles(closed, tolerance);
+                if (breps == null)
+                    continue;
+
+                foreach (Brep brep in breps)
+                {
+                    Brep output = brep?.DuplicateBrep();
+                    if (output == null)
+                        continue;
+                    cache.SectionSurfaces.Append(new GH_Brep(output), ElementPath(sectionIndex, pair.Key, NextCounter(counters, pair.Key)));
+                    UnionBoundingBox(ref outputBox, output.GetBoundingBox(true));
+                }
+            }
+
+            if (sectionPoints == null || sectionPoints.Count == 0 || cache.ReferenceObjectIndex < 0)
+                return outputBox;
+
+            foreach (SectionPoint pointRecord in sectionPoints.Where(item => item.Index >= cache.ReferenceObjectIndex))
+            {
+                Point3d point = pointRecord.Point;
+                point.Transform(toTop);
+                point.Z = 0.0;
+                cache.SectionSurfaces.Append(new GH_Point(point), ElementPath(sectionIndex, pointRecord.Index, NextCounter(counters, pointRecord.Index)));
+                BoundingBox pointBox = new BoundingBox(point, point);
+                UnionBoundingBox(ref outputBox, pointBox);
+                UnionBoundingBox(ref referenceBox, pointBox);
+            }
+
+            return outputBox;
+        }
+
+        private static void UnionBoundingBox(ref BoundingBox target, BoundingBox addition)
+        {
+            if (!addition.IsValid)
+                return;
+            if (target.IsValid)
+                target.Union(addition);
+            else
+                target = addition;
+        }
+
+        private static Brep[] CreatePlanarBrepsWithHoles(List<Curve> closedCurves, double tolerance)
+        {
+            List<SectionRegion> regions = closedCurves
+                .Select(curve => new SectionRegion(curve, CreateSinglePlanarBrep(curve, tolerance), 0.0))
+                .Where(region => region.Brep != null)
+                .ToList();
+
+            for (int i = 0; i < regions.Count; i++)
+            {
+                int parent = -1;
+                double parentArea = double.MaxValue;
+                double area = GetBrepArea(regions[i].Brep);
+                for (int j = 0; j < regions.Count; j++)
+                {
+                    if (i == j || !CurveContainsCurve(regions[j].Curve, regions[i].Curve, tolerance))
+                        continue;
+                    double candidateArea = GetBrepArea(regions[j].Brep);
+                    if (candidateArea > area && candidateArea < parentArea)
+                    {
+                        parent = j;
+                        parentArea = candidateArea;
+                    }
+                }
+                regions[i].ParentIndex = parent;
+            }
+
+            for (int i = 0; i < regions.Count; i++)
+                regions[i].Depth = GetRegionDepth(regions, i);
+
+            List<Brep> result = new List<Brep>();
+            for (int i = 0; i < regions.Count; i++)
+            {
+                if ((regions[i].Depth & 1) != 0)
+                    continue;
+
+                List<Curve> boundaries = new List<Curve> { regions[i].Curve };
+                boundaries.AddRange(regions
+                    .Where((region, index) => region.ParentIndex == i && region.Depth == regions[i].Depth + 1)
+                    .Select(region => region.Curve));
+                Brep[] breps = Brep.CreatePlanarBreps(boundaries, tolerance);
+                if (breps != null)
+                    result.AddRange(breps.Where(brep => brep != null));
+            }
+
+            return result.ToArray();
+        }
+
+        private static void AddProjectedSectionCurves(Dictionary<int, List<Curve>> curvesByObject, List<Curve> curves, List<int> indices)
+        {
+            for (int i = 0; i < curves.Count; i++)
+            {
+                Curve curve = curves[i]?.DuplicateCurve();
+                if (curve == null)
+                    continue;
+
+                int objectIndex = i < indices.Count ? indices[i] : -1;
+                if (!curvesByObject.TryGetValue(objectIndex, out List<Curve> objectCurves))
+                {
+                    objectCurves = new List<Curve>();
+                    curvesByObject.Add(objectIndex, objectCurves);
+                }
+                objectCurves.Add(curve);
+            }
+        }
+
+        private static BoundingBox GetCurveBoundingBox(params List<Curve>[] curveLists)
+        {
+            BoundingBox box = BoundingBox.Empty;
+            foreach (List<Curve> curves in curveLists)
+            {
+                if (curves == null)
+                    continue;
+                foreach (Curve curve in curves)
+                {
+                    BoundingBox curveBox = curve?.GetBoundingBox(true) ?? BoundingBox.Empty;
+                    if (curveBox.IsValid)
+                        box.Union(curveBox);
+                }
+            }
+            return box;
+        }
+
+        private static BoundingBox GetIndexedCurveBoundingBox(int referenceIndex,
+            List<Curve> curvesA, List<int> indicesA, List<Curve> curvesB, List<int> indicesB,
+            List<Curve> curvesC, List<int> indicesC, List<Curve> curvesD, List<int> indicesD)
+        {
+            BoundingBox box = BoundingBox.Empty;
+            AppendIndexedCurveBoundingBox(ref box, referenceIndex, curvesA, indicesA);
+            AppendIndexedCurveBoundingBox(ref box, referenceIndex, curvesB, indicesB);
+            AppendIndexedCurveBoundingBox(ref box, referenceIndex, curvesC, indicesC);
+            AppendIndexedCurveBoundingBox(ref box, referenceIndex, curvesD, indicesD);
+            return box;
+        }
+
+        private static void AppendIndexedCurveBoundingBox(ref BoundingBox box, int referenceIndex, List<Curve> curves, List<int> indices)
+        {
+            if (referenceIndex < 0 || curves == null || indices == null)
+                return;
+            for (int i = 0; i < curves.Count && i < indices.Count; i++)
+            {
+                if (indices[i] < referenceIndex)
+                    continue;
+                BoundingBox curveBox = curves[i]?.GetBoundingBox(true) ?? BoundingBox.Empty;
+                if (curveBox.IsValid)
+                    box.Union(curveBox);
+            }
+        }
+
+        private static Vector3d ComputePreviewMove(BoundingBox sourceBox, BoundingBox drawingBox,
+            BoundingBox referenceSourceBox, BoundingBox referenceDrawingBox,
+            Vector3d viewDirection, double gap, int sectionIndex)
+        {
+            if (!drawingBox.IsValid)
+                return Vector3d.Zero;
+
+            Vector3d direction = viewDirection;
+            direction.Z = 0.0;
+            if (!direction.Unitize())
+                direction = Vector3d.XAxis;
+
+            double sourceMax = sourceBox.IsValid ? sourceBox.GetCorners().Max(point => (point - Point3d.Origin) * direction) : 0.0;
+            double drawingMin = drawingBox.GetCorners().Min(point => (point - Point3d.Origin) * direction);
+            double along = sourceMax + gap - drawingMin;
+            Vector3d move = direction * along;
+            move.Z = 0.0;
+            return move;
         }
 
         private static void AppendSectionCurve(SectionCache cache, Dictionary<int, List<Curve>> sectionCurvesByObject, GH_Path path, int objectIndex, Curve curve)
@@ -583,11 +891,11 @@ namespace NS_Parrot
 
         private static void AddMake2DPortDiagnostics(SectionCache cache, int sectionIndex, int visibleCount, int visibleIndexCount, List<string> visibleTypes, int hiddenCount, int hiddenIndexCount, List<string> hiddenTypes)
         {
-            cache.Diagnostics.Add("鍓栭潰搴忓彿 " + sectionIndex + ": Make2D V/Vi/Vt 鏁伴噺 = " + visibleCount + "/" + visibleIndexCount + "/" + visibleTypes.Count + "锛汬/Hi/Ht 鏁伴噺 = " + hiddenCount + "/" + hiddenIndexCount + "/" + hiddenTypes.Count);
+            cache.Diagnostics.Add("剖面序号 " + sectionIndex + "：Make2D V/Vi/Vt 数量 = " + visibleCount + "/" + visibleIndexCount + "/" + visibleTypes.Count + "；H/Hi/Ht 数量 = " + hiddenCount + "/" + hiddenIndexCount + "/" + hiddenTypes.Count);
             string visibleSummary = string.Join(", ", visibleTypes.Select(NormalizeLineType).Where(type => !string.IsNullOrWhiteSpace(type)).Distinct(StringComparer.OrdinalIgnoreCase));
             string hiddenSummary = string.Join(", ", hiddenTypes.Select(NormalizeLineType).Where(type => !string.IsNullOrWhiteSpace(type)).Distinct(StringComparer.OrdinalIgnoreCase));
-            cache.Diagnostics.Add("鍓栭潰搴忓彿 " + sectionIndex + ": Vt 绫诲瀷 = " + (string.IsNullOrWhiteSpace(visibleSummary) ? "(绌?" : visibleSummary));
-            cache.Diagnostics.Add("鍓栭潰搴忓彿 " + sectionIndex + ": Ht 绫诲瀷 = " + (string.IsNullOrWhiteSpace(hiddenSummary) ? "(绌?" : hiddenSummary));
+            cache.Diagnostics.Add("剖面序号 " + sectionIndex + "：Vt 类型 = " + (string.IsNullOrWhiteSpace(visibleSummary) ? "（空）" : visibleSummary));
+            cache.Diagnostics.Add("剖面序号 " + sectionIndex + "：Ht 类型 = " + (string.IsNullOrWhiteSpace(hiddenSummary) ? "（空）" : hiddenSummary));
         }
 
         private static void AddSectionSurfacesFromMake2DSections(SectionCache cache, int sectionIndex, Dictionary<int, List<Curve>> sectionCurvesByObject, double tolerance)
@@ -1043,7 +1351,7 @@ namespace NS_Parrot
                 IGH_Goo goo = input[i];
                 if (goo == null)
                 {
-                    diagnostics.Add("Section line " + i + ": input is empty.");
+                    diagnostics.Add("剖切位置 " + i + "：输入为空。");
                     continue;
                 }
 
@@ -1082,13 +1390,13 @@ namespace NS_Parrot
 
                 if (!hasLine)
                 {
-                    diagnostics.Add("鍓栧垏浣嶇疆 " + i + ": 涓嶆槸鐩寸嚎Curve鎴朙ine锛岀被锟?" + goo.GetType().Name);
+                    diagnostics.Add("剖切位置 " + i + "：不是直线 Curve 或 Line，类型为 " + goo.GetType().Name + "。");
                     continue;
                 }
 
                 if (!line.IsValid || line.Length <= ZeroTolerance)
                 {
-                    diagnostics.Add("Section line " + i + ": line is invalid or too short.");
+                    diagnostics.Add("剖切位置 " + i + "：直线无效或长度过短。");
                     continue;
                 }
 
@@ -1192,14 +1500,14 @@ namespace NS_Parrot
                     RhinoObject obj = doc.Objects.FindId(id);
                     AddRhinoObjectGeometry(doc, obj, Transform.Identity, sourceIndex, result, new HashSet<Guid>(), isReference);
                     if (result.Count == before)
-                        diagnostics.Add("Object " + i + ": Guid object not found or has no geometry.");
+                        diagnostics.Add("对象 " + i + "：未找到 Guid 对应对象，或对象没有可用几何。");
                     continue;
                 }
 
                 int beforeAdd = result.Count;
                 AddGeometry(doc, geometry, Transform.Identity, sourceIndex, result, new HashSet<Guid>(), isReference);
                 if (result.Count == beforeAdd)
-                    diagnostics.Add("瀵硅薄 " + i + ": 鏈兘瑙ｆ瀽涓築rep/Surface/Curve/Guid/鍧楋紝绫诲瀷=" + goo.GetType().Name);
+                    diagnostics.Add("对象 " + i + "：无法解析为 Brep、Surface、Curve、Guid 或块，类型为 " + goo.GetType().Name + "。");
             }
 
             return result;
@@ -1578,7 +1886,7 @@ namespace NS_Parrot
                     return;
                 }
 
-                WarnSplitFailure(result, section, item.Index, "Brep was intersected but could not be split; whole object is used for projection.");
+                WarnSplitFailure(result, section, item.Index, "Brep 已与剖切面相交但无法分割，将使用完整对象参与投影。");
                 projectionSource.Add(item);
                 return;
             }
@@ -1596,7 +1904,7 @@ namespace NS_Parrot
                 if (IsGeometryOnProjectionSide(curve, section, tolerance))
                     projectionSource.Add(item);
                 else
-                    WarnSplitFailure(result, section, item.Index, "Curve was intersected but could not keep projection side segment; object skipped.");
+                    WarnSplitFailure(result, section, item.Index, "曲线已与剖切面相交但无法保留投影侧线段，已跳过该对象。");
             }
         }
 
@@ -1697,9 +2005,9 @@ namespace NS_Parrot
 
         private void WarnSplitFailure(SectionCache result, SectionInfo section, int index, string message)
         {
-            string fullMessage = "鍓栭潰 " + section.Name + ": 杈撳叆瀵硅薄 " + index + " " + message;
+            string fullMessage = "剖面 " + section.Name + "：输入对象 " + index + "，" + message;
             result.Diagnostics.Add(fullMessage);
-            AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, fullMessage);
+            AddRuntimeMessageSafe(GH_RuntimeMessageLevel.Warning, fullMessage);
         }
 
         private static void AddSectionIntersections(SectionCache result, GH_Path path, List<SourceGeometry> source, Plane plane, Transform toLayout, double tolerance)
@@ -2015,14 +2323,14 @@ namespace NS_Parrot
             hiddenIndex = new List<int>();
             hiddenTypes = new List<string>();
 
-            return RunNativeMake2DShared(source, viewContext, section, result, logPrefix, out visible, out visibleIndex, out visibleTypes, out hidden, out hiddenIndex, out hiddenTypes);
+            return RunNativeMake2DShared(source, viewContext, section, result, logPrefix, true, out visible, out visibleIndex, out visibleTypes, out hidden, out hiddenIndex, out hiddenTypes);
 #if false
             GH_Component make2D = CreateMake2DComponent(out string createError);
             if (make2D == null)
             {
                 string message = logPrefix + " failed: native Make2D component not found. " + createError;
                 result.Diagnostics.Add(message);
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message);
+                AddRuntimeMessageSafe(GH_RuntimeMessageLevel.Warning, message);
                 return false;
             }
 
@@ -2052,7 +2360,7 @@ namespace NS_Parrot
                 {
                     string message = logPrefix + " failed: Make2D parallel view component not found. " + viewError;
                     result.Diagnostics.Add(message);
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message);
+                    AddRuntimeMessageSafe(GH_RuntimeMessageLevel.Warning, message);
                     return false;
                 }
 
@@ -2068,7 +2376,7 @@ namespace NS_Parrot
                 {
                     string message = logPrefix + " failed: native Rectangle component not found. " + rectangleError;
                     result.Diagnostics.Add(message);
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message);
+                    AddRuntimeMessageSafe(GH_RuntimeMessageLevel.Warning, message);
                     return false;
                 }
 
@@ -2127,7 +2435,7 @@ namespace NS_Parrot
             {
                 string message = logPrefix + " native Make2D execution failed. " + ex.Message;
                 result.Diagnostics.Add(message);
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message);
+                AddRuntimeMessageSafe(GH_RuntimeMessageLevel.Warning, message);
                 return false;
             }
             finally
@@ -2144,7 +2452,14 @@ namespace NS_Parrot
             return RunNativeMake2D(source, viewContext, section, tolerance, result, logPrefix, out visible, out visibleIndex, out visibleTypes, out hidden, out hiddenIndex, out hiddenTypes);
         }
 
-        private bool RunNativeMake2DShared(List<SourceGeometry> source, NativeMake2DViewContext viewContext, SectionInfo section, SectionCache result, string logPrefix, out List<Curve> visible, out List<int> visibleIndex, out List<string> visibleTypes, out List<Curve> hidden, out List<int> hiddenIndex, out List<string> hiddenTypes)
+        private bool RunNativeMake2DWithoutClipping(List<SourceGeometry> source, NativeMake2DViewContext viewContext, SectionInfo section, SectionCache result, string logPrefix, out List<Curve> visible, out List<int> visibleIndex, out List<Curve> hidden, out List<int> hiddenIndex)
+        {
+            List<string> visibleTypes;
+            List<string> hiddenTypes;
+            return RunNativeMake2DShared(source, viewContext, section, result, logPrefix, false, out visible, out visibleIndex, out visibleTypes, out hidden, out hiddenIndex, out hiddenTypes);
+        }
+
+        private bool RunNativeMake2DShared(List<SourceGeometry> source, NativeMake2DViewContext viewContext, SectionInfo section, SectionCache result, string logPrefix, bool useClippingPlane, out List<Curve> visible, out List<int> visibleIndex, out List<string> visibleTypes, out List<Curve> hidden, out List<int> hiddenIndex, out List<string> hiddenTypes)
         {
             visible = new List<Curve>();
             visibleIndex = new List<int>();
@@ -2155,27 +2470,27 @@ namespace NS_Parrot
 
             if (viewContext == null || viewContext.Document == null || viewContext.ParallelView == null)
             {
-                string message = logPrefix + " failed: shared Make2D view is invalid.";
+                string message = logPrefix + " 失败：共用 Make2D 视图无效。";
                 result.Diagnostics.Add(message);
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message);
+                AddRuntimeMessageSafe(GH_RuntimeMessageLevel.Warning, message);
                 return false;
             }
 
             GH_Component make2D = CreateMake2DComponent(out string createError);
             if (make2D == null)
             {
-                string message = logPrefix + " failed: native Make2D component not found. " + createError;
+                string message = logPrefix + " 失败：未找到原生 Make2D 组件。" + createError;
                 result.Diagnostics.Add(message);
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message);
+                AddRuntimeMessageSafe(GH_RuntimeMessageLevel.Warning, message);
                 return false;
             }
 
             try
             {
                 viewContext.Document.AddObject(make2D, false);
-                result.Diagnostics.Add(logPrefix + "缁勪欢: " + make2D.GetType().FullName);
-                result.Diagnostics.Add(logPrefix + "杈撳叆绔彛: " + DescribeParams(make2D.Params.Input));
-                result.Diagnostics.Add(logPrefix + "杈撳嚭绔彛: " + DescribeParams(make2D.Params.Output));
+                result.Diagnostics.Add(logPrefix + " 组件：" + make2D.GetType().FullName);
+                result.Diagnostics.Add(logPrefix + " 输入端口：" + DescribeParams(make2D.Params.Input));
+                result.Diagnostics.Add(logPrefix + " 输出端口：" + DescribeParams(make2D.Params.Output));
                 TrySetMake2DAutomatic(make2D, result, logPrefix);
 
                 for (int i = 0; i < source.Count; i++)
@@ -2185,11 +2500,10 @@ namespace NS_Parrot
                         SetVolatileInput(make2D, "G", 0, i, goo);
                 }
 
-                bool useClippingPlane = true;
                 if (useClippingPlane)
                     SetVolatileInput(make2D, "C", 1, 0, new GH_Plane(section.Plane));
                 else
-                    result.Diagnostics.Add(logPrefix + " clipping plane C is not connected.");
+                    result.Diagnostics.Add(logPrefix + " 未连接裁剪平面 C。");
 
                 ConnectComponentOutput(viewContext.ParallelView, 0, make2D, "V", 2);
                 SetVolatileInput(make2D, "Te", 3, 0, new GH_Boolean(true));
@@ -2198,8 +2512,8 @@ namespace NS_Parrot
                 ForceCompute(make2D);
                 viewContext.Document.NewSolution(true);
                 AppendMake2DRuntimeMessages(make2D, result, logPrefix);
-                result.Diagnostics.Add(logPrefix + "杈撳叆鏁版嵁锟? " + DescribeParamDataCounts(make2D.Params.Input));
-                result.Diagnostics.Add(logPrefix + "杈撳嚭鏁版嵁锟? " + DescribeParamDataCounts(make2D.Params.Output));
+                result.Diagnostics.Add(logPrefix + " 输入数据：" + DescribeParamDataCounts(make2D.Params.Input));
+                result.Diagnostics.Add(logPrefix + " 输出数据：" + DescribeParamDataCounts(make2D.Params.Output));
 
                 int visibleOutput = FindParamIndex(make2D.Params.Output, "V", 0);
                 int visibleIndexOutput = FindParamIndex(make2D.Params.Output, "Vi", 1);
@@ -2215,14 +2529,14 @@ namespace NS_Parrot
                 hiddenIndex = MapMake2DIndices(ReadIntegerOutput(make2D, hiddenIndexOutput), source);
                 hiddenTypes = ReadTextOutput(make2D, hiddenTypeOutput);
 
-                result.Diagnostics.Add(logPrefix + "浣跨敤鍘熺敓Make2D锛岃緭锟?" + source.Count + "锛屽疄锟?" + visible.Count + "锛岃櫄锟?" + hidden.Count);
+                result.Diagnostics.Add(logPrefix + " 使用原生 Make2D：输入 " + source.Count + "，可见线 " + visible.Count + "，隐藏线 " + hidden.Count + "。");
                 return true;
             }
             catch (Exception ex)
             {
-                string message = logPrefix + " native Make2D execution failed. " + ex.Message;
+                string message = logPrefix + " 执行失败：" + ex.Message;
                 result.Diagnostics.Add(message);
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message);
+                AddRuntimeMessageSafe(GH_RuntimeMessageLevel.Warning, message);
                 return false;
             }
         }
@@ -2240,9 +2554,9 @@ namespace NS_Parrot
                 GH_Component rectangleComponent = CreateRectangleComponent(out string rectangleError);
                 if (rectangleComponent == null)
                 {
-                    string message = logPrefix + " failed: native Rectangle component not found. " + rectangleError;
+                    string message = logPrefix + " 失败：未找到原生矩形组件。" + rectangleError;
                     result.Diagnostics.Add(message);
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message);
+                    AddRuntimeMessageSafe(GH_RuntimeMessageLevel.Warning, message);
                     document.Dispose();
                     return null;
                 }
@@ -2250,24 +2564,24 @@ namespace NS_Parrot
                 GH_Component parallelView = CreateMake2DParallelViewComponent(out string viewError);
                 if (parallelView == null)
                 {
-                    string message = logPrefix + " failed: Make2D parallel view component not found. " + viewError;
+                    string message = logPrefix + " 失败：未找到 Make2D Parallel View 组件。" + viewError;
                     result.Diagnostics.Add(message);
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message);
+                    AddRuntimeMessageSafe(GH_RuntimeMessageLevel.Warning, message);
                     document.Dispose();
                     return null;
                 }
 
                 document.AddObject(rectangleComponent, false);
                 document.AddObject(parallelView, false);
-                result.Diagnostics.Add(logPrefix + "鐭╁舰缁勪欢: " + rectangleComponent.GetType().FullName);
-                result.Diagnostics.Add(logPrefix + "鐭╁舰杈撳叆绔彛: " + DescribeParams(rectangleComponent.Params.Input));
-                result.Diagnostics.Add(logPrefix + "鐭╁舰杈撳嚭绔彛: " + DescribeParams(rectangleComponent.Params.Output));
-                result.Diagnostics.Add(logPrefix + "瑙嗗浘缁勪欢: " + parallelView.GetType().FullName);
-                result.Diagnostics.Add(logPrefix + "瑙嗗浘杈撳叆绔彛: " + DescribeParams(parallelView.Params.Input));
-                result.Diagnostics.Add(logPrefix + "瑙嗗浘杈撳嚭绔彛: " + DescribeParams(parallelView.Params.Output));
+                result.Diagnostics.Add(logPrefix + " 矩形组件：" + rectangleComponent.GetType().FullName);
+                result.Diagnostics.Add(logPrefix + " 矩形输入端口：" + DescribeParams(rectangleComponent.Params.Input));
+                result.Diagnostics.Add(logPrefix + " 矩形输出端口：" + DescribeParams(rectangleComponent.Params.Output));
+                result.Diagnostics.Add(logPrefix + " 视图组件：" + parallelView.GetType().FullName);
+                result.Diagnostics.Add(logPrefix + " 视图输入端口：" + DescribeParams(parallelView.Params.Input));
+                result.Diagnostics.Add(logPrefix + " 视图输出端口：" + DescribeParams(parallelView.Params.Output));
 
                 Rectangle3d viewRectangle = CreateMake2DViewRectangle(viewSource, section, localizationCenter);
-                result.Diagnostics.Add(logPrefix + "瑙嗗浘鑼冨洿瀵硅薄鏁伴噺: " + (viewSource != null ? viewSource.Count : 0));
+                result.Diagnostics.Add(logPrefix + " 视图范围对象数量：" + (viewSource != null ? viewSource.Count : 0));
                 SetVolatileInput(rectangleComponent, "P", 0, 0, new GH_Plane(viewRectangle.Plane));
                 SetVolatileInput(rectangleComponent, "X", 1, 0, new GH_Interval(viewRectangle.X));
                 SetVolatileInput(rectangleComponent, "Y", 2, 0, new GH_Interval(viewRectangle.Y));
@@ -2279,19 +2593,19 @@ namespace NS_Parrot
                 document.NewSolution(true);
 
                 AppendMake2DRuntimeMessages(rectangleComponent, result, logPrefix + " rectangle");
-                result.Diagnostics.Add(logPrefix + "鐭╁舰杈撳叆鏁版嵁锟? " + DescribeParamDataCounts(rectangleComponent.Params.Input));
-                result.Diagnostics.Add(logPrefix + "鐭╁舰杈撳嚭鏁版嵁锟? " + DescribeParamDataCounts(rectangleComponent.Params.Output));
+                result.Diagnostics.Add(logPrefix + " 矩形输入数据：" + DescribeParamDataCounts(rectangleComponent.Params.Input));
+                result.Diagnostics.Add(logPrefix + " 矩形输出数据：" + DescribeParamDataCounts(rectangleComponent.Params.Output));
                 AppendMake2DRuntimeMessages(parallelView, result, logPrefix + " view");
-                result.Diagnostics.Add(logPrefix + "瑙嗗浘杈撳叆鏁版嵁锟? " + DescribeParamDataCounts(parallelView.Params.Input));
-                result.Diagnostics.Add(logPrefix + "瑙嗗浘杈撳嚭鏁版嵁锟? " + DescribeParamDataCounts(parallelView.Params.Output));
+                result.Diagnostics.Add(logPrefix + " 视图输入数据：" + DescribeParamDataCounts(parallelView.Params.Input));
+                result.Diagnostics.Add(logPrefix + " 视图输出数据：" + DescribeParamDataCounts(parallelView.Params.Output));
 
                 return new NativeMake2DViewContext(document, rectangleComponent, parallelView, viewRectangle);
             }
             catch (Exception ex)
             {
-                string message = logPrefix + " create failed. " + ex.Message;
+                string message = logPrefix + " 创建失败：" + ex.Message;
                 result.Diagnostics.Add(message);
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message);
+                AddRuntimeMessageSafe(GH_RuntimeMessageLevel.Warning, message);
                 document.Dispose();
                 return null;
             }
@@ -2339,7 +2653,7 @@ namespace NS_Parrot
             }
             catch (Exception ex)
             {
-                error = "GUID鍒涘缓澶辫触: " + ex.Message + " ";
+                error = " GUID 创建失败：" + ex.Message + "。";
             }
 
             try
@@ -2352,7 +2666,7 @@ namespace NS_Parrot
             }
             catch (Exception ex)
             {
-                error += "绫诲瀷鍒涘缓澶辫触: " + ex.Message;
+                error += " 类型创建失败：" + ex.Message + "。";
             }
 
             return null;
@@ -2403,12 +2717,10 @@ namespace NS_Parrot
             if (!viewDirection.Unitize())
                 viewDirection = Vector3d.YAxis;
 
-            Point3d origin = section.Line.PointAt(0.5);
-            if (Math.Abs(lineDirection.X) >= Math.Abs(lineDirection.Y))
-                origin.X = -localizationCenter.X;
-            else
-                origin.Y = -localizationCenter.Y;
-            origin -= viewDirection * 5.0;
+            Plane originPlane = new Plane(Point3d.Origin, xAxis, yAxis);
+            Point3d sectionMidpoint = section.Line.PointAt(0.5);
+            double distanceToSection = Math.Abs(originPlane.DistanceTo(sectionMidpoint));
+            Point3d origin = Point3d.Origin - viewDirection * (distanceToSection + 5.0);
             Plane plane = new Plane(origin, xAxis, yAxis);
 
             if (box.IsValid)
@@ -2565,7 +2877,7 @@ namespace NS_Parrot
                 }
             }
 
-            result.Diagnostics.Add(logPrefix + " auto mode attempt: " + (touched.Count == 0 ? "no settable field/property found" : string.Join(", ", touched)));
+            result.Diagnostics.Add(logPrefix + " 自动模式设置：" + (touched.Count == 0 ? "未找到可设置的字段或属性。" : string.Join(", ", touched)));
         }
 
         private static string DescribeParams(IList<IGH_Param> parameters)
@@ -2595,11 +2907,18 @@ namespace NS_Parrot
         private static void AppendMake2DRuntimeMessages(GH_Component make2D, SectionCache result, string logPrefix)
         {
             foreach (string message in make2D.RuntimeMessages(GH_RuntimeMessageLevel.Error))
-                result.Diagnostics.Add(logPrefix + "Make2D閿欒: " + message);
+                result.Diagnostics.Add(logPrefix + " Make2D 错误：" + SanitizeRuntimeMessage(message));
             foreach (string message in make2D.RuntimeMessages(GH_RuntimeMessageLevel.Warning))
-                result.Diagnostics.Add(logPrefix + "Make2D璀﹀憡: " + message);
+                result.Diagnostics.Add(logPrefix + " Make2D 警告：" + SanitizeRuntimeMessage(message));
             foreach (string message in make2D.RuntimeMessages(GH_RuntimeMessageLevel.Remark))
-                result.Diagnostics.Add(logPrefix + "Make2D鎻愮ず: " + message);
+                result.Diagnostics.Add(logPrefix + " Make2D 提示：" + SanitizeRuntimeMessage(message));
+        }
+
+        private static string SanitizeRuntimeMessage(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return "未提供详细信息。";
+            return LooksLikeMojibake(message) ? "原生组件返回了无法正确解码的文本。" : message;
         }
 
         private static List<Curve> ReadCurveOutput(GH_Component component, int outputIndex)
@@ -2844,6 +3163,7 @@ namespace NS_Parrot
 
         private void SetOutputs(IGH_DataAccess DA, SectionCache cache)
         {
+            List<Transform> layoutTransforms = GetLayoutTransforms(cache, _currentPreviewGap);
             DataTree<Curve> visible = new DataTree<Curve>();
             DataTree<string> visibleTypes = new DataTree<string>();
             DataTree<Curve> hidden = new DataTree<Curve>();
@@ -2861,7 +3181,10 @@ namespace NS_Parrot
                 }
 
                 GH_Path path = ElementPath(record.SectionIndex, record.ObjectIndex, NextCounter(visibleCounters, record.SectionIndex, record.ObjectIndex));
-                visible.Add(record.Curve, path);
+                Curve outputCurve = record.Curve?.DuplicateCurve();
+                if (outputCurve != null && record.SectionIndex >= 0 && record.SectionIndex < layoutTransforms.Count)
+                    outputCurve.Transform(layoutTransforms[record.SectionIndex]);
+                visible.Add(outputCurve, path);
                 visibleTypes.Add(record.Type, path);
             }
 
@@ -2875,19 +3198,32 @@ namespace NS_Parrot
                 }
 
                 GH_Path path = ElementPath(record.SectionIndex, record.ObjectIndex, NextCounter(hiddenCounters, record.SectionIndex, record.ObjectIndex));
-                hidden.Add(record.Curve, path);
+                Curve outputCurve = record.Curve?.DuplicateCurve();
+                if (outputCurve != null && record.SectionIndex >= 0 && record.SectionIndex < layoutTransforms.Count)
+                    outputCurve.Transform(layoutTransforms[record.SectionIndex]);
+                hidden.Add(outputCurve, path);
                 hiddenTypes.Add(record.Type, path);
             }
 
-            List<string> diagnostics = new List<string>(cache.Diagnostics);
-            diagnostics.Add("褰撳墠鍙绾胯繃婊? " + string.Join(", ", _visibleLineTypes.OrderBy(item => item)));
-            diagnostics.Add("褰撳墠闅愯棌绾胯繃婊? " + string.Join(", ", _hiddenLineTypes.OrderBy(item => item)));
-            diagnostics.Add("杩囨护鎺夊彲瑙佺嚎: " + visibleFiltered + "锛岃繃婊ゆ帀闅愯棌绾? " + hiddenFiltered);
+            List<string> diagnostics = cache.Diagnostics
+                .Where(message => !LooksLikeMojibake(message))
+                .ToList();
+            diagnostics.Insert(0, "SectionMake2D V2 计算完成。");
+            diagnostics.Add("剖面数量: " + cache.Names.Count);
+            diagnostics.Add("输出对象数量: " + cache.OutputObjectCount);
+            diagnostics.Add("参考对象序号: " + cache.ReferenceObjectIndex);
+            diagnostics.Add("截面面/参考截面几何数量: " + cache.SectionSurfaces.DataCount);
+            diagnostics.Add("截面线数量: " + cache.SectionGeometry.DataCount);
+            diagnostics.Add("可见线缓存数量: " + cache.RawVisibleCurves.Count);
+            diagnostics.Add("隐藏线缓存数量: " + cache.RawHiddenCurves.Count);
+            diagnostics.Add("当前可见线类型: " + string.Join(", ", _visibleLineTypes.OrderBy(item => item)));
+            diagnostics.Add("当前隐藏线类型: " + string.Join(", ", _hiddenLineTypes.OrderBy(item => item)));
+            diagnostics.Add("过滤掉可见线: " + visibleFiltered + "；过滤掉隐藏线: " + hiddenFiltered);
 
             int sectionCount = cache.Names.Count;
             int objectCount = cache.OutputObjectCount;
-            GH_Structure<IGH_GeometricGoo> sectionSurfaces = CreateGeometryOutputTree(cache.SectionSurfaces, sectionCount, objectCount, _keepEmptyBranches);
-            GH_Structure<IGH_GeometricGoo> sectionGeometry = CreateGeometryOutputTree(cache.SectionGeometry, sectionCount, objectCount, _keepEmptyBranches);
+            GH_Structure<IGH_GeometricGoo> sectionSurfaces = CreateGeometryOutputTree(cache.SectionSurfaces, sectionCount, objectCount, _keepEmptyBranches, layoutTransforms);
+            GH_Structure<IGH_GeometricGoo> sectionGeometry = CreateGeometryOutputTree(cache.SectionGeometry, sectionCount, objectCount, _keepEmptyBranches, layoutTransforms);
             DataTree<Curve> visibleOutput = CreateDataOutputTree(visible, sectionCount, objectCount, _keepEmptyBranches);
             DataTree<string> visibleTypeOutput = CreateDataOutputTree(visibleTypes, sectionCount, objectCount, _keepEmptyBranches);
             DataTree<Curve> hiddenOutput = CreateDataOutputTree(hidden, sectionCount, objectCount, _keepEmptyBranches);
@@ -2903,7 +3239,38 @@ namespace NS_Parrot
             DA.SetDataList(7, diagnostics);
         }
 
-        private static GH_Structure<IGH_GeometricGoo> CreateGeometryOutputTree(GH_Structure<IGH_GeometricGoo> source, int sectionCount, int objectCount, bool keepEmptyBranches)
+        private static bool LooksLikeMojibake(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return false;
+
+            string[] markers =
+            {
+                "閸", "鏉", "缁", "鐟", "娴", "鈧", "妫", "鍓", "鎴", "闂", "瀵", "绻"
+            };
+            return markers.Any(message.Contains);
+        }
+
+        private void AddRuntimeMessageSafe(GH_RuntimeMessageLevel level, string message)
+        {
+            string safeMessage = LooksLikeMojibake(message) ? "Make2D 计算出现警告，请查看 V2 诊断信息。" : message;
+            AddRuntimeMessage(level, safeMessage);
+        }
+
+        private static List<Transform> GetLayoutTransforms(SectionCache cache, double previewGap)
+        {
+            List<Transform> transforms = new List<Transform>();
+            for (int i = 0; i < cache.Layouts.Count; i++)
+            {
+                SectionLayoutInfo layout = cache.Layouts[i];
+                double gap = ResolvePreviewGap(previewGap, layout.SourceBox, RhinoDoc.ActiveDoc?.ModelAbsoluteTolerance ?? 0.001);
+                Vector3d move = ComputePreviewMove(layout.SourceBox, layout.DrawingBox, layout.ReferenceSourceBox, layout.ReferenceDrawingBox, layout.ViewDirection, gap, i);
+                transforms.Add(Transform.Translation(move));
+            }
+            return transforms;
+        }
+
+        private static GH_Structure<IGH_GeometricGoo> CreateGeometryOutputTree(GH_Structure<IGH_GeometricGoo> source, int sectionCount, int objectCount, bool keepEmptyBranches, List<Transform> transforms)
         {
             GH_Structure<IGH_GeometricGoo> result = new GH_Structure<IGH_GeometricGoo>();
             foreach (GH_Path path in source.Paths)
@@ -2919,7 +3286,13 @@ namespace NS_Parrot
                 foreach (object item in branch)
                 {
                     if (item is IGH_GeometricGoo goo)
-                        result.Append(goo, path);
+                    {
+                        int sectionIndex = path.Indices.Length > 0 ? path.Indices[0] : -1;
+                        IGH_GeometricGoo output = goo.DuplicateGeometry();
+                        if (sectionIndex >= 0 && sectionIndex < transforms.Count)
+                            output = output.Transform(transforms[sectionIndex]);
+                        result.Append(output, path);
+                    }
                 }
             }
 
@@ -2975,7 +3348,7 @@ namespace NS_Parrot
 
         public override void CreateAttributes()
         {
-            Attributes = new CButton_SectionMake2D(this);
+            Attributes = new CButton_SectionMake2DV2(this);
         }
 
         protected override void AppendAdditionalComponentMenuItems(ToolStripDropDown menu)
@@ -2999,7 +3372,7 @@ namespace NS_Parrot
 
         private void AppendLineTypeFilterMenu(ToolStripDropDown menu, bool[] filterChanged)
         {
-            ToolStripMenuItem filterMenu = new ToolStripMenuItem("绾垮瀷杩囨护");
+            ToolStripMenuItem filterMenu = new ToolStripMenuItem("线型过滤");
             filterMenu.DropDown.AutoClose = true;
             filterMenu.DropDownItems.Add(CreateLineTypeHost("可见线类型", VisibleLineTypes, _visibleLineTypes, value => filterChanged[0] = value));
             filterMenu.DropDownItems.Add(CreateLineTypeHost("隐藏线类型", HiddenLineTypes, _hiddenLineTypes, value => filterChanged[0] = value));
@@ -3163,7 +3536,7 @@ namespace NS_Parrot
 
         public override Guid ComponentGuid
         {
-            get { return new Guid("D1E6F2B0-0B48-4C3C-8C2A-3AE39BFEF0F8"); }
+            get { return new Guid("A5D78024-4F73-45E8-AD86-64FC3014E628"); }
         }
 
         private sealed class NativeMake2DViewContext : IDisposable
@@ -3202,8 +3575,27 @@ namespace NS_Parrot
             public List<string> Diagnostics { get; } = new List<string>();
             public List<TypedCurveRecord> RawVisibleCurves { get; } = new List<TypedCurveRecord>();
             public List<TypedCurveRecord> RawHiddenCurves { get; } = new List<TypedCurveRecord>();
+            public List<SectionLayoutInfo> Layouts { get; } = new List<SectionLayoutInfo>();
             public int ReferenceObjectIndex { get; set; } = -1;
             public int OutputObjectCount { get; set; }
+        }
+
+        private class SectionLayoutInfo
+        {
+            public SectionLayoutInfo(BoundingBox sourceBox, BoundingBox drawingBox, BoundingBox referenceSourceBox, BoundingBox referenceDrawingBox, Vector3d viewDirection)
+            {
+                SourceBox = sourceBox;
+                DrawingBox = drawingBox;
+                ReferenceSourceBox = referenceSourceBox;
+                ReferenceDrawingBox = referenceDrawingBox;
+                ViewDirection = viewDirection;
+            }
+
+            public BoundingBox SourceBox { get; }
+            public BoundingBox DrawingBox { get; }
+            public BoundingBox ReferenceSourceBox { get; }
+            public BoundingBox ReferenceDrawingBox { get; }
+            public Vector3d ViewDirection { get; }
         }
 
         private class SectionBuildData
@@ -3363,11 +3755,11 @@ namespace NS_Parrot
         }
     }
 
-    internal class CButton_SectionMake2D : GH_ComponentAttributes
+    internal class CButton_SectionMake2DV2 : GH_ComponentAttributes
     {
         private const float ButtonHeight = 20.0f;
 
-        public CButton_SectionMake2D(SectionMake2D component) : base(component)
+        public CButton_SectionMake2DV2(SectionMake2DV2 component) : base(component)
         {
         }
 
@@ -3396,7 +3788,7 @@ namespace NS_Parrot
         {
             if (e.Button == MouseButtons.Left && GetButtonRect().Contains(e.CanvasLocation))
             {
-                SectionMake2D owner = (SectionMake2D)Owner;
+                SectionMake2DV2 owner = (SectionMake2DV2)Owner;
                 owner.ButtonRun = true;
                 owner.ExpireSolution(true);
                 return GH_ObjectResponse.Handled;

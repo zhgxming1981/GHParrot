@@ -31,11 +31,20 @@ namespace NS_Parrot
 
         private readonly Dictionary<ComparisonCriterion, bool> _criterionStates = new Dictionary<ComparisonCriterion, bool>
         {
+            { ComparisonCriterion.Length, true },
             { ComparisonCriterion.Inertia, false },
             { ComparisonCriterion.Area, false },
             { ComparisonCriterion.Volume, true },
             { ComparisonCriterion.EdgeSum, false },
             { ComparisonCriterion.HolePosition, false }
+        };
+        private readonly Dictionary<ComparisonCriterion, int> _storageDecimalPlaces = new Dictionary<ComparisonCriterion, int>
+        {
+            { ComparisonCriterion.Inertia, 2 },
+            { ComparisonCriterion.Area, 2 },
+            { ComparisonCriterion.Volume, 2 },
+            { ComparisonCriterion.EdgeSum, 2 },
+            { ComparisonCriterion.HolePosition, 2 }
         };
 
         private readonly Dictionary<string, FeatureDbRecord> _lastSaveCandidates = new Dictionary<string, FeatureDbRecord>(StringComparer.Ordinal);
@@ -59,8 +68,18 @@ namespace NS_Parrot
 
         public ButtonVisual RunButtonColor { get; set; } = ButtonVisual.Black;
         public ButtonVisual SaveButtonColor { get; set; } = ButtonVisual.Black;
-        public List<double> CurrentTolerances { get; private set; } = new List<double> { 1.0, 1.0, 1.0, 1.0, 1.0 };
+        public List<double> CurrentTolerances { get; private set; } = new List<double> { 0.5, 0.5, 0.5, 0.5, 0.5, 0.5 };
+        private readonly Dictionary<ComparisonCriterion, bool> _absoluteToleranceModes = new Dictionary<ComparisonCriterion, bool>
+        {
+            { ComparisonCriterion.Length, false },
+            { ComparisonCriterion.Inertia, false },
+            { ComparisonCriterion.Area, false },
+            { ComparisonCriterion.Volume, false },
+            { ComparisonCriterion.EdgeSum, false },
+            { ComparisonCriterion.HolePosition, true }
+        };
         public double MirrorAbsoluteTolerance { get; private set; } = 0.001;
+        public int MirrorScoreStorageDecimalPlaces { get; private set; } = 2;
 
         public EntityFeatureClassifier()
           : this("EntityFeatureClassifier", "EntityFeatureClassifier",
@@ -84,7 +103,7 @@ namespace NS_Parrot
         {
             pManager.AddTextParameter("材质", "材质", "与实体一一对应的材质列表", GH_ParamAccess.list);
             pManager.AddTextParameter("颜色", "颜色", "与实体一一对应的颜色列表", GH_ParamAccess.list);
-            pManager.AddTextParameter("其它", "其它", "与实体一一对应的其它信息列表", GH_ParamAccess.list);
+            pManager.AddTextParameter("长度", "长度", "与实体一一对应的长度列表", GH_ParamAccess.list);
             pManager.AddBrepParameter("实体列表", "实体", "待分类的 Brep 实体列表", GH_ParamAccess.list);
             pManager.AddTextParameter("数据库地址", "数据库", "SQLite 数据库文件地址，文件必须已存在", GH_ParamAccess.item);
             pManager.AddTextParameter("编号前缀", "编号前缀", "与实体一一对应的编号前缀列表", GH_ParamAccess.list);
@@ -103,6 +122,7 @@ namespace NS_Parrot
             pManager.AddTextParameter("镜像侧", "镜像侧", "镜像方向标识：A、B 或空", GH_ParamAccess.list);
             pManager.AddTextParameter("特征摘要", "特征摘要", "实体特征摘要", GH_ParamAccess.list);
             pManager.AddTextParameter("状态", "状态", "运行状态信息", GH_ParamAccess.item);
+            pManager.AddBooleanParameter("存储完成脉冲", "存储脉冲", "点击“保存”并成功写入数据库后输出 True；其它情况下输出 False。", GH_ParamAccess.item);
         }
 
         public override void CreateAttributes()
@@ -115,29 +135,22 @@ namespace NS_Parrot
             base.AppendAdditionalComponentMenuItems(menu);
 
             Menu_AppendSeparator(menu);
-            AppendCriterionMenuItem(menu, ComparisonCriterion.Inertia, "转动惯量");
-            AppendCriterionMenuItem(menu, ComparisonCriterion.Area, "表面积");
-            AppendCriterionMenuItem(menu, ComparisonCriterion.Volume, "体积");
-            AppendCriterionMenuItem(menu, ComparisonCriterion.EdgeSum, "所有边周长");
-            AppendCriterionMenuItem(menu, ComparisonCriterion.HolePosition, "孔位");
-            AppendToleranceTextBox(menu, "镜像绝对误差", FormatDouble(MirrorAbsoluteTolerance), text => SetMirrorTolerance(text));
-            ToolStripMenuItem mirrorItem = new ToolStripMenuItem("镜像区分    " + FormatDouble(MirrorAbsoluteTolerance))
+            FeatureSettingsMenuControl control = new FeatureSettingsMenuControl(this);
+            ToolStripControlHost host = new ToolStripControlHost(control)
             {
-                Checked = true,
-                Enabled = false
+                AutoSize = false,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
+                Size = control.Size
             };
-            menu.Items.Add(mirrorItem);
+            menu.Closing += (sender, e) => control.CommitAll();
+            menu.Items.Add(host);
         }
 
         private void AppendCriterionMenuItem(ToolStripDropDown menu, ComparisonCriterion criterion, string text)
         {
-            string toleranceText = UseAbsoluteComparison(criterion)
-                ? FormatDouble(ToleranceForCriterion(criterion))
-                : FormatPercent(ToleranceForCriterion(criterion));
-            ToolStripMenuItem item = Menu_AppendItem(menu, text + "    " + toleranceText, ToggleCriterionClicked, true, _criterionStates[criterion]);
+            ToolStripMenuItem item = Menu_AppendItem(menu, text, ToggleCriterionClicked, true, _criterionStates[criterion]);
             item.Tag = criterion;
-            string toleranceLabel = UseAbsoluteComparison(criterion) ? "绝对误差" : "百分比误差";
-            AppendToleranceTextBox(item.DropDown, toleranceLabel, FormatDouble(ToleranceForCriterion(criterion)), value => SetCriterionTolerance(criterion, value));
         }
 
         private void AppendToleranceTextBox(ToolStripDropDown menu, string label, string value, Action<string> commit)
@@ -166,9 +179,15 @@ namespace NS_Parrot
             menu.Items.Add(box);
         }
 
+        private void AppendIntegerTextBox(ToolStripDropDown menu, string label, string value, Action<string> commit)
+        {
+            AppendToleranceTextBox(menu, label, value, commit);
+        }
+
         protected virtual bool UseAbsoluteComparison(ComparisonCriterion criterion)
         {
-            return criterion == ComparisonCriterion.HolePosition;
+            return IsAbsoluteOnlyCriterion(criterion) ||
+                (_absoluteToleranceModes.TryGetValue(criterion, out bool useAbsolute) && useAbsolute);
         }
 
         private void ToggleCriterionClicked(object sender, EventArgs e)
@@ -176,14 +195,32 @@ namespace NS_Parrot
             if (!(sender is ToolStripMenuItem item) || !(item.Tag is ComparisonCriterion criterion))
                 return;
 
-            _criterionStates[criterion] = !_criterionStates[criterion];
-            ExpireSolution(true);
+            SetCriterionEnabled(criterion, !_criterionStates[criterion]);
+            item.Checked = _criterionStates[criterion];
+        }
+
+        private void SetCriterionEnabled(ComparisonCriterion criterion, bool enabled)
+        {
+            if (_criterionStates[criterion] == enabled)
+                return;
+
+            _criterionStates[criterion] = enabled;
+            MarkSettingsChanged();
+        }
+
+        private void MarkSettingsChanged()
+        {
+            Attributes?.ExpireLayout();
+            OnDisplayExpired(true);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
         {
             if (!CHardware.CheckLegality())
+            {
+                DA.SetData(5, false);
                 return;
+            }
 
             bool runInput = false;
             DA.GetData(8, ref runInput);
@@ -200,6 +237,7 @@ namespace NS_Parrot
                 DA.SetDataList(2, _lastMirrorSides);
                 DA.SetDataList(3, _lastFeatureSummaries);
                 DA.SetData(4, HasCachedOutputs() ? _lastStatusMessage : "等待手动运行；自动求解未读取输入。");
+                DA.SetData(5, false);
                 return;
             }
 
@@ -214,11 +252,17 @@ namespace NS_Parrot
 
             List<Brep> geometries = new List<Brep>();
             if (!DA.GetDataList(3, geometries))
+            {
+                DA.SetData(5, false);
                 return;
+            }
 
             string databasePath = string.Empty;
             if (!DA.GetData(4, ref databasePath))
+            {
+                DA.SetData(5, false);
                 return;
+            }
 
             List<string> prefixes = new List<string>();
             DA.GetDataList(5, prefixes);
@@ -237,6 +281,7 @@ namespace NS_Parrot
             List<string> featureSummaries = new List<string>();
             List<string> databaseMatchedNumbers = new List<string>();
             string statusMessage = string.Empty;
+            bool saveCompletedPulse = false;
 
             try
             {
@@ -250,25 +295,26 @@ namespace NS_Parrot
                 store.EnsureSchema();
                 List<FeatureDbRecord> databaseRecords = store.LoadRecords();
 
-                List<EntityFeature> features = BuildFeatures(materialTexts, colorTexts, otherTexts, geometries, activeCriteria);
+                List<EntityFeature> features = BuildFeatures(materialTexts, colorTexts, otherTexts, geometries, activeCriteria, out int skippedOpenBrepCount);
                 _lastComputedFeatures.Clear();
                 _lastComputedFeatures.AddRange(features);
 
-                ClassificationResult result = Classify(features, prefixes, activeCriteria, tolerances, mirrorTolerance, databaseRecords);
+                ClassificationResult result = Classify(features, prefixes, activeCriteria, tolerances, mirrorTolerance, databaseRecords, BuildStoragePrecisionSettings());
 
                 for (int i = 0; i < features.Count; i++)
                 {
                     EntityFeature feature = features[i];
                     ClassificationItem item = result.Items[i];
                     string finalSide = item.UseSuffix ? item.NormalizedMirrorCode : string.Empty;
-                    string finalNumber = FormatNumber(TextAt(prefixes, i), separator, item.BaseNumber, numberLength, finalSide);
+                    string prefix = TextAt(prefixes, feature.Index);
+                    string finalNumber = FormatNumber(prefix, separator, item.BaseNumber, numberLength, finalSide);
 
                     numbers.Add(finalNumber);
                     baseNumbers.Add(item.BaseNumber);
                     mirrorSides.Add(finalSide);
-                    featureSummaries.Add(feature.ToSummaryString(TextAt(prefixes, i), activeCriteria, finalSide));
+                    featureSummaries.Add(feature.ToSummaryString(prefix, activeCriteria, finalSide));
 
-                    if (result.DatabaseMatchedBaseKeys.Contains(BuildPrefixBaseKey(TextAt(prefixes, i), item.BaseNumber)))
+                    if (result.DatabaseMatchedBaseKeys.Contains(BuildPrefixBaseKey(prefix, item.BaseNumber)))
                         databaseMatchedNumbers.Add(finalNumber);
                 }
 
@@ -279,6 +325,7 @@ namespace NS_Parrot
                 {
                     int savedCount = store.SaveRecords(result.SaveCandidates.Values.ToList());
                     statusMessage = $"分类完成，共 {features.Count} 个实体；保存 {savedCount} 条特征记录。";
+                    statusMessage = AppendSkippedOpenBrepMessage(statusMessage, skippedOpenBrepCount);
                     _lastSaveCandidates.Clear();
                     foreach (KeyValuePair<string, FeatureDbRecord> pair in result.SaveCandidates)
                     {
@@ -286,10 +333,12 @@ namespace NS_Parrot
                     }
 
                     _hasUnsavedDatabaseRecords = store.HasMissingRecords(result.SaveCandidates.Values.ToList());
+                    saveCompletedPulse = true;
                 }
                 else
                 {
                     statusMessage = BuildRunStatusMessage(features.Count, result.DatabaseMatchedBaseKeys.Count, databaseMatchedNumbers);
+                    statusMessage = AppendSkippedOpenBrepMessage(statusMessage, skippedOpenBrepCount);
                     _lastSaveCandidates.Clear();
                     foreach (KeyValuePair<string, FeatureDbRecord> pair in result.SaveCandidates)
                     {
@@ -317,6 +366,7 @@ namespace NS_Parrot
             DA.SetDataList(2, mirrorSides);
             DA.SetDataList(3, featureSummaries);
             DA.SetData(4, statusMessage);
+            DA.SetData(5, saveCompletedPulse);
         }
 
         private static string BuildRunStatusMessage(int featureCount, int databaseMatchedBaseCount, List<string> databaseMatchedNumbers)
@@ -331,6 +381,14 @@ namespace NS_Parrot
                 message += "；完整编号：" + string.Join(", ", uniqueNumbers);
 
             return message + "。";
+        }
+
+        private static string AppendSkippedOpenBrepMessage(string message, int skippedOpenBrepCount)
+        {
+            if (skippedOpenBrepCount <= 0)
+                return message;
+
+            return (message ?? string.Empty).TrimEnd('。') + $"；跳过 {skippedOpenBrepCount} 个开口 Brep。";
         }
 
         private void CacheOutputs(List<string> numbers, List<int> baseNumbers, List<string> mirrorSides, List<string> featureSummaries)
@@ -359,17 +417,31 @@ namespace NS_Parrot
         public override bool Write(GH_IWriter writer)
         {
             GH_IWriter chunk = writer.CreateChunk(SettingsChunk);
+            chunk.SetBoolean(nameof(ComparisonCriterion.Length), _criterionStates[ComparisonCriterion.Length]);
             chunk.SetBoolean(nameof(ComparisonCriterion.Inertia), _criterionStates[ComparisonCriterion.Inertia]);
             chunk.SetBoolean(nameof(ComparisonCriterion.Area), _criterionStates[ComparisonCriterion.Area]);
             chunk.SetBoolean(nameof(ComparisonCriterion.Volume), _criterionStates[ComparisonCriterion.Volume]);
             chunk.SetBoolean(nameof(ComparisonCriterion.EdgeSum), _criterionStates[ComparisonCriterion.EdgeSum]);
             chunk.SetBoolean(nameof(ComparisonCriterion.HolePosition), _criterionStates[ComparisonCriterion.HolePosition]);
+            chunk.SetDouble(nameof(ComparisonCriterion.Length) + "Tolerance", ToleranceForCriterion(ComparisonCriterion.Length));
             chunk.SetDouble(nameof(ComparisonCriterion.Inertia) + "Tolerance", ToleranceForCriterion(ComparisonCriterion.Inertia));
             chunk.SetDouble(nameof(ComparisonCriterion.Area) + "Tolerance", ToleranceForCriterion(ComparisonCriterion.Area));
             chunk.SetDouble(nameof(ComparisonCriterion.Volume) + "Tolerance", ToleranceForCriterion(ComparisonCriterion.Volume));
             chunk.SetDouble(nameof(ComparisonCriterion.EdgeSum) + "Tolerance", ToleranceForCriterion(ComparisonCriterion.EdgeSum));
             chunk.SetDouble(nameof(ComparisonCriterion.HolePosition) + "Tolerance", ToleranceForCriterion(ComparisonCriterion.HolePosition));
+            chunk.SetBoolean(nameof(ComparisonCriterion.Length) + "ToleranceAbsolute", UseAbsoluteComparison(ComparisonCriterion.Length));
+            chunk.SetBoolean(nameof(ComparisonCriterion.Inertia) + "ToleranceAbsolute", UseAbsoluteComparison(ComparisonCriterion.Inertia));
+            chunk.SetBoolean(nameof(ComparisonCriterion.Area) + "ToleranceAbsolute", UseAbsoluteComparison(ComparisonCriterion.Area));
+            chunk.SetBoolean(nameof(ComparisonCriterion.Volume) + "ToleranceAbsolute", UseAbsoluteComparison(ComparisonCriterion.Volume));
+            chunk.SetBoolean(nameof(ComparisonCriterion.EdgeSum) + "ToleranceAbsolute", UseAbsoluteComparison(ComparisonCriterion.EdgeSum));
+            chunk.SetBoolean(nameof(ComparisonCriterion.HolePosition) + "ToleranceAbsolute", UseAbsoluteComparison(ComparisonCriterion.HolePosition));
             chunk.SetDouble(nameof(MirrorAbsoluteTolerance), MirrorAbsoluteTolerance);
+            chunk.SetInt32(nameof(ComparisonCriterion.Inertia) + "StorageDecimals", StorageDecimalPlacesForCriterion(ComparisonCriterion.Inertia));
+            chunk.SetInt32(nameof(ComparisonCriterion.Area) + "StorageDecimals", StorageDecimalPlacesForCriterion(ComparisonCriterion.Area));
+            chunk.SetInt32(nameof(ComparisonCriterion.Volume) + "StorageDecimals", StorageDecimalPlacesForCriterion(ComparisonCriterion.Volume));
+            chunk.SetInt32(nameof(ComparisonCriterion.EdgeSum) + "StorageDecimals", StorageDecimalPlacesForCriterion(ComparisonCriterion.EdgeSum));
+            chunk.SetInt32(nameof(ComparisonCriterion.HolePosition) + "StorageDecimals", StorageDecimalPlacesForCriterion(ComparisonCriterion.HolePosition));
+            chunk.SetInt32(nameof(MirrorScoreStorageDecimalPlaces), MirrorScoreStorageDecimalPlaces);
             return base.Write(writer);
         }
 
@@ -379,6 +451,8 @@ namespace NS_Parrot
             if (chunk != null)
             {
                 bool value = false;
+                if (chunk.TryGetBoolean(nameof(ComparisonCriterion.Length), ref value))
+                    _criterionStates[ComparisonCriterion.Length] = value;
                 if (chunk.TryGetBoolean(nameof(ComparisonCriterion.Inertia), ref value))
                     _criterionStates[ComparisonCriterion.Inertia] = value;
                 if (chunk.TryGetBoolean(nameof(ComparisonCriterion.Area), ref value))
@@ -390,6 +464,7 @@ namespace NS_Parrot
                 if (chunk.TryGetBoolean(nameof(ComparisonCriterion.HolePosition), ref value))
                     _criterionStates[ComparisonCriterion.HolePosition] = value;
 
+                ReadTolerance(chunk, ComparisonCriterion.Length);
                 ReadTolerance(chunk, ComparisonCriterion.Inertia);
                 ReadTolerance(chunk, ComparisonCriterion.Area);
                 ReadTolerance(chunk, ComparisonCriterion.Volume);
@@ -399,6 +474,16 @@ namespace NS_Parrot
                 double mirrorTolerance = MirrorAbsoluteTolerance;
                 if (chunk.TryGetDouble(nameof(MirrorAbsoluteTolerance), ref mirrorTolerance))
                     MirrorAbsoluteTolerance = Math.Abs(mirrorTolerance);
+
+                ReadStorageDecimalPlaces(chunk, ComparisonCriterion.Inertia);
+                ReadStorageDecimalPlaces(chunk, ComparisonCriterion.Area);
+                ReadStorageDecimalPlaces(chunk, ComparisonCriterion.Volume);
+                ReadStorageDecimalPlaces(chunk, ComparisonCriterion.EdgeSum);
+                ReadStorageDecimalPlaces(chunk, ComparisonCriterion.HolePosition);
+
+                int mirrorScoreDecimals = MirrorScoreStorageDecimalPlaces;
+                if (chunk.TryGetInt32(nameof(MirrorScoreStorageDecimalPlaces), ref mirrorScoreDecimals))
+                    MirrorScoreStorageDecimalPlaces = ClampStorageDecimalPlaces(mirrorScoreDecimals);
             }
 
             return base.Read(reader);
@@ -445,18 +530,36 @@ namespace NS_Parrot
             _lastRhinoDocumentSerialNumber = currentSerialNumber;
             _lastRhinoDocumentPath = currentPath;
 
-            if (!_hasUnsavedDatabaseRecords || _isHandlingRhinoDocumentChange)
-                return;
+            if (_hasUnsavedDatabaseRecords && !_isHandlingRhinoDocumentChange)
+            {
+                _isHandlingRhinoDocumentChange = true;
+                try
+                {
+                    PromptToSavePendingRecords();
+                }
+                finally
+                {
+                    _isHandlingRhinoDocumentChange = false;
+                }
+            }
 
-            _isHandlingRhinoDocumentChange = true;
-            try
-            {
-                PromptToSavePendingRecords();
-            }
-            finally
-            {
-                _isHandlingRhinoDocumentChange = false;
-            }
+            ClearCachedResultsForDocumentChange();
+        }
+
+        private void ClearCachedResultsForDocumentChange()
+        {
+            _runRequested = false;
+            _saveRequested = false;
+            _lastComputedFeatures.Clear();
+            _lastNumbers.Clear();
+            _lastBaseNumbers.Clear();
+            _lastMirrorSides.Clear();
+            _lastFeatureSummaries.Clear();
+            _lastSaveCandidates.Clear();
+            _hasUnsavedDatabaseRecords = false;
+            _lastDatabasePath = string.Empty;
+            _lastStatusMessage = "Rhino 文档已更换，等待重新运行。";
+            ExpireSolution(true);
         }
 
         private void PromptToSavePendingRecords()
@@ -535,23 +638,28 @@ namespace NS_Parrot
 
         private void SetCriterionTolerance(ComparisonCriterion criterion, string text)
         {
-            if (!TryParseTolerance(text, out double value))
+            if (!TryParseTolerance(text, out double value, out bool useAbsolute))
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "误差数值无法识别：" + text);
                 return;
             }
 
             value = Math.Abs(value);
-            if (Math.Abs(ToleranceForCriterion(criterion) - value) <= 1e-12)
+            if (IsAbsoluteOnlyCriterion(criterion))
+                useAbsolute = true;
+
+            if (Math.Abs(ToleranceForCriterion(criterion) - value) <= 1e-12 &&
+                UseAbsoluteComparison(criterion) == useAbsolute)
                 return;
 
             SetToleranceForCriterion(criterion, value);
-            ExpireSolution(true);
+            SetToleranceModeForCriterion(criterion, useAbsolute);
+            MarkSettingsChanged();
         }
 
         private void SetMirrorTolerance(string text)
         {
-            if (!TryParseTolerance(text, out double value))
+            if (!TryParseTolerance(text, out double value, out bool _))
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "镜像绝对误差无法识别：" + text);
                 return;
@@ -562,7 +670,49 @@ namespace NS_Parrot
                 return;
 
             MirrorAbsoluteTolerance = value;
-            ExpireSolution(true);
+            MarkSettingsChanged();
+        }
+
+        private void SetStorageDecimalPlaces(ComparisonCriterion criterion, string text)
+        {
+            if (!TryParseStorageDecimalPlaces(text, out int value))
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "入库精度无法识别：" + text);
+                return;
+            }
+
+            value = ClampStorageDecimalPlaces(value);
+            if (StorageDecimalPlacesForCriterion(criterion) == value)
+                return;
+
+            _storageDecimalPlaces[criterion] = value;
+            MarkSettingsChanged();
+        }
+
+        private void SetMirrorScoreStorageDecimalPlaces(string text)
+        {
+            if (!TryParseStorageDecimalPlaces(text, out int value))
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "镜像值入库精度无法识别：" + text);
+                return;
+            }
+
+            value = ClampStorageDecimalPlaces(value);
+            if (MirrorScoreStorageDecimalPlaces == value)
+                return;
+
+            MirrorScoreStorageDecimalPlaces = value;
+            MarkSettingsChanged();
+        }
+
+        private static bool TryParseStorageDecimalPlaces(string text, out int value)
+        {
+            return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+        }
+
+        private static int ClampStorageDecimalPlaces(int value)
+        {
+            return Math.Max(0, Math.Min(12, value));
         }
 
         private void ReadTolerance(GH_IReader chunk, ComparisonCriterion criterion)
@@ -570,6 +720,17 @@ namespace NS_Parrot
             double value = ToleranceForCriterion(criterion);
             if (chunk.TryGetDouble(criterion.ToString() + "Tolerance", ref value))
                 SetToleranceForCriterion(criterion, value);
+
+            bool useAbsolute = UseAbsoluteComparison(criterion);
+            if (chunk.TryGetBoolean(criterion.ToString() + "ToleranceAbsolute", ref useAbsolute))
+                SetToleranceModeForCriterion(criterion, useAbsolute);
+        }
+
+        private void ReadStorageDecimalPlaces(GH_IReader chunk, ComparisonCriterion criterion)
+        {
+            int value = StorageDecimalPlacesForCriterion(criterion);
+            if (chunk.TryGetInt32(criterion.ToString() + "StorageDecimals", ref value))
+                _storageDecimalPlaces[criterion] = ClampStorageDecimalPlaces(value);
         }
 
         private void SetToleranceForCriterion(ComparisonCriterion criterion, double value)
@@ -578,21 +739,29 @@ namespace NS_Parrot
             CurrentTolerances[CriterionIndex(criterion)] = Math.Abs(value);
         }
 
+        private void SetToleranceModeForCriterion(ComparisonCriterion criterion, bool useAbsolute)
+        {
+            _absoluteToleranceModes[criterion] = IsAbsoluteOnlyCriterion(criterion) || useAbsolute;
+        }
+
         private void EnsureToleranceSlots()
         {
-            while (CurrentTolerances.Count < 5)
+            while (CurrentTolerances.Count < 6)
             {
-                CurrentTolerances.Add(1.0);
+                CurrentTolerances.Add(0.5);
             }
         }
 
         public string GetConditionDisplayText()
         {
-            List<string> text = new List<string> { "编号前缀", "材质", "颜色", "其它" };
+            List<string> text = new List<string> { "编号前缀", "材质", "颜色" };
             foreach (ComparisonCriterion criterion in GetActiveCriteria())
             {
                 switch (criterion)
                 {
+                    case ComparisonCriterion.Length:
+                        text.Add("长度");
+                        break;
                     case ComparisonCriterion.Inertia:
                         text.Add("转动惯量");
                         break;
@@ -620,6 +789,22 @@ namespace NS_Parrot
             return ToleranceAt(CurrentTolerances, criterion);
         }
 
+        private int StorageDecimalPlacesForCriterion(ComparisonCriterion criterion)
+        {
+            return _storageDecimalPlaces.TryGetValue(criterion, out int value) ? ClampStorageDecimalPlaces(value) : 2;
+        }
+
+        private string FormatToleranceForCriterion(ComparisonCriterion criterion)
+        {
+            string text = FormatDouble(ToleranceForCriterion(criterion));
+            return UseAbsoluteComparison(criterion) ? text : text + "%";
+        }
+
+        private static bool IsAbsoluteOnlyCriterion(ComparisonCriterion criterion)
+        {
+            return criterion == ComparisonCriterion.HolePosition;
+        }
+
         internal static double ToleranceAt(IList<double> tolerances, ComparisonCriterion criterion)
         {
             if (tolerances == null || tolerances.Count == 0)
@@ -639,24 +824,21 @@ namespace NS_Parrot
         {
             switch (criterion)
             {
-                case ComparisonCriterion.Inertia:
+                case ComparisonCriterion.Length:
                     return 0;
-                case ComparisonCriterion.Area:
+                case ComparisonCriterion.Inertia:
                     return 1;
-                case ComparisonCriterion.Volume:
+                case ComparisonCriterion.Area:
                     return 2;
-                case ComparisonCriterion.EdgeSum:
+                case ComparisonCriterion.Volume:
                     return 3;
-                case ComparisonCriterion.HolePosition:
+                case ComparisonCriterion.EdgeSum:
                     return 4;
+                case ComparisonCriterion.HolePosition:
+                    return 5;
                 default:
                     return 0;
             }
-        }
-
-        private static string FormatPercent(double value)
-        {
-            return value.ToString("G6", CultureInfo.InvariantCulture) + "%";
         }
 
         private static string FormatDouble(double value)
@@ -675,7 +857,7 @@ namespace NS_Parrot
 
             ValidateOptionalTextCount(materialTexts, geometries.Count, "材质");
             ValidateOptionalTextCount(colorTexts, geometries.Count, "颜色");
-            ValidateOptionalTextCount(otherTexts, geometries.Count, "其它");
+            ValidateOptionalTextCount(otherTexts, geometries.Count, "长度");
             ValidateRequiredTextCount(prefixes, geometries.Count, "编号前缀");
 
             if (string.IsNullOrWhiteSpace(databasePath))
@@ -691,6 +873,8 @@ namespace NS_Parrot
         private List<ComparisonCriterion> GetActiveCriteria()
         {
             List<ComparisonCriterion> criteria = new List<ComparisonCriterion>();
+            if (_criterionStates[ComparisonCriterion.Length])
+                criteria.Add(ComparisonCriterion.Length);
             if (_criterionStates[ComparisonCriterion.Inertia])
                 criteria.Add(ComparisonCriterion.Inertia);
             if (_criterionStates[ComparisonCriterion.Area])
@@ -704,12 +888,16 @@ namespace NS_Parrot
             return criteria;
         }
 
-        private static bool TryParseTolerance(string text, out double value)
+        private static bool TryParseTolerance(string text, out double value, out bool useAbsolute)
         {
             value = 0.0;
+            useAbsolute = true;
             text = (text ?? string.Empty).Trim();
             if (text.EndsWith("%", StringComparison.Ordinal))
+            {
                 text = text.Substring(0, text.Length - 1).Trim();
+                useAbsolute = false;
+            }
 
             return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value) ||
                 double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value);
@@ -730,21 +918,49 @@ namespace NS_Parrot
                 throw new ArgumentException(name + "数量必须与实体列表一致。");
         }
 
-        private static List<EntityFeature> BuildFeatures(List<string> materialTexts, List<string> colorTexts, List<string> otherTexts, List<Brep> geometries, List<ComparisonCriterion> activeCriteria)
+        private List<EntityFeature> BuildFeatures(List<string> materialTexts, List<string> colorTexts, List<string> otherTexts, List<Brep> geometries, List<ComparisonCriterion> activeCriteria, out int skippedOpenBrepCount)
         {
+            skippedOpenBrepCount = 0;
             List<EntityFeature> features = new List<EntityFeature>(geometries.Count);
+            bool compareVolume = activeCriteria != null && activeCriteria.Contains(ComparisonCriterion.Volume);
+            bool compareLength = activeCriteria != null && activeCriteria.Contains(ComparisonCriterion.Length);
             for (int i = 0; i < geometries.Count; i++)
             {
-                if (geometries[i] == null)
+                Brep geometry = geometries[i];
+                if (geometry == null)
                     throw new ArgumentException($"第 {i + 1} 个实体为空。");
+
+                string lengthText = TextAt(otherTexts, i);
+                if (compareLength && !EntityFeature.TryParseLength(lengthText, out double _))
+                    throw new ArgumentException($"第 {i + 1} 个长度不是有效数字：{lengthText}");
+
+                if (!geometry.IsSolid)
+                {
+                    if (compareVolume)
+                    {
+                        AddRuntimeMessage(GH_RuntimeMessageLevel.Error, $"第 {i + 1} 个 Brep 是开口 Brep，已跳过；勾选“体积”时只能使用闭合实体。");
+                        skippedOpenBrepCount++;
+                        continue;
+                    }
+
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, $"第 {i + 1} 个 Brep 是开口 Brep，已退回按开口曲面计算。");
+                }
 
                 EntityFeature feature = EntityFeature.Create(
                     TextAt(materialTexts, i),
                     TextAt(colorTexts, i),
-                    TextAt(otherTexts, i),
-                    geometries[i],
-                    activeCriteria,
+                    lengthText,
+                    geometry,
+                    geometry.IsSolid,
                     i);
+
+                if (compareVolume && feature.Volume <= 0.0)
+                {
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, $"第 {i + 1} 个实体无法计算有效体积，已跳过。");
+                    skippedOpenBrepCount++;
+                    continue;
+                }
+
                 features.Add(feature);
             }
 
@@ -759,7 +975,7 @@ namespace NS_Parrot
             return texts[index] ?? string.Empty;
         }
 
-        private ClassificationResult Classify(List<EntityFeature> features, List<string> prefixes, List<ComparisonCriterion> activeCriteria, double[] tolerances, double mirrorTolerance, List<FeatureDbRecord> databaseRecords)
+        private ClassificationResult Classify(List<EntityFeature> features, List<string> prefixes, List<ComparisonCriterion> activeCriteria, double[] tolerances, double mirrorTolerance, List<FeatureDbRecord> databaseRecords, StoragePrecisionSettings storagePrecision)
         {
             ClassificationResult result = new ClassificationResult(features.Count);
             Dictionary<string, HashSet<string>> databaseSidesByBase = databaseRecords
@@ -776,7 +992,7 @@ namespace NS_Parrot
             for (int i = 0; i < features.Count; i++)
             {
                 EntityFeature feature = features[i];
-                string prefix = TextAt(prefixes, i);
+                string prefix = TextAt(prefixes, feature.Index);
                 WorkingBaseGroup localGroup = groups.FirstOrDefault(x => x.CanAccept(prefix, feature, activeCriteria, tolerances, UseAbsoluteComparison));
                 if (localGroup == null)
                 {
@@ -798,7 +1014,7 @@ namespace NS_Parrot
                     groups.Add(localGroup);
                 }
 
-                localGroup.Add(feature.Index);
+                localGroup.Add(i);
             }
 
             foreach (WorkingBaseGroup group in groups)
@@ -833,11 +1049,12 @@ namespace NS_Parrot
                 {
                     EntityFeature representative = orientationGroup.First();
                     string storeMirrorCode = representative.MirrorCodeForTolerance(mirrorTolerance);
-                    string saveKey = FeatureDbRecord.BuildKey(group.PrefixText, group.BaseNumber, storeMirrorCode, representative);
+                    FeatureDbRecord saveRecord = FeatureDbRecord.FromFeature(group.PrefixText, group.BaseNumber, storeMirrorCode, representative, storagePrecision);
+                    string saveKey = FeatureDbRecord.BuildKey(saveRecord);
 
                     if (!result.SaveCandidates.ContainsKey(saveKey))
                     {
-                        result.SaveCandidates.Add(saveKey, FeatureDbRecord.FromFeature(group.PrefixText, group.BaseNumber, storeMirrorCode, representative));
+                        result.SaveCandidates.Add(saveKey, saveRecord);
                     }
                 }
             }
@@ -847,15 +1064,33 @@ namespace NS_Parrot
 
         private static int FindMatchingDatabaseBaseNumber(string prefix, EntityFeature feature, List<ComparisonCriterion> activeCriteria, double[] tolerances, List<FeatureDbRecord> databaseRecords, Func<ComparisonCriterion, bool> useAbsoluteComparison)
         {
-            FeatureDbRecord match = databaseRecords.FirstOrDefault(record =>
-                string.Equals(record.PrefixText, prefix ?? string.Empty, StringComparison.Ordinal) &&
-                record.MatchesBase(feature, activeCriteria, tolerances, useAbsoluteComparison));
+            FeatureDbRecord match = databaseRecords
+                .Where(record =>
+                    string.Equals(record.PrefixText, prefix ?? string.Empty, StringComparison.Ordinal) &&
+                    record.MatchesBase(feature, activeCriteria, tolerances, useAbsoluteComparison))
+                .OrderBy(record => record.BaseNumber)
+                .ThenBy(record => record.MirrorCode ?? string.Empty, StringComparer.Ordinal)
+                .FirstOrDefault();
             return match?.BaseNumber ?? -1;
         }
 
         private static string BuildPrefixBaseKey(string prefix, int baseNumber)
         {
             return (prefix ?? string.Empty) + "|" + baseNumber.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private StoragePrecisionSettings BuildStoragePrecisionSettings()
+        {
+            return new StoragePrecisionSettings
+            {
+                InertiaDecimalPlaces = StorageDecimalPlacesForCriterion(ComparisonCriterion.Inertia),
+                AreaDecimalPlaces = StorageDecimalPlacesForCriterion(ComparisonCriterion.Area),
+                VolumeDecimalPlaces = StorageDecimalPlacesForCriterion(ComparisonCriterion.Volume),
+                EdgeSumDecimalPlaces = StorageDecimalPlacesForCriterion(ComparisonCriterion.EdgeSum),
+                HoleDecimalPlaces = StorageDecimalPlacesForCriterion(ComparisonCriterion.HolePosition),
+                MirrorScoreDecimalPlaces = MirrorScoreStorageDecimalPlaces,
+                HoleMirrorScoreDecimalPlaces = 6
+            };
         }
 
         private static string FormatNumber(string prefix, string separator, int baseNumber, int numberLength, string suffix)
@@ -865,8 +1100,219 @@ namespace NS_Parrot
             return string.IsNullOrEmpty(suffix) ? head : head + suffix;
         }
 
+        private static string CriterionDisplayName(ComparisonCriterion criterion)
+        {
+            switch (criterion)
+            {
+                case ComparisonCriterion.Length:
+                    return "长度";
+                case ComparisonCriterion.Inertia:
+                    return "转动惯量";
+                case ComparisonCriterion.Area:
+                    return "表面积";
+                case ComparisonCriterion.Volume:
+                    return "体积";
+                case ComparisonCriterion.EdgeSum:
+                    return "所有边周长";
+                case ComparisonCriterion.HolePosition:
+                    return "孔位";
+                default:
+                    return criterion.ToString();
+            }
+        }
+
+        private sealed class FeatureSettingsMenuControl : UserControl
+        {
+            private static readonly ComparisonCriterion[] Criteria =
+            {
+                ComparisonCriterion.Length,
+                ComparisonCriterion.Inertia,
+                ComparisonCriterion.Area,
+                ComparisonCriterion.Volume,
+                ComparisonCriterion.EdgeSum,
+                ComparisonCriterion.HolePosition
+            };
+
+            private readonly EntityFeatureClassifier _owner;
+            private readonly ToolTip _toolTip = new ToolTip();
+            private readonly List<Action> _commitActions = new List<Action>();
+
+            public FeatureSettingsMenuControl(EntityFeatureClassifier owner)
+            {
+                _owner = owner;
+                AutoScaleMode = AutoScaleMode.None;
+                BackColor = SystemColors.Control;
+                Margin = Padding.Empty;
+                Padding = new Padding(8, 6, 8, 8);
+                Size = new Size(360, 286);
+
+                TableLayoutPanel layout = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    ColumnCount = 3,
+                    RowCount = Criteria.Length + 3,
+                    Margin = Padding.Empty,
+                    Padding = Padding.Empty
+                };
+                layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
+                layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
+                layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+                for (int i = 0; i < Criteria.Length + 1; i++)
+                    layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+                Controls.Add(layout);
+
+                AddHeader(layout);
+                for (int i = 0; i < Criteria.Length; i++)
+                {
+                    AddCriterionRow(layout, i + 1, Criteria[i]);
+                }
+
+                AddMirrorRow(layout, Criteria.Length + 1);
+                AddHelp(layout, Criteria.Length + 2);
+            }
+
+            private void AddHeader(TableLayoutPanel layout)
+            {
+                layout.Controls.Add(CreateHeaderLabel(""), 0, 0);
+                layout.Controls.Add(CreateHeaderLabel("容差"), 1, 0);
+                layout.Controls.Add(CreateHeaderLabel("入库精度"), 2, 0);
+            }
+
+            private void AddCriterionRow(TableLayoutPanel layout, int row, ComparisonCriterion criterion)
+            {
+                CheckBox checkBox = new CheckBox
+                {
+                    Text = CriterionDisplayName(criterion),
+                    Checked = _owner._criterionStates[criterion],
+                    AutoSize = false,
+                    Dock = DockStyle.Fill,
+                    Margin = new Padding(0, 1, 4, 1),
+                    TextAlign = ContentAlignment.MiddleLeft
+                };
+                checkBox.CheckedChanged += (sender, e) => _owner.SetCriterionEnabled(criterion, checkBox.Checked);
+                layout.Controls.Add(checkBox, 0, row);
+
+                TextBox toleranceBox = CreateTextBox(_owner.FormatToleranceForCriterion(criterion));
+                _toolTip.SetToolTip(toleranceBox, IsAbsoluteOnlyCriterion(criterion)
+                    ? "孔位只支持绝对误差，例如 0.5。"
+                    : "带 % 表示相对误差，例如 0.5%；不带 % 表示绝对误差，例如 100。");
+                RegisterTextBoxCommit(
+                    toleranceBox,
+                    () => _owner.SetCriterionTolerance(criterion, toleranceBox.Text));
+                layout.Controls.Add(toleranceBox, 1, row);
+
+                TextBox precisionBox = CreateTextBox(criterion == ComparisonCriterion.Length
+                    ? "原值"
+                    : _owner.StorageDecimalPlacesForCriterion(criterion).ToString(CultureInfo.InvariantCulture));
+                if (criterion == ComparisonCriterion.Length)
+                {
+                    precisionBox.Enabled = false;
+                    _toolTip.SetToolTip(precisionBox, "长度继续保存到数据库原字段，入库值不在这里改写。");
+                }
+                else
+                {
+                    _toolTip.SetToolTip(precisionBox, "保存到数据库时保留的小数位数，范围 0 到 12。");
+                    RegisterTextBoxCommit(
+                        precisionBox,
+                        () => _owner.SetStorageDecimalPlaces(criterion, precisionBox.Text));
+                }
+                layout.Controls.Add(precisionBox, 2, row);
+            }
+
+            private void AddMirrorRow(TableLayoutPanel layout, int row)
+            {
+                Label label = CreateBodyLabel("镜像区分");
+                layout.Controls.Add(label, 0, row);
+
+                TextBox toleranceBox = CreateTextBox(FormatDouble(_owner.MirrorAbsoluteTolerance));
+                _toolTip.SetToolTip(toleranceBox, "镜像区分只支持绝对误差；小于等于该值时不区分 A/B。");
+                RegisterTextBoxCommit(
+                    toleranceBox,
+                    () => _owner.SetMirrorTolerance(toleranceBox.Text));
+                layout.Controls.Add(toleranceBox, 1, row);
+
+                TextBox precisionBox = CreateTextBox(_owner.MirrorScoreStorageDecimalPlaces.ToString(CultureInfo.InvariantCulture));
+                _toolTip.SetToolTip(precisionBox, "镜像值保存到数据库时保留的小数位数，范围 0 到 12。");
+                RegisterTextBoxCommit(
+                    precisionBox,
+                    () => _owner.SetMirrorScoreStorageDecimalPlaces(precisionBox.Text));
+                layout.Controls.Add(precisionBox, 2, row);
+            }
+
+            private void AddHelp(TableLayoutPanel layout, int row)
+            {
+                Label help = CreateBodyLabel("容差默认按相对误差填写；输入 0.5% 表示相对误差，输入 100 表示绝对误差。孔位和镜像区分只能使用绝对误差。");
+                help.ForeColor = Color.DimGray;
+                help.AutoSize = false;
+                help.Dock = DockStyle.Fill;
+                layout.SetColumnSpan(help, 3);
+                layout.Controls.Add(help, 0, row);
+            }
+
+            private static Label CreateHeaderLabel(string text)
+            {
+                return new Label
+                {
+                    Text = text,
+                    AutoSize = false,
+                    Dock = DockStyle.Fill,
+                    Font = new Font(SystemFonts.MenuFont, FontStyle.Bold),
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Margin = new Padding(0, 0, 4, 3)
+                };
+            }
+
+            private static Label CreateBodyLabel(string text)
+            {
+                return new Label
+                {
+                    Text = text,
+                    AutoSize = false,
+                    Dock = DockStyle.Fill,
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Margin = new Padding(0, 1, 4, 1)
+                };
+            }
+
+            private static TextBox CreateTextBox(string text)
+            {
+                return new TextBox
+                {
+                    Text = text,
+                    Dock = DockStyle.Fill,
+                    Margin = new Padding(0, 1, 8, 1),
+                    BorderStyle = BorderStyle.FixedSingle
+                };
+            }
+
+            public void CommitAll()
+            {
+                foreach (Action commit in _commitActions.ToArray())
+                {
+                    commit();
+                }
+            }
+
+            private void RegisterTextBoxCommit(TextBox box, Action commit)
+            {
+                _commitActions.Add(commit);
+                box.KeyDown += (sender, e) =>
+                {
+                    if (e.KeyCode != Keys.Enter)
+                        return;
+
+                    commit();
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                };
+            }
+        }
+
         public enum ComparisonCriterion
         {
+            Length,
             Inertia,
             Area,
             Volume,
@@ -1034,6 +1480,23 @@ namespace NS_Parrot
         }
     }
 
+    internal sealed class StoragePrecisionSettings
+    {
+        public int InertiaDecimalPlaces { get; set; } = 2;
+
+        public int AreaDecimalPlaces { get; set; } = 2;
+
+        public int VolumeDecimalPlaces { get; set; } = 2;
+
+        public int EdgeSumDecimalPlaces { get; set; } = 2;
+
+        public int HoleDecimalPlaces { get; set; } = 2;
+
+        public int MirrorScoreDecimalPlaces { get; set; } = 2;
+
+        public int HoleMirrorScoreDecimalPlaces { get; set; } = 6;
+    }
+
     internal sealed class FeatureDbRecord
     {
         public string PrefixText { get; set; } = string.Empty;
@@ -1064,8 +1527,11 @@ namespace NS_Parrot
 
         public double MirrorScore { get; set; }
 
-        public static FeatureDbRecord FromFeature(string prefixText, int baseNumber, string mirrorCode, EntityFeature feature)
+        public double HoleMirrorScore { get; set; }
+
+        public static FeatureDbRecord FromFeature(string prefixText, int baseNumber, string mirrorCode, EntityFeature feature, StoragePrecisionSettings storagePrecision)
         {
+            storagePrecision = storagePrecision ?? new StoragePrecisionSettings();
             return new FeatureDbRecord
             {
                 PrefixText = prefixText ?? string.Empty,
@@ -1073,23 +1539,29 @@ namespace NS_Parrot
                 MaterialText = feature.MaterialText,
                 ColorText = feature.ColorText,
                 OtherText = feature.OtherText,
-                Area = feature.Area,
-                Volume = feature.Volume,
-                EdgeSum = feature.EdgeSum,
-                Inertia1 = feature.Inertia[0],
-                Inertia2 = feature.Inertia[1],
-                Inertia3 = feature.Inertia[2],
-                HoleData = HoleFeature.ToStorageString(feature.HoleFeatures),
+                Area = RoundForStorage(feature.Area, storagePrecision.AreaDecimalPlaces),
+                Volume = RoundForStorage(feature.Volume, storagePrecision.VolumeDecimalPlaces),
+                EdgeSum = RoundForStorage(feature.EdgeSum, storagePrecision.EdgeSumDecimalPlaces),
+                Inertia1 = RoundForStorage(feature.Inertia[0], storagePrecision.InertiaDecimalPlaces),
+                Inertia2 = RoundForStorage(feature.Inertia[1], storagePrecision.InertiaDecimalPlaces),
+                Inertia3 = RoundForStorage(feature.Inertia[2], storagePrecision.InertiaDecimalPlaces),
+                HoleData = HoleFeature.ToStorageString(feature.HoleFeatures, storagePrecision.HoleDecimalPlaces),
                 MirrorCode = mirrorCode ?? string.Empty,
-                MirrorScore = feature.MirrorScore
+                MirrorScore = RoundForStorage(feature.MirrorScore, storagePrecision.MirrorScoreDecimalPlaces),
+                HoleMirrorScore = RoundForStorage(feature.HoleMirrorScore, storagePrecision.HoleMirrorScoreDecimalPlaces)
             };
+        }
+
+        private static double RoundForStorage(double value, int decimalPlaces)
+        {
+            decimalPlaces = Math.Max(0, Math.Min(12, decimalPlaces));
+            return Math.Round(value, decimalPlaces, MidpointRounding.AwayFromZero);
         }
 
         public bool MatchesBase(EntityFeature feature, List<EntityFeatureClassifier.ComparisonCriterion> activeCriteria, double[] tolerances, Func<EntityFeatureClassifier.ComparisonCriterion, bool> useAbsoluteComparison)
         {
             if (!string.Equals(MaterialText, feature.MaterialText, StringComparison.Ordinal) ||
-                !string.Equals(ColorText, feature.ColorText, StringComparison.Ordinal) ||
-                !string.Equals(OtherText, feature.OtherText, StringComparison.Ordinal))
+                !string.Equals(ColorText, feature.ColorText, StringComparison.Ordinal))
                 return false;
 
             for (int i = 0; i < activeCriteria.Count; i++)
@@ -1097,6 +1569,13 @@ namespace NS_Parrot
                 double tolerance = EntityFeatureClassifier.ToleranceAt(tolerances, activeCriteria[i]);
                 switch (activeCriteria[i])
                 {
+                    case EntityFeatureClassifier.ComparisonCriterion.Length:
+                        if (!EntityFeature.TryParseLength(OtherText, out double recordLength) ||
+                            !EntityFeature.TryParseLength(feature.OtherText, out double featureLength) ||
+                            !EntityFeature.WithinTolerance(recordLength, featureLength, tolerance, useAbsoluteComparison(activeCriteria[i])))
+                            return false;
+                        break;
+
                     case EntityFeatureClassifier.ComparisonCriterion.Inertia:
                         if (!EntityFeature.WithinTolerance(Inertia1, feature.Inertia[0], tolerance, useAbsoluteComparison(activeCriteria[i])) ||
                             !EntityFeature.WithinTolerance(Inertia2, feature.Inertia[1], tolerance, useAbsoluteComparison(activeCriteria[i])) ||
@@ -1129,22 +1608,23 @@ namespace NS_Parrot
             return true;
         }
 
-        public static string BuildKey(string prefixText, int baseNumber, string mirrorCode, EntityFeature feature)
+        public static string BuildKey(FeatureDbRecord record)
         {
             return string.Join("|",
-                prefixText ?? string.Empty,
-                baseNumber.ToString(CultureInfo.InvariantCulture),
-                feature.MaterialText ?? string.Empty,
-                feature.ColorText ?? string.Empty,
-                feature.OtherText ?? string.Empty,
-                mirrorCode ?? string.Empty,
-                feature.Volume.ToString("R", CultureInfo.InvariantCulture),
-                feature.Area.ToString("R", CultureInfo.InvariantCulture),
-                feature.EdgeSum.ToString("R", CultureInfo.InvariantCulture),
-                feature.Inertia[0].ToString("R", CultureInfo.InvariantCulture),
-                feature.Inertia[1].ToString("R", CultureInfo.InvariantCulture),
-                feature.Inertia[2].ToString("R", CultureInfo.InvariantCulture),
-                HoleFeature.ToStorageString(feature.HoleFeatures));
+                record.PrefixText ?? string.Empty,
+                record.BaseNumber.ToString(CultureInfo.InvariantCulture),
+                record.MaterialText ?? string.Empty,
+                record.ColorText ?? string.Empty,
+                record.OtherText ?? string.Empty,
+                record.MirrorCode ?? string.Empty,
+                record.Volume.ToString("R", CultureInfo.InvariantCulture),
+                record.Area.ToString("R", CultureInfo.InvariantCulture),
+                record.EdgeSum.ToString("R", CultureInfo.InvariantCulture),
+                record.Inertia1.ToString("R", CultureInfo.InvariantCulture),
+                record.Inertia2.ToString("R", CultureInfo.InvariantCulture),
+                record.Inertia3.ToString("R", CultureInfo.InvariantCulture),
+                record.HoleData ?? string.Empty,
+                record.HoleMirrorScore.ToString("R", CultureInfo.InvariantCulture));
         }
     }
 
@@ -1179,6 +1659,7 @@ namespace NS_Parrot
                         hole_data TEXT NOT NULL DEFAULT '',
                         mirror_code TEXT NOT NULL,
                         mirror_score REAL NOT NULL,
+                        hole_mirror_score REAL NOT NULL DEFAULT 0,
                         feature_version INTEGER NOT NULL,
                         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                     );";
@@ -1190,24 +1671,27 @@ namespace NS_Parrot
                 command.ExecuteNonQuery();
             }
 
+            EnsureColumn("hole_mirror_score", "REAL NOT NULL DEFAULT 0");
             ValidateSchema();
+        }
+
+        private void EnsureColumn(string columnName, string definition)
+        {
+            HashSet<string> columns = ReadColumnNames();
+            if (columns.Contains(columnName))
+                return;
+
+            using (SQLiteConnection connection = OpenConnection())
+            using (SQLiteCommand command = connection.CreateCommand())
+            {
+                command.CommandText = "ALTER TABLE entity_feature_classes ADD COLUMN " + columnName + " " + definition + ";";
+                command.ExecuteNonQuery();
+            }
         }
 
         private void ValidateSchema()
         {
-            HashSet<string> columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            using (SQLiteConnection connection = OpenConnection())
-            using (SQLiteCommand command = connection.CreateCommand())
-            {
-                command.CommandText = "PRAGMA table_info(entity_feature_classes);";
-                using (SQLiteDataReader reader = command.ExecuteReader())
-                {
-                    while (reader.Read())
-                    {
-                        columns.Add(reader.GetString(1));
-                    }
-                }
-            }
+            HashSet<string> columns = ReadColumnNames();
 
             string[] requiredColumns =
             {
@@ -1225,6 +1709,7 @@ namespace NS_Parrot
                 "hole_data",
                 "mirror_code",
                 "mirror_score",
+                "hole_mirror_score",
                 "feature_version"
             };
 
@@ -1238,6 +1723,25 @@ namespace NS_Parrot
             }
         }
 
+        private HashSet<string> ReadColumnNames()
+        {
+            HashSet<string> columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (SQLiteConnection connection = OpenConnection())
+            using (SQLiteCommand command = connection.CreateCommand())
+            {
+                command.CommandText = "PRAGMA table_info(entity_feature_classes);";
+                using (SQLiteDataReader reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        columns.Add(reader.GetString(1));
+                    }
+                }
+            }
+
+            return columns;
+        }
+
         public List<FeatureDbRecord> LoadRecords()
         {
             List<FeatureDbRecord> records = new List<FeatureDbRecord>();
@@ -1245,7 +1749,7 @@ namespace NS_Parrot
             using (SQLiteCommand command = connection.CreateCommand())
             {
                 command.CommandText =
-                    @"SELECT prefix_text, base_number, material_text, color_text, other_text, area, volume, edge_sum, inertia_1, inertia_2, inertia_3, hole_data, mirror_code, mirror_score
+                    @"SELECT prefix_text, base_number, material_text, color_text, other_text, area, volume, edge_sum, inertia_1, inertia_2, inertia_3, hole_data, mirror_code, mirror_score, hole_mirror_score
                       FROM entity_feature_classes
                       WHERE feature_version = @feature_version;";
                 command.Parameters.AddWithValue("@feature_version", EntityFeatureClassifier.FeatureVersion);
@@ -1269,7 +1773,8 @@ namespace NS_Parrot
                             Inertia3 = reader.GetDouble(10),
                             HoleData = reader.GetString(11),
                             MirrorCode = reader.GetString(12),
-                            MirrorScore = reader.GetDouble(13)
+                            MirrorScore = reader.GetDouble(13),
+                            HoleMirrorScore = reader.GetDouble(14)
                         });
                     }
                 }
@@ -1297,9 +1802,9 @@ namespace NS_Parrot
                         command.Transaction = transaction;
                         command.CommandText =
                             @"INSERT INTO entity_feature_classes
-                              (prefix_text, material_text, color_text, other_text, base_number, area, volume, edge_sum, inertia_1, inertia_2, inertia_3, hole_data, mirror_code, mirror_score, feature_version)
+                              (prefix_text, material_text, color_text, other_text, base_number, area, volume, edge_sum, inertia_1, inertia_2, inertia_3, hole_data, mirror_code, mirror_score, hole_mirror_score, feature_version)
                               VALUES
-                              (@prefix_text, @material_text, @color_text, @other_text, @base_number, @area, @volume, @edge_sum, @inertia_1, @inertia_2, @inertia_3, @hole_data, @mirror_code, @mirror_score, @feature_version);";
+                              (@prefix_text, @material_text, @color_text, @other_text, @base_number, @area, @volume, @edge_sum, @inertia_1, @inertia_2, @inertia_3, @hole_data, @mirror_code, @mirror_score, @hole_mirror_score, @feature_version);";
                         command.Parameters.AddWithValue("@prefix_text", record.PrefixText ?? string.Empty);
                         command.Parameters.AddWithValue("@material_text", record.MaterialText);
                         command.Parameters.AddWithValue("@color_text", record.ColorText);
@@ -1314,6 +1819,7 @@ namespace NS_Parrot
                         command.Parameters.AddWithValue("@hole_data", record.HoleData ?? string.Empty);
                         command.Parameters.AddWithValue("@mirror_code", record.MirrorCode ?? string.Empty);
                         command.Parameters.AddWithValue("@mirror_score", record.MirrorScore);
+                        command.Parameters.AddWithValue("@hole_mirror_score", record.HoleMirrorScore);
                         command.Parameters.AddWithValue("@feature_version", EntityFeatureClassifier.FeatureVersion);
                         inserted += command.ExecuteNonQuery();
                     }
@@ -1369,6 +1875,7 @@ namespace NS_Parrot
                         AND ABS(inertia_1 - @inertia_1) < 1e-9
                         AND ABS(inertia_2 - @inertia_2) < 1e-9
                         AND ABS(inertia_3 - @inertia_3) < 1e-9
+                        AND ABS(hole_mirror_score - @hole_mirror_score) < 1e-9
                         AND hole_data = @hole_data;";
                 command.Parameters.AddWithValue("@prefix_text", record.PrefixText ?? string.Empty);
                 command.Parameters.AddWithValue("@material_text", record.MaterialText);
@@ -1383,6 +1890,7 @@ namespace NS_Parrot
                 command.Parameters.AddWithValue("@inertia_2", record.Inertia2);
                 command.Parameters.AddWithValue("@inertia_3", record.Inertia3);
                 command.Parameters.AddWithValue("@hole_data", record.HoleData ?? string.Empty);
+                command.Parameters.AddWithValue("@hole_mirror_score", record.HoleMirrorScore);
                 command.Parameters.AddWithValue("@feature_version", EntityFeatureClassifier.FeatureVersion);
 
                 long count = Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
@@ -1428,9 +1936,11 @@ namespace NS_Parrot
 
         public double MirrorScore { get; private set; }
 
+        public double HoleMirrorScore { get; private set; }
+
         public string NormalizedMirrorCode { get; private set; } = string.Empty;
 
-        public static EntityFeature Create(string materialText, string colorText, string otherText, Brep geometry, List<EntityFeatureClassifier.ComparisonCriterion> activeCriteria, int index)
+        public static EntityFeature Create(string materialText, string colorText, string otherText, Brep geometry, bool preferSolidMoments, int index)
         {
             EntityFeature feature = new EntityFeature
             {
@@ -1440,7 +1950,7 @@ namespace NS_Parrot
                 OtherText = otherText ?? string.Empty
             };
 
-            if (!TryBuildFromBrep(geometry, activeCriteria, out ShapeData shapeData))
+            if (!TryBuildFromBrep(geometry, preferSolidMoments, out ShapeData shapeData))
                 throw new ArgumentException($"第 {index + 1} 个 Brep 实体无法分析。");
 
             feature.Area = shapeData.Area;
@@ -1465,10 +1975,8 @@ namespace NS_Parrot
                 feature.Inertia = inertia;
                 feature.MirrorScore = mirrorScore;
             }
-            feature.NormalizedMirrorCode = Math.Abs(feature.MirrorScore) < MirrorEpsilon ? string.Empty : (feature.MirrorScore >= 0.0 ? "A" : "B");
-
-            if (activeCriteria.Contains(EntityFeatureClassifier.ComparisonCriterion.Volume) && feature.Volume <= 0.0)
-                throw new ArgumentException($"第 {index + 1} 个实体无法计算有效体积，请输入封闭实体或取消“体积”条件。");
+            feature.HoleMirrorScore = shapeData.HoleMirrorScore;
+            feature.NormalizedMirrorCode = feature.MirrorCodeForTolerance(MirrorEpsilon);
 
             return feature;
         }
@@ -1476,8 +1984,7 @@ namespace NS_Parrot
         public bool MatchesBase(EntityFeature other, List<EntityFeatureClassifier.ComparisonCriterion> activeCriteria, double[] tolerances, Func<EntityFeatureClassifier.ComparisonCriterion, bool> useAbsoluteComparison)
         {
             if (!string.Equals(MaterialText, other.MaterialText, StringComparison.Ordinal) ||
-                !string.Equals(ColorText, other.ColorText, StringComparison.Ordinal) ||
-                !string.Equals(OtherText, other.OtherText, StringComparison.Ordinal))
+                !string.Equals(ColorText, other.ColorText, StringComparison.Ordinal))
                 return false;
 
             for (int i = 0; i < activeCriteria.Count; i++)
@@ -1485,6 +1992,13 @@ namespace NS_Parrot
                 double tolerance = EntityFeatureClassifier.ToleranceAt(tolerances, activeCriteria[i]);
                 switch (activeCriteria[i])
                 {
+                    case EntityFeatureClassifier.ComparisonCriterion.Length:
+                        if (!TryParseLength(OtherText, out double length) ||
+                            !TryParseLength(other.OtherText, out double otherLength) ||
+                            !WithinTolerance(length, otherLength, tolerance, useAbsoluteComparison(activeCriteria[i])))
+                            return false;
+                        break;
+
                     case EntityFeatureClassifier.ComparisonCriterion.Inertia:
                         if (!WithinTolerance(Inertia[0], other.Inertia[0], tolerance, useAbsoluteComparison(activeCriteria[i])) ||
                             !WithinTolerance(Inertia[1], other.Inertia[1], tolerance, useAbsoluteComparison(activeCriteria[i])) ||
@@ -1519,7 +2033,11 @@ namespace NS_Parrot
 
         public string MirrorCodeForTolerance(double mirrorTolerance)
         {
-            return Math.Abs(MirrorScore) <= Math.Abs(mirrorTolerance) ? string.Empty : (MirrorScore >= 0.0 ? "A" : "B");
+            double tolerance = Math.Abs(mirrorTolerance);
+            if (Math.Abs(HoleMirrorScore) > tolerance)
+                return HoleMirrorScore >= 0.0 ? "A" : "B";
+
+            return Math.Abs(MirrorScore) <= tolerance ? string.Empty : (MirrorScore >= 0.0 ? "A" : "B");
         }
 
         public string ToSummaryString(string prefixText, List<EntityFeatureClassifier.ComparisonCriterion> activeCriteria, string mirrorSide)
@@ -1529,13 +2047,16 @@ namespace NS_Parrot
                 string.Format(CultureInfo.InvariantCulture, "编号前缀={0}", prefixText ?? string.Empty),
                 string.Format(CultureInfo.InvariantCulture, "材质={0}", MaterialText),
                 string.Format(CultureInfo.InvariantCulture, "颜色={0}", ColorText),
-                string.Format(CultureInfo.InvariantCulture, "其它={0}", OtherText)
+                string.Format(CultureInfo.InvariantCulture, "长度={0}", OtherText)
             };
 
             foreach (EntityFeatureClassifier.ComparisonCriterion criterion in activeCriteria ?? new List<EntityFeatureClassifier.ComparisonCriterion>())
             {
                 switch (criterion)
                 {
+                    case EntityFeatureClassifier.ComparisonCriterion.Length:
+                        break;
+
                     case EntityFeatureClassifier.ComparisonCriterion.Inertia:
                         parts.Add(string.Format(CultureInfo.InvariantCulture, "惯量=({0:0.###},{1:0.###},{2:0.###})", Inertia[0], Inertia[1], Inertia[2]));
                         break;
@@ -1560,6 +2081,7 @@ namespace NS_Parrot
 
             parts.Add(string.Format(CultureInfo.InvariantCulture, "镜像侧={0}", mirrorSide ?? string.Empty));
             parts.Add(string.Format(CultureInfo.InvariantCulture, "镜像值={0:0.######}", MirrorScore));
+            parts.Add(string.Format(CultureInfo.InvariantCulture, "孔镜像值={0:0.######}", HoleMirrorScore));
             return string.Join("; ", parts);
         }
 
@@ -1578,12 +2100,19 @@ namespace NS_Parrot
             return useAbsolute ? WithinAbsolute(a, b, tolerance) : WithinPercent(a, b, tolerance);
         }
 
+        public static bool TryParseLength(string text, out double value)
+        {
+            text = (text ?? string.Empty).Trim();
+            return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value) ||
+                double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value);
+        }
+
         public static bool WithinAbsolute(double a, double b, double absoluteTolerance)
         {
             return Math.Abs(a - b) <= Math.Abs(absoluteTolerance);
         }
 
-        private static bool TryBuildFromBrep(Brep brep, List<EntityFeatureClassifier.ComparisonCriterion> activeCriteria, out ShapeData shapeData)
+        private static bool TryBuildFromBrep(Brep brep, bool preferSolidMoments, out ShapeData shapeData)
         {
             shapeData = null;
             if (brep == null)
@@ -1593,7 +2122,6 @@ namespace NS_Parrot
             if (areaProps == null)
                 return false;
 
-            bool useVolumeMoments = activeCriteria != null && activeCriteria.Contains(EntityFeatureClassifier.ComparisonCriterion.Volume);
             VolumeMassProperties volumeProps = VolumeMassProperties.Compute(brep, true, true, true, true);
             double volume = volumeProps?.Volume ?? 0.0;
 
@@ -1639,12 +2167,14 @@ namespace NS_Parrot
                 SamplePoints = points
             };
 
-            Point3d centroid;
-            double[] inertia;
-            Vector3d[] axes;
-            bool gotRhinoMoments = useVolumeMoments
-                ? TryGetVolumePrincipalInertia(volumeProps, out centroid, out inertia, out axes)
-                : TryGetAreaPrincipalInertia(areaProps, out centroid, out inertia, out axes);
+            Point3d centroid = Point3d.Unset;
+            double[] inertia = null;
+            Vector3d[] axes = null;
+            bool gotRhinoMoments = false;
+            if (preferSolidMoments)
+                gotRhinoMoments = TryGetVolumePrincipalInertia(volumeProps, out centroid, out inertia, out axes);
+            if (!gotRhinoMoments)
+                gotRhinoMoments = TryGetAreaPrincipalInertia(areaProps, out centroid, out inertia, out axes);
 
             if (gotRhinoMoments)
             {
@@ -1652,20 +2182,28 @@ namespace NS_Parrot
                 shapeData.RhinoCentroid = centroid;
                 shapeData.RhinoInertia = inertia;
                 shapeData.RhinoAxes = axes;
-                shapeData.HoleFeatures = ExtractHoleFeatures(brep, centroid, axes);
+                shapeData.HoleFeatures = ExtractHoleFeatures(brep, centroid, axes, out double holeMirrorScore);
+                shapeData.HoleMirrorScore = holeMirrorScore;
             }
 
             return true;
         }
 
-        private static List<HoleFeature> ExtractHoleFeatures(Brep brep, Point3d centroid, Vector3d[] axes)
+        private static List<HoleFeature> ExtractHoleFeatures(Brep brep, Point3d centroid, Vector3d[] axes, out double holeMirrorScore)
         {
+            holeMirrorScore = 0.0;
             int holeCount = 0;
             double perimeterSum = 0.0;
             double perimeterSquareSum = 0.0;
             double inertiaU = 0.0;
             double inertiaV = 0.0;
             double inertiaW = 0.0;
+            double signedV = 0.0;
+            double signedW = 0.0;
+            double signedUv = 0.0;
+            double signedUw = 0.0;
+            double signedScale = 0.0;
+            double maxAbsU = 0.0;
 
             if (brep == null || axes == null || axes.Length < 3)
                 return new List<HoleFeature>();
@@ -1711,6 +2249,7 @@ namespace NS_Parrot
                     double u = vector * axes[0];
                     double v = vector * axes[1];
                     double w = vector * axes[2];
+                    maxAbsU = Math.Max(maxAbsU, Math.Abs(u));
 
                     holeCount++;
                     perimeterSum += perimeter;
@@ -1718,11 +2257,18 @@ namespace NS_Parrot
                     inertiaU += perimeter * (v * v + w * w);
                     inertiaV += perimeter * (u * u + w * w);
                     inertiaW += perimeter * (u * u + v * v);
+                    signedV += perimeter * v;
+                    signedW += perimeter * w;
+                    signedUv += perimeter * u * v;
+                    signedUw += perimeter * u * w;
+                    signedScale += perimeter * Math.Sqrt(v * v + w * w);
                 }
             }
 
             if (holeCount == 0)
                 return new List<HoleFeature>();
+
+            holeMirrorScore = ComputeHoleMirrorScore(signedV, signedW, signedUv, signedUw, signedScale, maxAbsU);
 
             return new List<HoleFeature>
             {
@@ -1734,6 +2280,33 @@ namespace NS_Parrot
                     RadiusOfGyration(inertiaV, perimeterSum),
                     RadiusOfGyration(inertiaW, perimeterSum))
             };
+        }
+
+        private static double ComputeHoleMirrorScore(double signedV, double signedW, double signedUv, double signedUw, double signedScale, double maxAbsU)
+        {
+            if (signedScale <= Rhino.RhinoMath.ZeroTolerance)
+                return 0.0;
+
+            double[] candidates =
+            {
+                signedV / signedScale,
+                signedW / signedScale,
+                maxAbsU <= Rhino.RhinoMath.ZeroTolerance ? 0.0 : signedUv / (signedScale * maxAbsU),
+                maxAbsU <= Rhino.RhinoMath.ZeroTolerance ? 0.0 : signedUw / (signedScale * maxAbsU)
+            };
+
+            double best = 0.0;
+            foreach (double candidate in candidates)
+            {
+                if (Math.Abs(candidate) > Math.Abs(best))
+                    best = candidate;
+            }
+
+            if (best > 1.0)
+                return 1.0;
+            if (best < -1.0)
+                return -1.0;
+            return best;
         }
 
         private static double RadiusOfGyration(double inertia, double weight)
@@ -2075,19 +2648,30 @@ namespace NS_Parrot
 
         public static string ToStorageString(List<HoleFeature> holes)
         {
+            return ToStorageString(holes, 12);
+        }
+
+        public static string ToStorageString(List<HoleFeature> holes, int decimalPlaces)
+        {
             if (holes == null || holes.Count == 0)
                 return string.Empty;
 
+            decimalPlaces = Math.Max(0, Math.Min(12, decimalPlaces));
             HoleFeature hole = holes[0];
             return string.Format(
                 CultureInfo.InvariantCulture,
-                "{0},{1:R},{2:R},{3:R},{4:R},{5:R}",
+                "{0},{1},{2},{3},{4},{5}",
                 hole.Count,
-                hole.PerimeterSum,
-                hole.PerimeterRootSum,
-                hole.RadiusU,
-                hole.RadiusV,
-                hole.RadiusW);
+                RoundForStorage(hole.PerimeterSum, decimalPlaces).ToString("F" + decimalPlaces.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture),
+                RoundForStorage(hole.PerimeterRootSum, decimalPlaces).ToString("F" + decimalPlaces.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture),
+                RoundForStorage(hole.RadiusU, decimalPlaces).ToString("F" + decimalPlaces.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture),
+                RoundForStorage(hole.RadiusV, decimalPlaces).ToString("F" + decimalPlaces.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture),
+                RoundForStorage(hole.RadiusW, decimalPlaces).ToString("F" + decimalPlaces.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture));
+        }
+
+        private static double RoundForStorage(double value, int decimalPlaces)
+        {
+            return Math.Round(value, decimalPlaces, MidpointRounding.AwayFromZero);
         }
 
         public static List<HoleFeature> FromStorageString(string text)
@@ -2125,6 +2709,8 @@ namespace NS_Parrot
         public List<Point3d> SamplePoints { get; set; } = new List<Point3d>();
 
         public List<HoleFeature> HoleFeatures { get; set; } = new List<HoleFeature>();
+
+        public double HoleMirrorScore { get; set; }
 
         public Point3d RhinoCentroid { get; set; }
 

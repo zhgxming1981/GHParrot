@@ -9,6 +9,8 @@ namespace NS_Parrot
     {
         private uint _lastDocumentSerialNumber = 0;
         private string _lastDocumentPath = "";
+        private uint _lastOpenedDocumentSerialNumber = 0;
+        private string _lastOpenedFilePath = "";
 
         public CurrentRhinoDocument()
           : base("CurrentRhinoDocument", "当前文档",
@@ -16,7 +18,8 @@ namespace NS_Parrot
               "Parrot", "Rhino")
         {
             RhinoDoc.ActiveDocumentChanged += OnActiveDocumentChanged;
-            RhinoDoc.EndOpenDocument += OnActiveDocumentChanged;
+            RhinoDoc.EndOpenDocument += OnEndOpenDocument;
+            RhinoDoc.EndSaveDocument += OnActiveDocumentChanged;
         }
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
@@ -34,7 +37,7 @@ namespace NS_Parrot
             RhinoDoc activeDoc = RhinoDoc.ActiveDoc;
             _lastDocumentSerialNumber = activeDoc?.RuntimeSerialNumber ?? 0;
 
-            string fullPath = activeDoc?.Path ?? "";
+            string fullPath = GetCurrentDocumentPath(activeDoc);
             _lastDocumentPath = fullPath;
             string fileName = string.IsNullOrWhiteSpace(fullPath) ? "" : Path.GetFileName(fullPath);
 
@@ -45,7 +48,7 @@ namespace NS_Parrot
         private void OnActiveDocumentChanged(object sender, EventArgs e)
         {
             uint currentSerialNumber = RhinoDoc.ActiveDoc?.RuntimeSerialNumber ?? 0;
-            string currentPath = RhinoDoc.ActiveDoc?.Path ?? "";
+            string currentPath = GetCurrentDocumentPath(RhinoDoc.ActiveDoc);
 
             if (currentSerialNumber == _lastDocumentSerialNumber &&
                 string.Equals(currentPath, _lastDocumentPath, StringComparison.OrdinalIgnoreCase))
@@ -56,6 +59,34 @@ namespace NS_Parrot
             _lastDocumentSerialNumber = currentSerialNumber;
             _lastDocumentPath = currentPath;
 
+            ScheduleRefresh();
+        }
+
+        private void OnEndOpenDocument(object sender, DocumentOpenEventArgs e)
+        {
+            _lastOpenedDocumentSerialNumber = e?.DocumentSerialNumber ?? 0;
+            _lastOpenedFilePath = e?.FileName ?? "";
+            OnActiveDocumentChanged(sender, e);
+        }
+
+        private string GetCurrentDocumentPath(RhinoDoc activeDoc)
+        {
+            if (!string.IsNullOrWhiteSpace(activeDoc?.Path))
+                return activeDoc.Path;
+
+            uint currentSerialNumber = activeDoc?.RuntimeSerialNumber ?? 0;
+            if (currentSerialNumber != 0 &&
+                currentSerialNumber == _lastOpenedDocumentSerialNumber &&
+                !string.IsNullOrWhiteSpace(_lastOpenedFilePath))
+            {
+                return _lastOpenedFilePath;
+            }
+
+            return "";
+        }
+
+        private void ScheduleRefresh()
+        {
             GH_Document ghDocument = OnPingDocument();
             ghDocument?.ScheduleSolution(1, doc => ExpireSolution(false));
         }
@@ -63,7 +94,8 @@ namespace NS_Parrot
         public override void RemovedFromDocument(GH_Document document)
         {
             RhinoDoc.ActiveDocumentChanged -= OnActiveDocumentChanged;
-            RhinoDoc.EndOpenDocument -= OnActiveDocumentChanged;
+            RhinoDoc.EndOpenDocument -= OnEndOpenDocument;
+            RhinoDoc.EndSaveDocument -= OnActiveDocumentChanged;
             base.RemovedFromDocument(document);
         }
 

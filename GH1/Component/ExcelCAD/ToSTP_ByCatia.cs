@@ -8,6 +8,9 @@ namespace NS_Parrot
 {
     public class ToSTP_ByCatia : GH_Component
     {
+        private string _lastInputSignature;
+        private string _lastStatus;
+
         /// <summary>
         /// Initializes a new instance of the ToSTP_ByCatia class.
         /// </summary>
@@ -55,10 +58,17 @@ namespace NS_Parrot
             if (!DA.GetData(0, ref source))
                 return;
             DA.GetData(1, ref target);
+            string inputSignature = BuildInputSignature(source, target);
+            if (_lastInputSignature != inputSignature)
+            {
+                _lastInputSignature = inputSignature;
+                _lastStatus = null;
+            }
+
             DA.GetData(2, ref run);
             if (!run)
             {
-                DA.SetData(0, "未执行：转换开关未开启");
+                DA.SetData(0, _lastStatus ?? "未执行：转换开关未开启");
                 return;
             }
             if (!System.IO.Directory.Exists(source))
@@ -74,7 +84,8 @@ namespace NS_Parrot
                 {
                     const string message = "未执行：未检测到正在运行的 CATIA。请先启动 CATIA，再开启转换。";
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message);
-                    DA.SetData(0, message);
+                    _lastStatus = message;
+                    DA.SetData(0, _lastStatus);
                     return;
                 }
             }
@@ -144,7 +155,17 @@ namespace NS_Parrot
             //string logPath = Path.Combine(source, "转换日志.txt");
            
 
-            DA.SetData(0, $"完成：成功 {success}，失败 {fail}\n");
+            _lastStatus = $"完成：成功 {success}，失败 {fail}\n";
+            DA.SetData(0, _lastStatus);
+        }
+
+        private string BuildInputSignature(string source, string target)
+        {
+            return string.Join("|",
+                "SourceSources=" + Params.Input[0].Sources.Count,
+                "TargetSources=" + Params.Input[1].Sources.Count,
+                source ?? "",
+                target ?? "");
         }
 
 

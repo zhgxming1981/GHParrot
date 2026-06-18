@@ -36,8 +36,8 @@ namespace NS_Parrot
             RhinoDoc.DeleteRhinoObject += OnRhinoDocumentChanged;
             RhinoDoc.UndeleteRhinoObject += OnRhinoDocumentChanged;
             RhinoDoc.ReplaceRhinoObject += OnRhinoDocumentChanged;
-            RhinoDoc.ModifyObjectAttributes += OnRhinoDocumentChanged;
-            RhinoDoc.LayerTableEvent += OnRhinoDocumentChanged;
+            RhinoDoc.ModifyObjectAttributes += OnRhinoObjectAttributesChanged;
+            RhinoDoc.LayerTableEvent += OnRhinoLayerTableEvent;
             RhinoDoc.ActiveDocumentChanged += OnRhinoDocumentChanged;
             RhinoDoc.EndOpenDocument += OnRhinoDocumentChanged;
         }
@@ -251,6 +251,51 @@ namespace NS_Parrot
             ScheduleRefresh();
         }
 
+        private void OnRhinoObjectAttributesChanged(object sender, Rhino.DocObjects.RhinoModifyObjectAttributesEventArgs e)
+        {
+            int oldLayerIndex = e?.OldAttributes?.LayerIndex ?? -1;
+            int newLayerIndex = e?.NewAttributes?.LayerIndex ?? -1;
+
+            if (oldLayerIndex == newLayerIndex)
+                return;
+
+            OnRhinoDocumentChanged(sender, e);
+        }
+
+        private void OnRhinoLayerTableEvent(object sender, Rhino.DocObjects.Tables.LayerTableEventArgs e)
+        {
+            if (!LayerTableChangeAffectsSelection(e))
+                return;
+
+            OnRhinoDocumentChanged(sender, e);
+        }
+
+        private static bool LayerTableChangeAffectsSelection(Rhino.DocObjects.Tables.LayerTableEventArgs e)
+        {
+            if (e == null)
+                return false;
+
+            switch (e.EventType)
+            {
+                case Rhino.DocObjects.Tables.LayerTableEventType.Added:
+                case Rhino.DocObjects.Tables.LayerTableEventType.Deleted:
+                case Rhino.DocObjects.Tables.LayerTableEventType.Undeleted:
+                    return true;
+
+                case Rhino.DocObjects.Tables.LayerTableEventType.Modified:
+                    Layer oldLayer = e.OldState;
+                    Layer newLayer = e.NewState;
+                    if (oldLayer == null || newLayer == null)
+                        return true;
+
+                    return !string.Equals(oldLayer.Name, newLayer.Name, StringComparison.OrdinalIgnoreCase) ||
+                        oldLayer.ParentLayerId != newLayer.ParentLayerId;
+
+                default:
+                    return false;
+            }
+        }
+
         private void ScheduleRefresh()
         {
             if (_refreshScheduled)
@@ -303,8 +348,8 @@ namespace NS_Parrot
             RhinoDoc.DeleteRhinoObject -= OnRhinoDocumentChanged;
             RhinoDoc.UndeleteRhinoObject -= OnRhinoDocumentChanged;
             RhinoDoc.ReplaceRhinoObject -= OnRhinoDocumentChanged;
-            RhinoDoc.ModifyObjectAttributes -= OnRhinoDocumentChanged;
-            RhinoDoc.LayerTableEvent -= OnRhinoDocumentChanged;
+            RhinoDoc.ModifyObjectAttributes -= OnRhinoObjectAttributesChanged;
+            RhinoDoc.LayerTableEvent -= OnRhinoLayerTableEvent;
             RhinoDoc.ActiveDocumentChanged -= OnRhinoDocumentChanged;
             RhinoDoc.EndOpenDocument -= OnRhinoDocumentChanged;
             base.RemovedFromDocument(document);

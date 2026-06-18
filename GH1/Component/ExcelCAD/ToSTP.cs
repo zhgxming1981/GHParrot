@@ -5,132 +5,394 @@ using Rhino;
 using Rhino.DocObjects;
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.IO;
+using System.Windows.Forms;
 
 namespace NS_Parrot
 {
     public class ToSTP : GH_Component
     {
-        /// <summary>
-        /// Initializes a new instance of the ToSTP class.
-        /// </summary>
+        private string _lastInputSignature;
+        private string _lastStatus;
+        private string _pendingRhinoFilePath;
+        private bool _waitingForGuidStable;
+        private bool _runRequested;
+        private bool _lastRunInput;
+        private int _refreshAttemptCount;
+        private int _lastGuidCount = -1;
+        private int _stableGuidCount;
+        private int _guidCheckCount;
+        private Timer _refreshTimer;
+
         public ToSTP()
           : base("ToSTP", "存为Stp",
-              "存为Stp，并用Catia打开",
+              "存为Stp，并由Catia打开",
               "Parrot", "ExcelCAD")
         {
         }
 
-        /// <summary>
-        /// Registers all the input parameters for this component.
-        /// </summary>
-        protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
+        protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
+            pManager.AddTextParameter("文件路径", "文件路径", "需要先打开的Rhino文件路径。不接时按当前文档导出。", GH_ParamAccess.item);
             pManager.AddGenericParameter("Guid", "Guid", "几何体", GH_ParamAccess.list);
-            pManager.AddTextParameter("路径", "路径", "输出路径", GH_ParamAccess.list);
-            //pManager.AddTextParameter("文件名", "文件名", "文件名", GH_ParamAccess.list);
-            pManager.AddBooleanParameter("STP", "STP", "导出为stp格式", GH_ParamAccess.item);
-            //pManager.AddBooleanParameter("CAT", "CAT", "在CATIA中打开", GH_ParamAccess.item, false);
-            //pManager.AddBooleanParameter("Run", "Run", "Run", GH_ParamAccess.item);
-            //pManager[3].Optional = true;
-            //pManager[4].Optional = true;
+            pManager.AddTextParameter("保存路径", "保存路径", "STP保存路径", GH_ParamAccess.list);
+            pManager.AddIntegerParameter("等待毫秒", "等待毫秒", "打开Rhino文件后等待Pipeline刷新的时间", GH_ParamAccess.item, 1500);
+            pManager.AddBooleanParameter("执行", "执行", "导出为stp格式", GH_ParamAccess.item, false);
+
+            pManager[0].Optional = true;
+            pManager[1].Optional = true;
+            pManager[2].Optional = true;
+            pManager[3].Optional = true;
         }
 
-        /// <summary>
-        /// Registers all the output parameters for this component.
-        /// </summary>
-        protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
+        protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
+            pManager.AddTextParameter("Status", "Status", "导出状态", GH_ParamAccess.item);
         }
 
-        /// <summary>
-        /// This is the method that actually does the work.
-        /// </summary>
-        /// <param name="DA">The DA object is used to retrieve from inputs and store in outputs.</param>
         protected override void SolveInstance(IGH_DataAccess DA)
+        {
+            try
+            {
+                SolveInstanceCore(DA);
+            }
+            catch (Exception ex)
+            {
+                StopRefreshTimer();
+                _waitingForGuidStable = false;
+                _runRequested = false;
+                _lastStatus = "异常：" + ex.Message;
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, _lastStatus);
+                DA.SetData(0, _lastStatus);
+            }
+        }
+
+        private void SolveInstanceCore(IGH_DataAccess DA)
         {
             if (!CHardware.CheckLegality())
                 return;
 
-            List<GH_Guid> guid_list = new List<GH_Guid>();
-            if (!DA.GetDataList(0, guid_list)) { return; }
+            string rhinoFilePath = "";
+            DA.GetData(0, ref rhinoFilePath);
+            rhinoFilePath = NormalizePath(rhinoFilePath);
 
+            int waitMilliseconds = 1500;
+            DA.GetData(3, ref waitMilliseconds);
+            waitMilliseconds = Math.Max(0, waitMilliseconds);
 
-            List<string> fileName = new List<string>();
-            if (!DA.GetDataList(1,  fileName)) { return; }
+            bool run = false;
+            DA.GetData(4, ref run);
+            bool runRisingEdge = run && !_lastRunInput;
+            _lastRunInput = run;
 
-            bool flag_stp = true;
-            if (!DA.GetData(2, ref flag_stp)) { return; }
+            List<GH_Guid> guidList = new List<GH_Guid>();
+            bool hasGuidList = DA.GetDataList(1, guidList);
 
-            if (!flag_stp) { return; }
+            List<string> savePaths = new List<string>();
+            bool hasSavePaths = DA.GetDataList(2, savePaths);
 
-
-            Rhino.RhinoDoc doc = Rhino.RhinoDoc.ActiveDoc;
-            Rhino.RhinoApp.SetFocusToMainWindow();//获得焦点
-            for (int i = 0; i < guid_list.Count; i++)
+            string inputSignature = BuildInputSignature(rhinoFilePath, guidList, savePaths, waitMilliseconds);
+            if (_lastInputSignature != inputSignature)
             {
-                RhinoObject rh_obj = doc.Objects.FindId(guid_list[i].Value);
-                if (rh_obj == null) continue; // 跳过无效对象
-
-                // 取消所有选择并选择当前对象
-                doc.Objects.UnselectAll();
-                rh_obj.Select(true, true);
-
-                // 确保文件名有 .stp 扩展
-                string exportPath = fileName[i];
-                if (Path.GetExtension(exportPath).ToLower() != ".stp")
-                    exportPath = Path.ChangeExtension(exportPath, ".stp");
-
-                // 检查路径是否存在，如果不存在就创建
-                string dir = Path.GetDirectoryName(exportPath);
-                if (!Directory.Exists(dir))
-                    Directory.CreateDirectory(dir);
-
-                //提前发送空格，用于回答Rhino命令行提问
-                Rhino.RhinoApp.SendKeystrokes(" ", true);
-
-
-                 // 导出选中对象
-                bool success = doc.ExportSelected(exportPath);
-                if (!success)
+                _lastInputSignature = inputSignature;
+                if (!_waitingForGuidStable)
                 {
-                    RhinoApp.WriteLine($"导出失败: {exportPath}");
-                    //this.AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, $"导出失败: {exportPath}");
+                    _runRequested = false;
+                    _lastStatus = null;
                 }
             }
-            //foreach (GH_Guid guid in guid_list)
-            //{
-            //    doc.Objects.UnselectAll();
-            //    RhinoObject rh_obj = doc.Objects.FindId(guid.Value);
-            //    rh_obj.Select(true, true);
-            //    string str_ext = fileName[i].Substring(fileName[i].Length - 4, 4);
-            //    if (str_ext != ".stp")//如果后缀不是.stp就增加后缀
-            //    {
-            //        fileName[i] += ".stp";
-            //    }
 
-            //    Rhino.RhinoApp.SendKeystrokes(" ", true);//提前发送空格
-            //    doc.ExportSelected(fileName[i]);
-            //    i++;
-            //}
+            if (runRisingEdge)
+            {
+                StopRefreshTimer();
+                _runRequested = true;
+                _waitingForGuidStable = false;
+                _refreshAttemptCount = 0;
+                ResetGuidStability();
+                _pendingRhinoFilePath = rhinoFilePath;
+                _lastStatus = null;
+            }
+
+            if (!_runRequested && !_waitingForGuidStable)
+            {
+                DA.SetData(0, _lastStatus ?? $"未执行：执行={run}，执行端接线数={Params.Input[4].Sources.Count}");
+                return;
+            }
+
+            if (_runRequested && !string.IsNullOrWhiteSpace(_pendingRhinoFilePath) && !_waitingForGuidStable)
+            {
+                if (!File.Exists(_pendingRhinoFilePath))
+                {
+                    _runRequested = false;
+                    _lastStatus = $"未执行：Rhino文件不存在。文件：{_pendingRhinoFilePath}";
+                    DA.SetData(0, _lastStatus);
+                    return;
+                }
+
+                if (!IsActiveRhinoFile(_pendingRhinoFilePath))
+                {
+                    _lastStatus = "正在关闭当前文件并打开：" + _pendingRhinoFilePath;
+                    DA.SetData(0, _lastStatus);
+
+                    string openDiagnostics;
+                    if (!CloseCurrentFileAndOpen(_pendingRhinoFilePath, out openDiagnostics))
+                    {
+                        _runRequested = false;
+                        _lastStatus = $"未执行：Rhino文件打开失败。{openDiagnostics}";
+                        DA.SetData(0, _lastStatus);
+                        return;
+                    }
+                }
+
+                _waitingForGuidStable = true;
+                _refreshAttemptCount = 0;
+                ResetGuidStability();
+                _lastStatus = "已打开文件，等待Guid刷新稳定";
+                ScheduleRefresh(waitMilliseconds);
+                DA.SetData(0, _lastStatus);
+                return;
+            }
+
+            if (_waitingForGuidStable)
+            {
+                int guidCount = hasGuidList ? guidList.Count : 0;
+                if (!IsGuidCountStable(guidCount))
+                {
+                    if (_guidCheckCount >= 20)
+                    {
+                        _waitingForGuidStable = false;
+                        _runRequested = false;
+                        _lastStatus = $"未执行：Guid数量未稳定。最后数量 {guidCount}，检测 {_guidCheckCount}/20。";
+                        DA.SetData(0, _lastStatus);
+                        return;
+                    }
+
+                    _lastStatus = $"等待Guid稳定：当前 {guidCount} 个，稳定 {_stableGuidCount}/3，检测 {_guidCheckCount}/20";
+                    ScheduleRefresh(500);
+                    DA.SetData(0, _lastStatus);
+                    return;
+                }
+            }
+
+            if (!hasGuidList || !hasSavePaths)
+            {
+                if (_waitingForGuidStable && _refreshAttemptCount < 3)
+                {
+                    _refreshAttemptCount++;
+                    _lastStatus = "等待刷新：尚未获得Guid或保存路径";
+                    ScheduleRefresh(Math.Max(300, waitMilliseconds));
+                    DA.SetData(0, _lastStatus);
+                    return;
+                }
+
+                _waitingForGuidStable = false;
+                _runRequested = false;
+                _lastStatus = "未执行：缺少Guid或保存路径";
+                DA.SetData(0, _lastStatus);
+                return;
+            }
+
+            ExportCurrentDocument(guidList, savePaths, out int success, out int fail);
+
+            _waitingForGuidStable = false;
+            _runRequested = false;
+            _refreshAttemptCount = 0;
+
+            string fileName = string.IsNullOrWhiteSpace(_pendingRhinoFilePath)
+                ? Path.GetFileName(RhinoDoc.ActiveDoc?.Path ?? "")
+                : Path.GetFileName(_pendingRhinoFilePath);
+
+            if (string.IsNullOrWhiteSpace(fileName))
+                fileName = "当前文档";
+
+            _lastStatus = $"当前文件：{fileName}；处理成功 {success}，失败 {fail}。";
+            DA.SetData(0, _lastStatus);
         }
 
-        /// <summary>
-        /// Provides an Icon for the component.
-        /// </summary>
-        protected override System.Drawing.Bitmap Icon
+        private void ExportCurrentDocument(List<GH_Guid> guidList, List<string> savePaths, out int success, out int fail)
         {
-            get
+            RhinoDoc doc = RhinoDoc.ActiveDoc;
+            RhinoApp.SetFocusToMainWindow();
+
+            success = 0;
+            fail = 0;
+            for (int i = 0; i < guidList.Count; i++)
             {
-                //You can add image files to your project resources and access them like this:
-                // return Resources.IconForThisComponent;
-                return GeneratedIcon.Get("gen_ToSTP");
+                RhinoObject rhinoObject = doc?.Objects.FindId(guidList[i].Value);
+                if (rhinoObject == null)
+                {
+                    fail++;
+                    continue;
+                }
+
+                if (i >= savePaths.Count)
+                {
+                    fail++;
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "保存路径数量少于实体数量");
+                    continue;
+                }
+
+                string exportPath = savePaths[i];
+                if (string.IsNullOrWhiteSpace(exportPath))
+                {
+                    fail++;
+                    continue;
+                }
+
+                if (!string.Equals(Path.GetExtension(exportPath), ".stp", StringComparison.OrdinalIgnoreCase))
+                    exportPath = Path.ChangeExtension(exportPath, ".stp");
+
+                string directory = Path.GetDirectoryName(exportPath);
+                if (!string.IsNullOrWhiteSpace(directory) && !Directory.Exists(directory))
+                    Directory.CreateDirectory(directory);
+
+                doc.Objects.UnselectAll();
+                rhinoObject.Select(true, true);
+                RhinoApp.SendKeystrokes(" ", true);
+
+                if (doc.ExportSelected(exportPath))
+                {
+                    success++;
+                }
+                else
+                {
+                    fail++;
+                    RhinoApp.WriteLine($"导出失败: {exportPath}");
+                }
             }
         }
 
-        /// <summary>
-        /// Gets the unique ID for this component. Do not change this ID after release.
-        /// </summary>
+        private string BuildInputSignature(string rhinoFilePath, List<GH_Guid> guidList, List<string> savePaths, int waitMilliseconds)
+        {
+            List<string> parts = new List<string>();
+            parts.Add("RhinoFileSources=" + Params.Input[0].Sources.Count);
+            parts.Add("RhinoFile=" + (rhinoFilePath ?? ""));
+            parts.Add("GuidSources=" + Params.Input[1].Sources.Count);
+            parts.Add("PathSources=" + Params.Input[2].Sources.Count);
+            parts.Add("Wait=" + waitMilliseconds);
+            parts.Add("GuidCount=" + guidList.Count);
+            for (int i = 0; i < guidList.Count; i++)
+                parts.Add(guidList[i].Value.ToString());
+
+            parts.Add("PathCount=" + savePaths.Count);
+            for (int i = 0; i < savePaths.Count; i++)
+                parts.Add(savePaths[i] ?? "");
+
+            return string.Join("|", parts);
+        }
+
+        private void ResetGuidStability()
+        {
+            _lastGuidCount = -1;
+            _stableGuidCount = 0;
+            _guidCheckCount = 0;
+        }
+
+        private bool IsGuidCountStable(int guidCount)
+        {
+            _guidCheckCount++;
+            if (guidCount == _lastGuidCount)
+            {
+                _stableGuidCount++;
+            }
+            else
+            {
+                _lastGuidCount = guidCount;
+                _stableGuidCount = 1;
+            }
+
+            return _stableGuidCount >= 3;
+        }
+
+        private void ScheduleRefresh(int waitMilliseconds)
+        {
+            StopRefreshTimer();
+
+            _refreshTimer = new Timer();
+            _refreshTimer.Interval = Math.Max(1, waitMilliseconds);
+            _refreshTimer.Tick += (sender, e) =>
+            {
+                StopRefreshTimer();
+                ExpireSolution(true);
+            };
+            _refreshTimer.Start();
+        }
+
+        private void StopRefreshTimer()
+        {
+            if (_refreshTimer == null)
+                return;
+
+            _refreshTimer.Stop();
+            _refreshTimer.Dispose();
+            _refreshTimer = null;
+        }
+
+        public override void RemovedFromDocument(GH_Document document)
+        {
+            StopRefreshTimer();
+            base.RemovedFromDocument(document);
+        }
+
+        private bool CloseCurrentFileAndOpen(string filePath, out string diagnostics)
+        {
+            diagnostics = "";
+            RhinoDoc currentDoc = RhinoDoc.ActiveDoc;
+            if (currentDoc != null)
+            {
+                currentDoc.Modified = false;
+                RhinoApp.RunScript("_-Close _No", false);
+                RhinoApp.Wait();
+            }
+
+            string escapedPath = filePath.Replace("\"", "\"\"");
+            bool commandResult = RhinoApp.RunScript("_-Open \"" + escapedPath + "\"", false);
+            if (!commandResult)
+            {
+                diagnostics = $"命令返回False。文件存在={File.Exists(filePath)}，当前文档={NormalizePath(RhinoDoc.ActiveDoc?.Path)}";
+                return false;
+            }
+
+            RhinoApp.Wait();
+            if (!IsActiveRhinoFile(filePath))
+            {
+                diagnostics = $"命令已执行但当前文档未切换。目标={filePath}，当前文档={NormalizePath(RhinoDoc.ActiveDoc?.Path)}";
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool IsActiveRhinoFile(string filePath)
+        {
+            RhinoDoc doc = RhinoDoc.ActiveDoc;
+            if (doc == null)
+                return false;
+
+            return string.Equals(NormalizePath(doc.Path), NormalizePath(filePath), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private string NormalizePath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return "";
+
+            try
+            {
+                return Path.GetFullPath(path.Trim());
+            }
+            catch
+            {
+                return path.Trim();
+            }
+        }
+
+        protected override Bitmap Icon
+        {
+            get { return GeneratedIcon.Get("gen_ToSTP"); }
+        }
+
         public override Guid ComponentGuid
         {
             get { return new Guid("53E7F888-77FF-47ED-A2A4-8EEF454BB559"); }
