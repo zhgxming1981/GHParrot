@@ -105,6 +105,43 @@ namespace NS_Parrot
             return bitmap;
         }
 
+        public static Bitmap GetSectionMake2DV2()
+        {
+            Bitmap bitmap = CreateCanvas();
+            using (Graphics graphics = Graphics.FromImage(bitmap))
+            using (Pen outlinePen = new Pen(Color.FromArgb(42, 42, 42), 1.6f))
+            using (Pen sectionPen = new Pen(Color.FromArgb(230, 92, 36), 2.4f))
+            using (Pen drawingPen = new Pen(Color.FromArgb(32, 145, 205), 2.0f))
+            using (SolidBrush planeBrush = new SolidBrush(Color.FromArgb(72, 230, 92, 36)))
+            {
+                ConfigureGraphics(graphics);
+
+                PointF[] solid =
+                {
+                    new PointF(4, 7), new PointF(11, 3), new PointF(19, 6),
+                    new PointF(19, 14), new PointF(12, 18), new PointF(4, 15)
+                };
+                graphics.DrawPolygon(outlinePen, solid);
+                graphics.DrawLine(outlinePen, 4, 7, 12, 10);
+                graphics.DrawLine(outlinePen, 12, 10, 19, 6);
+                graphics.DrawLine(outlinePen, 12, 10, 12, 18);
+
+                PointF[] cuttingPlane =
+                {
+                    new PointF(8, 3), new PointF(14, 5), new PointF(14, 19), new PointF(8, 17)
+                };
+                graphics.FillPolygon(planeBrush, cuttingPlane);
+                graphics.DrawLine(sectionPen, 9, 3, 9, 19);
+                DrawArrow(graphics, sectionPen, 9, 18, 5, 21);
+
+                graphics.DrawLine(drawingPen, 14, 18, 21, 18);
+                graphics.DrawLine(drawingPen, 14, 21, 21, 21);
+                graphics.DrawLine(drawingPen, 18, 15, 21, 18);
+            }
+
+            return bitmap;
+        }
+
         private static Bitmap CreateCanvas()
         {
             Bitmap bitmap = new Bitmap(24, 24);

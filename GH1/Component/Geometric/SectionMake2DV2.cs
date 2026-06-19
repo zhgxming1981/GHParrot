@@ -66,7 +66,7 @@ namespace NS_Parrot
             pManager.AddGenericParameter("对象", "G", "要剖切并参与 Make2D 投影的几何对象。支持 Brep、Surface、Curve、Rhino 块、GH 块或 Rhino 对象 Guid。输出树的第二层对象序号与此输入列表顺序一致。", GH_ParamAccess.list);
             pManager.AddGenericParameter("参照", "R", "可选参照对象，用于下游定位。参照会和普通对象一起参与剖切与 Make2D 投影，并作为对象序号的最后一项输出；不输入时自动使用输入对象的世界 XY 轴向包围盒作为参照。", GH_ParamAccess.list);
             pManager.AddGenericParameter("剖切位置", "L", "XY 平面上的剖切位置线。可输入 Line 或直线 Curve；线方向作为剖面水平展开方向，剖切面竖向方向为世界 Z 轴。", GH_ParamAccess.list);
-            pManager.AddTextParameter("剖切号", "N", "每条剖切位置线对应的剖切号。可输入 A、B、C 或 1、2、3 等文字；为空时自动生成。", GH_ParamAccess.list);
+            pManager.AddTextParameter("剖切号", "N", "每条剖切位置线对应的剖切号，可为空。空值自动命名规则：接近 X 轴的剖切线忽略线方向，按线中点的 Y 坐标从大到小排序，即从上到下依次命名为 1、2、3……；接近 Y 轴的剖切线忽略线方向，按线中点的 X 坐标从小到大排序，即从左到右依次命名为 A、B、C……。当 |ΔX| ≥ |ΔY| 时视为接近 X 轴，否则视为接近 Y 轴。非空名称保持用户输入。", GH_ParamAccess.list);
             pManager.AddNumberParameter("剖切深度", "VD", "从剖切面开始沿剖切方向参与投影的深度。小于等于 0 时不限制深度。", GH_ParamAccess.item, DefaultViewDepth);
             pManager.AddNumberParameter("预览间距", "PD", "剖面结果自动放到输入对象包围盒外侧时使用的最小预览净距，也用于相邻剖面预览结果之间的净距。为空或小于等于 0 时自动按模型尺寸取默认值。", GH_ParamAccess.item, DefaultPreviewGap);
             pManager.AddBooleanParameter("执行", "Run", "从 False 切换到 True 时重新计算；保持 False 时输出上一次缓存。右键线型过滤只筛选缓存结果，不重新执行耗时 Make2D。", GH_ParamAccess.item, false);
@@ -109,11 +109,12 @@ namespace NS_Parrot
             pManager.AddCurveParameter("隐藏线", "Hid", "由筛选后的可投影对象、参考对象、裁剪平面 C 和本剖面共用的 Parallel View 生成，并按右键“隐藏线类型”过滤。路径为 {剖切号序号; 对象序号}。", GH_ParamAccess.tree);
             pManager.AddTextParameter("隐藏线类型", "Ht", "与“隐藏线”一一对应的 Make2D 隐藏线类型文字；被右键过滤掉的隐藏线类型不会输出。", GH_ParamAccess.tree);
             pManager.AddTextParameter("剖切号", "N", "实际使用的剖切号列表。列表顺序与输出树第一层剖切号序号一一对应，用于还原 A、B、C 或 1、2、3 等原始剖切号。", GH_ParamAccess.list);
-            pManager.AddTextParameter("诊断信息", "Log", "本次计算过程、输入解析、剖面去重、Make2D 端口识别、线型过滤数量、警告和错误信息。", GH_ParamAccess.list);
             pManager.AddGeometryParameter("归零对象", "G0", "输入物体和参考物体按包围盒中心平移到原点后的中间几何。路径为 {剖切号序号; 对象序号}。", GH_ParamAccess.tree);
-            pManager.AddCurveParameter("归零剖切线", "L0", "与物体使用相同平移向量移动后的剖切线。路径为 {剖切号序号}。", GH_ParamAccess.tree);
+            pManager.AddTextParameter("诊断信息", "Log", "本次计算过程、自动剖切号、归零剖切线起终点、视图矩形中心与边长及其平面、切平面、Make2D 端口识别、线型过滤数量、警告和错误信息。", GH_ParamAccess.list);
+            pManager.AddCurveParameter("归零剖切线", "L0", "与输入物体使用相同归零平移向量移动后的剖切线。路径为 {剖切号序号}。", GH_ParamAccess.tree);
             pManager.AddRectangleParameter("视图矩形", "VR", "用于建立 Make2D Parallel View 的矩形。路径为 {剖切号序号}。", GH_ParamAccess.tree);
             pManager.AddGenericParameter("Parallel View", "PV", "Parallel View 组件生成的视图对象。路径为 {剖切号序号}。", GH_ParamAccess.tree);
+            pManager.AddPlaneParameter("切平面", "CP", "实际同时用于 Brep 求交生成 SecS 和送入 Make2D 裁剪端口 C 的切平面。路径为 {剖切号序号}。", GH_ParamAccess.tree);
             if (DateTime.Now.Ticks >= 0)
                 return;
             ;
@@ -175,7 +176,8 @@ namespace NS_Parrot
                 List<string> newValidation = new List<string>();
                 List<Line> newSectionLines = ParseSectionLines(newSectionLineGoo, newValidation);
                 double newTolerance = RhinoDoc.ActiveDoc?.ModelAbsoluteTolerance ?? 0.001;
-                UpdatePreviewSections(newSectionLines, newSectionNames, newValidation, newTolerance);
+                List<string> resolvedSectionNames = ResolveSectionNames(newSectionLines, newSectionNames);
+                UpdatePreviewSections(newSectionLines, resolvedSectionNames, newValidation, newTolerance);
                 bool newButtonRun = ButtonRun;
                 ButtonRun = false;
                 bool newShouldRun = newButtonRun || (newRun && !_lastRun);
@@ -195,7 +197,7 @@ namespace NS_Parrot
 
                 if (!newShouldRun)
                 {
-                    UpdateCachedNames(_cache, newSectionNames);
+                    UpdateCachedNames(_cache, resolvedSectionNames);
                     if (_cache.Diagnostics.Count == 0)
                     {
                         _cache.Diagnostics.Add("尚未执行：请将 Run 从 False 切换到 True，或单击 Run 按钮。");
@@ -236,7 +238,7 @@ namespace NS_Parrot
 
                 try
                 {
-                    _cache = Compute(newInputObjects, newReferenceObjects, newSectionLines, newSectionNames, newViewDepth, newPreviewGap, newTolerance);
+                    _cache = Compute(newInputObjects, newReferenceObjects, newSectionLines, resolvedSectionNames, newViewDepth, newPreviewGap, newTolerance);
                     _geometryInputSignature = newGeometrySignature;
                     SetOutputs(DA, _cache);
                 }
@@ -411,6 +413,11 @@ namespace NS_Parrot
                     : Vector3d.Zero;
                 result.Diagnostics.Add("剖面 " + section.Name + "：归零平移向量 " + FormatVector(localizationMove) + "。");
                 AppendLocalizedDebugGeometry(result, i, projectionContext.Source, projectionSection.Line);
+                result.ClippingPlanes.Append(new GH_Plane(projectionSection.Plane), new GH_Path(i));
+                result.Diagnostics.Add("剖面 " + section.Name + "：归零剖切线起点 " + FormatPoint(projectionSection.Line.From) +
+                    "，终点 " + FormatPoint(projectionSection.Line.To) + "。");
+                result.Diagnostics.Add("剖面 " + section.Name + "：切平面 " + FormatPlane(projectionSection.Plane) + "。");
+                BoundingBox localizedSourceBox = GetSourceBoundingBox(projectionContext.Source);
 
                 GH_Path sectionPath = new GH_Path(i);
                 InitializeObjectBranches(result, sectionPath, result.OutputObjectCount, _keepEmptyBranches);
@@ -430,16 +437,21 @@ namespace NS_Parrot
                 {
                     if (viewContext == null)
                     {
-                        result.Layouts.Add(new SectionLayoutInfo(sourceBox, BoundingBox.Empty, BoundingBox.Empty, BoundingBox.Empty, section.ViewDirection));
+                        result.Layouts.Add(new SectionLayoutInfo(localizedSourceBox, BoundingBox.Empty, BoundingBox.Empty, BoundingBox.Empty, section.ViewDirection, projectionContext.LocalizationCenter));
                         result.Names.Add(section.Name);
                         continue;
                     }
 
+                    Rectangle3d viewRectangle = viewContext.ViewRectangle;
                     AppendViewDebugData(result, i, viewContext);
+                    result.Diagnostics.Add("剖面 " + section.Name + "：视图矩形中心 " + FormatPoint(viewRectangle.Center) +
+                        "，边长 X=" + FormatDouble(viewRectangle.Width) +
+                        "，Y=" + FormatDouble(viewRectangle.Height) +
+                        "，建立平面 " + FormatPlane(viewRectangle.Plane) + "。");
 
                     BoundingBox directReferenceBox;
                     BoundingBox directSectionBox = AddDirectSectionSurfaces(
-                        result, i, sectionSource, sectionPoints, viewContext.ViewRectangle.Plane, tolerance, out directReferenceBox);
+                        result, i, sectionSource, sectionPoints, projectionSection, tolerance, out directReferenceBox);
 
                     List<Curve> visible = new List<Curve>();
                     List<int> visibleIndex = new List<int>();
@@ -456,12 +468,12 @@ namespace NS_Parrot
 
                     BoundingBox drawingBox = GetCurveBoundingBox(visible, hidden);
                     UnionBoundingBox(ref drawingBox, directSectionBox);
-                    BoundingBox referenceSourceBox = GetSourceBoundingBox(source.Where(item => item.IsReference).ToList());
+                    BoundingBox referenceSourceBox = GetSourceBoundingBox(projectionContext.Source.Where(item => item.IsReference).ToList());
                     BoundingBox referenceDrawingBox = GetIndexedCurveBoundingBox(result.ReferenceObjectIndex,
                         visible, visibleIndex, hidden, hiddenIndex,
                         new List<Curve>(), new List<int>(), new List<Curve>(), new List<int>());
                     UnionBoundingBox(ref referenceDrawingBox, directReferenceBox);
-                    result.Layouts.Add(new SectionLayoutInfo(sourceBox, drawingBox, referenceSourceBox, referenceDrawingBox, section.ViewDirection));
+                    result.Layouts.Add(new SectionLayoutInfo(localizedSourceBox, drawingBox, referenceSourceBox, referenceDrawingBox, section.ViewDirection, projectionContext.LocalizationCenter));
                 }
 
                 result.Names.Add(section.Name);
@@ -485,9 +497,7 @@ namespace NS_Parrot
                     ElementPath(sectionIndex, item.Index, NextCounter(counters, item.Index)));
             }
 
-            cache.LocalizedSectionLines.Append(
-                new GH_Curve(new LineCurve(sectionLine)),
-                new GH_Path(sectionIndex));
+            cache.LocalizedSectionLines.Append(new GH_Curve(new LineCurve(sectionLine)), new GH_Path(sectionIndex));
         }
 
         private static void AppendViewDebugData(SectionCache cache, int sectionIndex,
@@ -695,14 +705,71 @@ namespace NS_Parrot
                 cache.Names[i] = i < names.Count && !string.IsNullOrWhiteSpace(names[i]) ? names[i] : (i + 1).ToString();
         }
 
+        private static List<string> ResolveSectionNames(List<Line> lines, List<string> names)
+        {
+            List<string> result = Enumerable.Repeat(string.Empty, lines.Count).ToList();
+            List<int> horizontal = new List<int>();
+            List<int> vertical = new List<int>();
+
+            for (int i = 0; i < lines.Count; i++)
+            {
+                if (i < names.Count && !string.IsNullOrWhiteSpace(names[i]))
+                    result[i] = names[i].Trim();
+
+                Vector3d direction = lines[i].Direction;
+                if (Math.Abs(direction.X) >= Math.Abs(direction.Y))
+                    horizontal.Add(i);
+                else
+                    vertical.Add(i);
+            }
+
+            horizontal = horizontal
+                .OrderByDescending(index => lines[index].PointAt(0.5).Y)
+                .ThenBy(index => lines[index].PointAt(0.5).X)
+                .ToList();
+            vertical = vertical
+                .OrderBy(index => lines[index].PointAt(0.5).X)
+                .ThenByDescending(index => lines[index].PointAt(0.5).Y)
+                .ToList();
+
+            for (int rank = 0; rank < horizontal.Count; rank++)
+            {
+                int index = horizontal[rank];
+                if (string.IsNullOrWhiteSpace(result[index]))
+                    result[index] = (rank + 1).ToString();
+            }
+
+            for (int rank = 0; rank < vertical.Count; rank++)
+            {
+                int index = vertical[rank];
+                if (string.IsNullOrWhiteSpace(result[index]))
+                    result[index] = ToAlphabeticSectionName(rank);
+            }
+
+            return result;
+        }
+
+        private static string ToAlphabeticSectionName(int index)
+        {
+            string result = string.Empty;
+            int value = index + 1;
+            while (value > 0)
+            {
+                value--;
+                result = (char)('A' + value % 26) + result;
+                value /= 26;
+            }
+            return result;
+        }
+
         private static BoundingBox AddDirectSectionSurfaces(SectionCache cache, int sectionIndex,
-            List<SourceGeometry> sectionSource, List<SectionPoint> sectionPoints, Plane viewPlane, double tolerance,
+            List<SourceGeometry> sectionSource, List<SectionPoint> sectionPoints, SectionInfo section, double tolerance,
             out BoundingBox referenceBox)
         {
             BoundingBox outputBox = BoundingBox.Empty;
             referenceBox = BoundingBox.Empty;
             Dictionary<int, List<Curve>> curvesByObject = new Dictionary<int, List<Curve>>();
-            Transform toTop = Transform.PlaneToPlane(viewPlane, Plane.WorldXY);
+            Transform toTop = CreateSectionToMake2DTransform(section);
             foreach (SourceGeometry item in sectionSource)
             {
                 if (!(item.Geometry is Curve curve))
@@ -711,9 +778,6 @@ namespace NS_Parrot
                 if (projected == null)
                     continue;
                 projected.Transform(toTop);
-                projected = Curve.ProjectToPlane(projected, Plane.WorldXY);
-                if (projected == null)
-                    continue;
                 if (!curvesByObject.TryGetValue(item.Index, out List<Curve> objectCurves))
                 {
                     objectCurves = new List<Curve>();
@@ -770,7 +834,6 @@ namespace NS_Parrot
             {
                 Point3d point = pointRecord.Point;
                 point.Transform(toTop);
-                point.Z = 0.0;
                 cache.SectionSurfaces.Append(new GH_Point(point), ElementPath(sectionIndex, pointRecord.Index, NextCounter(counters, pointRecord.Index)));
                 BoundingBox pointBox = new BoundingBox(point, point);
                 UnionBoundingBox(ref outputBox, pointBox);
@@ -778,6 +841,16 @@ namespace NS_Parrot
             }
 
             return outputBox;
+        }
+
+        private static Transform CreateSectionToMake2DTransform(SectionInfo section)
+        {
+            Vector3d axis = section.Line.Direction;
+            axis.Z = 0.0;
+            if (!axis.Unitize())
+                axis = Vector3d.XAxis;
+
+            return Transform.Rotation(-0.5 * Math.PI, axis, Point3d.Origin);
         }
 
         private static void UnionBoundingBox(ref BoundingBox target, BoundingBox addition)
@@ -1738,7 +1811,6 @@ namespace NS_Parrot
         {
             List<SourceGeometry> localSource = DuplicateTransformedSource(source, Transform.Identity);
             Line localLine = section.Line;
-            Plane localPlane = section.Plane;
             Point3d localizationCenter = Point3d.Origin;
 
             BoundingBox localBox = GetSourceBoundingBox(localSource);
@@ -1750,7 +1822,6 @@ namespace NS_Parrot
                 foreach (SourceGeometry item in localSource)
                     item.Geometry.Transform(centerToOrigin);
                 localLine.Transform(centerToOrigin);
-                localPlane.Transform(centerToOrigin);
             }
 
             Vector3d localLineDirection = localLine.Direction;
@@ -1762,6 +1833,7 @@ namespace NS_Parrot
             if (!localViewDirection.Unitize())
                 localViewDirection = Vector3d.YAxis;
 
+            Plane localPlane = new Plane(localLine.From, localLineDirection, Vector3d.ZAxis);
             SectionInfo localSection = new SectionInfo(localLine, localPlane, localViewDirection, section.Name);
             return new ProjectionContext(localSource, localSection, localizationCenter);
         }
@@ -1774,6 +1846,14 @@ namespace NS_Parrot
         private static string FormatVector(Vector3d vector)
         {
             return "(" + vector.X.ToString("0.###") + ", " + vector.Y.ToString("0.###") + ", " + vector.Z.ToString("0.###") + ")";
+        }
+
+        private static string FormatPlane(Plane plane)
+        {
+            return "原点 " + FormatPoint(plane.Origin) +
+                "，X轴 " + FormatVector(plane.XAxis) +
+                "，Y轴 " + FormatVector(plane.YAxis) +
+                "，法向 " + FormatVector(plane.Normal);
         }
 
         private static List<SourceGeometry> DuplicateTransformedSource(List<SourceGeometry> source, Transform transform)
@@ -2756,17 +2836,18 @@ namespace NS_Parrot
                 }
             }
 
+            Plane originPlane = new Plane(Point3d.Origin, xAxis, yAxis);
+            double distanceToSection = Math.Abs(originPlane.DistanceTo(section.Line.PointAt(0.5)));
             Vector3d viewDirection = section.ViewDirection;
-            if (!viewDirection.Unitize())
-                viewDirection = Vector3d.CrossProduct(lineDirection, Vector3d.ZAxis);
+            viewDirection.Z = 0.0;
             if (!viewDirection.Unitize())
                 viewDirection = Vector3d.YAxis;
 
-            Plane originPlane = new Plane(Point3d.Origin, xAxis, yAxis);
-            Point3d sectionMidpoint = section.Line.PointAt(0.5);
-            double distanceToSection = Math.Abs(originPlane.DistanceTo(sectionMidpoint));
-            Point3d origin = Point3d.Origin - viewDirection * (distanceToSection + 5.0);
-            Plane plane = new Plane(origin, xAxis, yAxis);
+            // 模型、剖切线和切平面只做包围盒中心归零。
+            // “距离 + 5”仅用于移动视图矩形平面。
+            Point3d rectangleOrigin = Point3d.Origin - viewDirection * (distanceToSection + 5.0);
+            rectangleOrigin.Z = 0.0;
+            Plane plane = new Plane(rectangleOrigin, xAxis, yAxis);
 
             if (box.IsValid)
             {
@@ -3264,6 +3345,7 @@ namespace NS_Parrot
             diagnostics.Add("当前可见线类型: " + string.Join(", ", _visibleLineTypes.OrderBy(item => item)));
             diagnostics.Add("当前隐藏线类型: " + string.Join(", ", _hiddenLineTypes.OrderBy(item => item)));
             diagnostics.Add("过滤掉可见线: " + visibleFiltered + "；过滤掉隐藏线: " + hiddenFiltered);
+            diagnostics.Add("剖切号: " + string.Join(", ", cache.Names));
 
             int sectionCount = cache.Names.Count;
             int objectCount = cache.OutputObjectCount;
@@ -3281,11 +3363,12 @@ namespace NS_Parrot
             DA.SetDataTree(4, hiddenOutput);
             DA.SetDataTree(5, hiddenTypeOutput);
             DA.SetDataList(6, cache.Names);
-            DA.SetDataList(7, diagnostics);
-            DA.SetDataTree(8, cache.LocalizedGeometry);
+            DA.SetDataTree(7, cache.LocalizedGeometry);
+            DA.SetDataList(8, diagnostics);
             DA.SetDataTree(9, cache.LocalizedSectionLines);
             DA.SetDataTree(10, cache.ViewRectangles);
             DA.SetDataTree(11, cache.ParallelViews);
+            DA.SetDataTree(12, cache.ClippingPlanes);
         }
 
         private static bool LooksLikeMojibake(string message)
@@ -3313,7 +3396,9 @@ namespace NS_Parrot
             {
                 SectionLayoutInfo layout = cache.Layouts[i];
                 double gap = ResolvePreviewGap(previewGap, layout.SourceBox, RhinoDoc.ActiveDoc?.ModelAbsoluteTolerance ?? 0.001);
-                Vector3d move = ComputePreviewMove(layout.SourceBox, layout.DrawingBox, layout.ReferenceSourceBox, layout.ReferenceDrawingBox, layout.ViewDirection, gap, i);
+                Vector3d move = ComputePreviewMove(layout.SourceBox, layout.DrawingBox,
+                    layout.ReferenceSourceBox, layout.ReferenceDrawingBox,
+                    layout.ViewDirection, gap, i);
                 transforms.Add(Transform.Translation(move));
             }
             return transforms;
@@ -3580,7 +3665,7 @@ namespace NS_Parrot
 
         protected override Bitmap Icon
         {
-            get { return GeneratedIcon.Get("gen_CurvesGroupByPlane"); }
+            get { return GeneratedIcon.GetSectionMake2DV2(); }
         }
 
         public override Guid ComponentGuid
@@ -3629,19 +3714,21 @@ namespace NS_Parrot
             public GH_Structure<GH_Curve> LocalizedSectionLines { get; } = new GH_Structure<GH_Curve>();
             public GH_Structure<GH_Rectangle> ViewRectangles { get; } = new GH_Structure<GH_Rectangle>();
             public GH_Structure<IGH_Goo> ParallelViews { get; } = new GH_Structure<IGH_Goo>();
+            public GH_Structure<GH_Plane> ClippingPlanes { get; } = new GH_Structure<GH_Plane>();
             public int ReferenceObjectIndex { get; set; } = -1;
             public int OutputObjectCount { get; set; }
         }
 
         private class SectionLayoutInfo
         {
-            public SectionLayoutInfo(BoundingBox sourceBox, BoundingBox drawingBox, BoundingBox referenceSourceBox, BoundingBox referenceDrawingBox, Vector3d viewDirection)
+            public SectionLayoutInfo(BoundingBox sourceBox, BoundingBox drawingBox, BoundingBox referenceSourceBox, BoundingBox referenceDrawingBox, Vector3d viewDirection, Point3d localizationCenter)
             {
                 SourceBox = sourceBox;
                 DrawingBox = drawingBox;
                 ReferenceSourceBox = referenceSourceBox;
                 ReferenceDrawingBox = referenceDrawingBox;
                 ViewDirection = viewDirection;
+                LocalizationCenter = localizationCenter;
             }
 
             public BoundingBox SourceBox { get; }
@@ -3649,6 +3736,7 @@ namespace NS_Parrot
             public BoundingBox ReferenceSourceBox { get; }
             public BoundingBox ReferenceDrawingBox { get; }
             public Vector3d ViewDirection { get; }
+            public Point3d LocalizationCenter { get; }
         }
 
         private class SectionBuildData
