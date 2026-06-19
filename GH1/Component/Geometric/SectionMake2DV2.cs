@@ -110,6 +110,10 @@ namespace NS_Parrot
             pManager.AddTextParameter("隐藏线类型", "Ht", "与“隐藏线”一一对应的 Make2D 隐藏线类型文字；被右键过滤掉的隐藏线类型不会输出。", GH_ParamAccess.tree);
             pManager.AddTextParameter("剖切号", "N", "实际使用的剖切号列表。列表顺序与输出树第一层剖切号序号一一对应，用于还原 A、B、C 或 1、2、3 等原始剖切号。", GH_ParamAccess.list);
             pManager.AddTextParameter("诊断信息", "Log", "本次计算过程、输入解析、剖面去重、Make2D 端口识别、线型过滤数量、警告和错误信息。", GH_ParamAccess.list);
+            pManager.AddGeometryParameter("归零对象", "G0", "输入物体和参考物体按包围盒中心平移到原点后的中间几何。路径为 {剖切号序号; 对象序号}。", GH_ParamAccess.tree);
+            pManager.AddCurveParameter("归零剖切线", "L0", "与物体使用相同平移向量移动后的剖切线。路径为 {剖切号序号}。", GH_ParamAccess.tree);
+            pManager.AddRectangleParameter("视图矩形", "VR", "用于建立 Make2D Parallel View 的矩形。路径为 {剖切号序号}。", GH_ParamAccess.tree);
+            pManager.AddGenericParameter("Parallel View", "PV", "Parallel View 组件生成的视图对象。路径为 {剖切号序号}。", GH_ParamAccess.tree);
             if (DateTime.Now.Ticks >= 0)
                 return;
             ;
@@ -402,6 +406,11 @@ namespace NS_Parrot
                 SectionInfo section = sections[i];
                 ProjectionContext projectionContext = CreateProjectionContext(source, section);
                 SectionInfo projectionSection = projectionContext.Section;
+                Vector3d localizationMove = projectionContext.LocalizationCenter.IsValid
+                    ? Point3d.Origin - projectionContext.LocalizationCenter
+                    : Vector3d.Zero;
+                result.Diagnostics.Add("剖面 " + section.Name + "：归零平移向量 " + FormatVector(localizationMove) + "。");
+                AppendLocalizedDebugGeometry(result, i, projectionContext.Source, projectionSection.Line);
 
                 GH_Path sectionPath = new GH_Path(i);
                 InitializeObjectBranches(result, sectionPath, result.OutputObjectCount, _keepEmptyBranches);
@@ -425,6 +434,8 @@ namespace NS_Parrot
                         result.Names.Add(section.Name);
                         continue;
                     }
+
+                    AppendViewDebugData(result, i, viewContext);
 
                     BoundingBox directReferenceBox;
                     BoundingBox directSectionBox = AddDirectSectionSurfaces(
@@ -459,6 +470,40 @@ namespace NS_Parrot
 
             AppendLineTypeDiagnostics(result);
             return result;
+        }
+
+        private static void AppendLocalizedDebugGeometry(SectionCache cache, int sectionIndex,
+            List<SourceGeometry> source, Line sectionLine)
+        {
+            Dictionary<int, int> counters = new Dictionary<int, int>();
+            foreach (SourceGeometry item in source)
+            {
+                IGH_GeometricGoo goo = CreateGeometryGoo(item.Geometry?.Duplicate());
+                if (goo == null)
+                    continue;
+                cache.LocalizedGeometry.Append(goo,
+                    ElementPath(sectionIndex, item.Index, NextCounter(counters, item.Index)));
+            }
+
+            cache.LocalizedSectionLines.Append(
+                new GH_Curve(new LineCurve(sectionLine)),
+                new GH_Path(sectionIndex));
+        }
+
+        private static void AppendViewDebugData(SectionCache cache, int sectionIndex,
+            NativeMake2DViewContext viewContext)
+        {
+            GH_Path path = new GH_Path(sectionIndex);
+            cache.ViewRectangles.Append(new GH_Rectangle(viewContext.ViewRectangle), path);
+
+            if (viewContext.ParallelView == null || viewContext.ParallelView.Params.Output.Count == 0)
+                return;
+
+            foreach (IGH_Goo goo in viewContext.ParallelView.Params.Output[0].VolatileData.AllData(true))
+            {
+                if (goo != null)
+                    cache.ParallelViews.Append(goo.Duplicate(), path);
+            }
         }
 
         private static double ResolvePreviewGap(double previewGap, BoundingBox sourceBox, double tolerance)
@@ -3237,6 +3282,10 @@ namespace NS_Parrot
             DA.SetDataTree(5, hiddenTypeOutput);
             DA.SetDataList(6, cache.Names);
             DA.SetDataList(7, diagnostics);
+            DA.SetDataTree(8, cache.LocalizedGeometry);
+            DA.SetDataTree(9, cache.LocalizedSectionLines);
+            DA.SetDataTree(10, cache.ViewRectangles);
+            DA.SetDataTree(11, cache.ParallelViews);
         }
 
         private static bool LooksLikeMojibake(string message)
@@ -3576,6 +3625,10 @@ namespace NS_Parrot
             public List<TypedCurveRecord> RawVisibleCurves { get; } = new List<TypedCurveRecord>();
             public List<TypedCurveRecord> RawHiddenCurves { get; } = new List<TypedCurveRecord>();
             public List<SectionLayoutInfo> Layouts { get; } = new List<SectionLayoutInfo>();
+            public GH_Structure<IGH_GeometricGoo> LocalizedGeometry { get; } = new GH_Structure<IGH_GeometricGoo>();
+            public GH_Structure<GH_Curve> LocalizedSectionLines { get; } = new GH_Structure<GH_Curve>();
+            public GH_Structure<GH_Rectangle> ViewRectangles { get; } = new GH_Structure<GH_Rectangle>();
+            public GH_Structure<IGH_Goo> ParallelViews { get; } = new GH_Structure<IGH_Goo>();
             public int ReferenceObjectIndex { get; set; } = -1;
             public int OutputObjectCount { get; set; }
         }
