@@ -64,7 +64,7 @@ namespace NS_Parrot
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
             pManager.AddGenericParameter("对象", "G", "要剖切并参与 Make2D 投影的几何对象。支持 Brep、Surface、Curve、Rhino 块、GH 块或 Rhino 对象 Guid。输出树的第二层对象序号与此输入列表顺序一致。", GH_ParamAccess.list);
-            pManager.AddGenericParameter("参照", "R", "可选参照对象，用于下游定位。参照会和普通对象一起参与剖切与 Make2D 投影，并作为对象序号的最后一项输出；不输入时自动使用输入对象的世界 XY 轴向包围盒作为参照。", GH_ParamAccess.list);
+            pManager.AddGenericParameter("参照", "R", "可选参照对象，用于下游定位。参照会和普通对象一起参与剖切与 Make2D 投影，并作为对象序号的最后一项输出；不输入时不生成参照对象。", GH_ParamAccess.list);
             pManager.AddGenericParameter("剖切位置", "L", "XY 平面上的剖切位置线。可输入 Line 或直线 Curve；线方向作为剖面水平展开方向，剖切面竖向方向为世界 Z 轴。", GH_ParamAccess.list);
             pManager.AddTextParameter("剖切号", "N", "每条剖切位置线对应的剖切号，可为空。空值自动命名规则：接近 X 轴的剖切线忽略线方向，按线中点的 Y 坐标从大到小排序，即从上到下依次命名为 1、2、3……；接近 Y 轴的剖切线忽略线方向，按线中点的 X 坐标从小到大排序，即从左到右依次命名为 A、B、C……。当 |ΔX| ≥ |ΔY| 时视为接近 X 轴，否则视为接近 Y 轴。非空名称保持用户输入。", GH_ParamAccess.list);
             pManager.AddNumberParameter("剖切深度", "VD", "从剖切面开始沿剖切方向参与投影的深度。小于等于 0 时不限制深度。", GH_ParamAccess.item, DefaultViewDepth);
@@ -109,12 +109,14 @@ namespace NS_Parrot
             pManager.AddCurveParameter("隐藏线", "Hid", "由筛选后的可投影对象、参考对象、裁剪平面 C 和本剖面共用的 Parallel View 生成，并按右键“隐藏线类型”过滤。路径为 {剖切号序号; 对象序号}。", GH_ParamAccess.tree);
             pManager.AddTextParameter("隐藏线类型", "Ht", "与“隐藏线”一一对应的 Make2D 隐藏线类型文字；被右键过滤掉的隐藏线类型不会输出。", GH_ParamAccess.tree);
             pManager.AddTextParameter("剖切号", "N", "实际使用的剖切号列表。列表顺序与输出树第一层剖切号序号一一对应，用于还原 A、B、C 或 1、2、3 等原始剖切号。", GH_ParamAccess.list);
-            pManager.AddGeometryParameter("归零对象", "G0", "输入物体和参考物体按包围盒中心平移到原点后的中间几何。路径为 {剖切号序号; 对象序号}。", GH_ParamAccess.tree);
             pManager.AddTextParameter("诊断信息", "Log", "本次计算过程、自动剖切号、归零剖切线起终点、视图矩形中心与边长及其平面、切平面、Make2D 端口识别、线型过滤数量、警告和错误信息。", GH_ParamAccess.list);
+#if false
+            pManager.AddGeometryParameter("归零对象", "G0", "输入物体和参考物体按包围盒中心平移到原点后的中间几何。路径为 {剖切号序号; 对象序号}。", GH_ParamAccess.tree);
             pManager.AddCurveParameter("归零剖切线", "L0", "与输入物体使用相同归零平移向量移动后的剖切线。路径为 {剖切号序号}。", GH_ParamAccess.tree);
             pManager.AddRectangleParameter("视图矩形", "VR", "用于建立 Make2D Parallel View 的矩形。路径为 {剖切号序号}。", GH_ParamAccess.tree);
             pManager.AddGenericParameter("Parallel View", "PV", "Parallel View 组件生成的视图对象。路径为 {剖切号序号}。", GH_ParamAccess.tree);
             pManager.AddPlaneParameter("切平面", "CP", "实际同时用于 Brep 求交生成 SecS 和送入 Make2D 裁剪端口 C 的切平面。路径为 {剖切号序号}。", GH_ParamAccess.tree);
+#endif
             if (DateTime.Now.Ticks >= 0)
                 return;
             ;
@@ -372,23 +374,11 @@ namespace NS_Parrot
                 result.ReferenceObjectIndex = inputObjects.Count;
                 result.OutputObjectCount = inputObjects.Count + referenceObjects.Count;
             }
-            else if (source.Count > 0)
+            else
             {
-                BoundingBox inputBox = GetSourceBoundingBox(source);
-                Brep referenceBox = CreateReferenceBoundingBoxGeometry(inputBox, tolerance);
-                if (referenceBox != null)
-                {
-                    result.ReferenceObjectIndex = inputObjects.Count;
-                    result.OutputObjectCount = inputObjects.Count + 1;
-                    source.Add(new SourceGeometry(referenceBox, inputObjects.Count, true));
-                    result.Diagnostics.Add("未输入参考对象，已使用输入对象的 XY 包围盒生成参考对象，序号为 " + result.ReferenceObjectIndex + "。");
-                }
-                else
-                {
-                    result.ReferenceObjectIndex = -1;
-                    result.OutputObjectCount = inputObjects.Count;
-                    result.Diagnostics.Add("未输入参考对象，且输入对象包围盒无效，无法生成自动参考对象。");
-                }
+                result.ReferenceObjectIndex = -1;
+                result.OutputObjectCount = inputObjects.Count;
+                result.Diagnostics.Add("未输入参考对象，不生成默认参考对象。");
             }
 
             List<SectionInfo> sections = BuildUniqueSections(sectionLines, sectionNames, tolerance);
@@ -408,10 +398,7 @@ namespace NS_Parrot
                 SectionInfo section = sections[i];
                 ProjectionContext projectionContext = CreateProjectionContext(source, section);
                 SectionInfo projectionSection = projectionContext.Section;
-                Vector3d localizationMove = projectionContext.LocalizationCenter.IsValid
-                    ? Point3d.Origin - projectionContext.LocalizationCenter
-                    : Vector3d.Zero;
-                result.Diagnostics.Add("剖面 " + section.Name + "：归零平移向量 " + FormatVector(localizationMove) + "。");
+                result.Diagnostics.Add("剖面 " + section.Name + "：不执行归零平移，平移向量 (0, 0, 0)。");
                 AppendLocalizedDebugGeometry(result, i, projectionContext.Source, projectionSection.Line);
                 result.ClippingPlanes.Append(new GH_Plane(projectionSection.Plane), new GH_Path(i));
                 result.Diagnostics.Add("剖面 " + section.Name + "：归零剖切线起点 " + FormatPoint(projectionSection.Line.From) +
@@ -428,9 +415,8 @@ namespace NS_Parrot
                 result.Diagnostics.Add("剖面 " + section.Name + ": 范围内对象 " + visibleSource.Count + "/" + source.Count);
 
                 List<SourceGeometry> sectionSource = new List<SourceGeometry>();
-                List<SourceGeometry> projectionSource = new List<SourceGeometry>();
                 List<SectionPoint> sectionPoints = new List<SectionPoint>();
-                SplitSectionAndProjectionSource(visibleSource, projectionSection, tolerance, result, sectionSource, sectionPoints, projectionSource);
+                SplitSectionAndProjectionSource(visibleSource, projectionSection, tolerance, result, sectionSource, sectionPoints, null);
                 List<SourceGeometry> make2DSource = visibleSource;
 
                 using (NativeMake2DViewContext viewContext = CreateNativeMake2DViewContext(make2DSource, projectionSection, projectionContext.LocalizationCenter, result, "剖面 " + section.Name + "：Make2D 视图"))
@@ -480,8 +466,224 @@ namespace NS_Parrot
                 result.Diagnostics.Add("剖面 " + section.Name + ": 截面面/参考截面几何 " + result.SectionSurfaces.DataCount + "，截面线 " + result.SectionGeometry.DataCount + "，可见线缓存 " + result.RawVisibleCurves.Count + "，隐藏线缓存 " + result.RawHiddenCurves.Count);
             }
 
+            result = RemoveDuplicateSectionResults(result, tolerance);
             AppendLineTypeDiagnostics(result);
             return result;
+        }
+
+        private static SectionCache RemoveDuplicateSectionResults(SectionCache source, double tolerance)
+        {
+            Dictionary<string, int> firstSectionBySignature = new Dictionary<string, int>(StringComparer.Ordinal);
+            Dictionary<int, int> sectionMap = new Dictionary<int, int>();
+            List<int> keptSections = new List<int>();
+
+            for (int sectionIndex = 0; sectionIndex < source.Names.Count; sectionIndex++)
+            {
+                string signature = CreateSectionResultSignature(source, sectionIndex, tolerance);
+                if (firstSectionBySignature.TryGetValue(signature, out int firstSection))
+                {
+                    source.Diagnostics.Add("剖面 " + source.Names[sectionIndex] +
+                        " 与剖面 " + source.Names[firstSection] + " 的最终结果相同，已合并。");
+                    continue;
+                }
+
+                firstSectionBySignature.Add(signature, sectionIndex);
+                sectionMap.Add(sectionIndex, keptSections.Count);
+                keptSections.Add(sectionIndex);
+            }
+
+            if (keptSections.Count == source.Names.Count)
+                return source;
+
+            SectionCache result = new SectionCache
+            {
+                ReferenceObjectIndex = source.ReferenceObjectIndex,
+                OutputObjectCount = source.OutputObjectCount
+            };
+            result.Diagnostics.AddRange(source.Diagnostics);
+
+            foreach (int oldSectionIndex in keptSections)
+            {
+                result.Names.Add(source.Names[oldSectionIndex]);
+                if (oldSectionIndex < source.Layouts.Count)
+                    result.Layouts.Add(source.Layouts[oldSectionIndex]);
+            }
+
+            CopyMappedStructure(source.SectionSurfaces, result.SectionSurfaces, sectionMap);
+            CopyMappedStructure(source.SectionGeometry, result.SectionGeometry, sectionMap);
+            CopyMappedStructure(source.LocalizedGeometry, result.LocalizedGeometry, sectionMap);
+            CopyMappedStructure(source.LocalizedSectionLines, result.LocalizedSectionLines, sectionMap);
+            CopyMappedStructure(source.ViewRectangles, result.ViewRectangles, sectionMap);
+            CopyMappedStructure(source.ParallelViews, result.ParallelViews, sectionMap);
+            CopyMappedStructure(source.ClippingPlanes, result.ClippingPlanes, sectionMap);
+            CopyMappedStructure(source.Symbols, result.Symbols, sectionMap);
+            CopyMappedStructure(source.Titles, result.Titles, sectionMap);
+            CopyMappedDataTree(source.SectionIndex, result.SectionIndex, sectionMap);
+            CopyMappedDataTree(source.VisibleCurves, result.VisibleCurves, sectionMap);
+            CopyMappedDataTree(source.VisibleIndex, result.VisibleIndex, sectionMap);
+            CopyMappedDataTree(source.HiddenCurves, result.HiddenCurves, sectionMap);
+            CopyMappedDataTree(source.HiddenIndex, result.HiddenIndex, sectionMap);
+
+            foreach (TypedCurveRecord record in source.RawVisibleCurves)
+            {
+                if (sectionMap.TryGetValue(record.SectionIndex, out int newSectionIndex))
+                    result.RawVisibleCurves.Add(new TypedCurveRecord(
+                        record.Curve?.DuplicateCurve(), newSectionIndex, record.ObjectIndex, record.Type));
+            }
+
+            foreach (TypedCurveRecord record in source.RawHiddenCurves)
+            {
+                if (sectionMap.TryGetValue(record.SectionIndex, out int newSectionIndex))
+                    result.RawHiddenCurves.Add(new TypedCurveRecord(
+                        record.Curve?.DuplicateCurve(), newSectionIndex, record.ObjectIndex, record.Type));
+            }
+
+            return result;
+        }
+
+        private static string CreateSectionResultSignature(SectionCache cache, int sectionIndex, double tolerance)
+        {
+            BoundingBox box = BoundingBox.Empty;
+            AppendSectionBoundingBox(cache.SectionSurfaces, sectionIndex, ref box);
+            AppendSectionBoundingBox(cache.SectionGeometry, sectionIndex, ref box);
+            foreach (TypedCurveRecord record in cache.RawVisibleCurves.Where(item => item.SectionIndex == sectionIndex))
+                UnionBoundingBox(ref box, record.Curve?.GetBoundingBox(true) ?? BoundingBox.Empty);
+            foreach (TypedCurveRecord record in cache.RawHiddenCurves.Where(item => item.SectionIndex == sectionIndex))
+                UnionBoundingBox(ref box, record.Curve?.GetBoundingBox(true) ?? BoundingBox.Empty);
+
+            Point3d center = box.IsValid ? box.Center : Point3d.Origin;
+            double step = Math.Max(tolerance, 1e-6);
+            List<string> parts = new List<string>();
+            AppendSectionGeometrySignatures(cache.SectionSurfaces, sectionIndex, center, step, "SecS", parts);
+            AppendSectionGeometrySignatures(cache.SectionGeometry, sectionIndex, center, step, "Sec", parts);
+            foreach (TypedCurveRecord record in cache.RawVisibleCurves.Where(item => item.SectionIndex == sectionIndex))
+                parts.Add("Vis:" + record.ObjectIndex + ":" + record.Type + ":" +
+                    CreateCurveSignature(record.Curve, center, step));
+            foreach (TypedCurveRecord record in cache.RawHiddenCurves.Where(item => item.SectionIndex == sectionIndex))
+                parts.Add("Hid:" + record.ObjectIndex + ":" + record.Type + ":" +
+                    CreateCurveSignature(record.Curve, center, step));
+            parts.Sort(StringComparer.Ordinal);
+            return string.Join("|", parts);
+        }
+
+        private static void AppendSectionBoundingBox<T>(GH_Structure<T> tree, int sectionIndex, ref BoundingBox box)
+            where T : IGH_Goo
+        {
+            for (int i = 0; i < tree.Paths.Count; i++)
+            {
+                GH_Path path = tree.Paths[i];
+                if (path.Indices.Length == 0 || path.Indices[0] != sectionIndex)
+                    continue;
+                foreach (T item in tree.Branches[i])
+                {
+                    if (item is IGH_GeometricGoo geometric)
+                        UnionBoundingBox(ref box, geometric.Boundingbox);
+                }
+            }
+        }
+
+        private static void AppendSectionGeometrySignatures<T>(GH_Structure<T> tree, int sectionIndex,
+            Point3d center, double step, string prefix, List<string> parts)
+            where T : IGH_Goo
+        {
+            for (int i = 0; i < tree.Paths.Count; i++)
+            {
+                GH_Path path = tree.Paths[i];
+                if (path.Indices.Length == 0 || path.Indices[0] != sectionIndex)
+                    continue;
+                int objectIndex = path.Indices.Length > 1 ? path.Indices[1] : -1;
+                foreach (T item in tree.Branches[i])
+                    parts.Add(prefix + ":" + objectIndex + ":" + CreateGooSignature(item, center, step));
+            }
+        }
+
+        private static string CreateGooSignature(IGH_Goo goo, Point3d center, double step)
+        {
+            if (goo is GH_Curve ghCurve)
+                return CreateCurveSignature(ghCurve.Value, center, step);
+            if (goo is GH_Brep ghBrep && ghBrep.Value != null)
+            {
+                List<string> edges = ghBrep.Value.Edges
+                    .Select(edge => CreateCurveSignature(edge, center, step))
+                    .OrderBy(value => value, StringComparer.Ordinal)
+                    .ToList();
+                AreaMassProperties area = AreaMassProperties.Compute(ghBrep.Value);
+                return "B:" + ghBrep.Value.Faces.Count + ":" + ghBrep.Value.Edges.Count + ":" +
+                    Quantize(area?.Area ?? 0.0, step * step) + ":" + string.Join(",", edges);
+            }
+            if (goo is GH_Point ghPoint)
+                return "P:" + CreatePointSignature(ghPoint.Value, center, step);
+            return goo?.TypeName + ":" + goo;
+        }
+
+        private static string CreateCurveSignature(Curve curve, Point3d center, double step)
+        {
+            if (curve == null)
+                return "null";
+
+            const int sampleCount = 8;
+            List<string> forward = new List<string>();
+            List<string> reverse = new List<string>();
+            for (int i = 0; i <= sampleCount; i++)
+            {
+                double normalized = (double)i / sampleCount;
+                forward.Add(CreatePointSignature(curve.PointAtNormalizedLength(normalized), center, step));
+                reverse.Add(CreatePointSignature(curve.PointAtNormalizedLength(1.0 - normalized), center, step));
+            }
+
+            string a = string.Join(";", forward);
+            string b = string.Join(";", reverse);
+            string samples = string.CompareOrdinal(a, b) <= 0 ? a : b;
+            return "C:" + curve.IsClosed + ":" + Quantize(curve.GetLength(), step) + ":" + samples;
+        }
+
+        private static string CreatePointSignature(Point3d point, Point3d center, double step)
+        {
+            Vector3d value = point - center;
+            return Quantize(value.X, step) + "," + Quantize(value.Y, step) + "," + Quantize(value.Z, step);
+        }
+
+        private static long Quantize(double value, double step)
+        {
+            double safeStep = Math.Max(Math.Abs(step), 1e-9);
+            return (long)Math.Round(value / safeStep, MidpointRounding.AwayFromZero);
+        }
+
+        private static void CopyMappedStructure<T>(GH_Structure<T> source, GH_Structure<T> destination,
+            Dictionary<int, int> sectionMap)
+            where T : IGH_Goo
+        {
+            for (int i = 0; i < source.Paths.Count; i++)
+            {
+                GH_Path path = source.Paths[i];
+                if (path.Indices.Length == 0 || !sectionMap.TryGetValue(path.Indices[0], out int newSectionIndex))
+                    continue;
+                int[] indices = (int[])path.Indices.Clone();
+                indices[0] = newSectionIndex;
+                GH_Path newPath = new GH_Path(indices);
+                if (source.Branches[i].Count == 0)
+                    destination.EnsurePath(newPath);
+                foreach (T item in source.Branches[i])
+                    destination.Append(item, newPath);
+            }
+        }
+
+        private static void CopyMappedDataTree<T>(DataTree<T> source, DataTree<T> destination,
+            Dictionary<int, int> sectionMap)
+        {
+            for (int i = 0; i < source.Paths.Count; i++)
+            {
+                GH_Path path = source.Paths[i];
+                if (path.Indices.Length == 0 || !sectionMap.TryGetValue(path.Indices[0], out int newSectionIndex))
+                    continue;
+                int[] indices = (int[])path.Indices.Clone();
+                indices[0] = newSectionIndex;
+                GH_Path newPath = new GH_Path(indices);
+                if (source.Branches[i].Count == 0)
+                    destination.EnsurePath(newPath);
+                foreach (T item in source.Branches[i])
+                    destination.Add(item, newPath);
+            }
         }
 
         private static void AppendLocalizedDebugGeometry(SectionCache cache, int sectionIndex,
@@ -1811,18 +2013,6 @@ namespace NS_Parrot
         {
             List<SourceGeometry> localSource = DuplicateTransformedSource(source, Transform.Identity);
             Line localLine = section.Line;
-            Point3d localizationCenter = Point3d.Origin;
-
-            BoundingBox localBox = GetSourceBoundingBox(localSource);
-            if (localBox.IsValid)
-            {
-                Point3d center = localBox.Center;
-                localizationCenter = center;
-                Transform centerToOrigin = Transform.Translation(-center.X, -center.Y, -center.Z);
-                foreach (SourceGeometry item in localSource)
-                    item.Geometry.Transform(centerToOrigin);
-                localLine.Transform(centerToOrigin);
-            }
 
             Vector3d localLineDirection = localLine.Direction;
             localLineDirection.Z = 0.0;
@@ -1835,7 +2025,7 @@ namespace NS_Parrot
 
             Plane localPlane = new Plane(localLine.From, localLineDirection, Vector3d.ZAxis);
             SectionInfo localSection = new SectionInfo(localLine, localPlane, localViewDirection, section.Name);
-            return new ProjectionContext(localSource, localSection, localizationCenter);
+            return new ProjectionContext(localSource, localSection, Point3d.Origin);
         }
 
         private static string FormatPoint(Point3d point)
@@ -1944,7 +2134,7 @@ namespace NS_Parrot
                 bool intersects = TryExtractSectionGeometry(item.Geometry, section.Plane, tolerance, curves, points);
                 if (!intersects)
                 {
-                    projectionSource.Add(item);
+                    projectionSource?.Add(item);
                     continue;
                 }
 
@@ -1957,7 +2147,8 @@ namespace NS_Parrot
                 foreach (Point3d point in points)
                     sectionPoints.Add(new SectionPoint(point, item.Index));
 
-                AddProjectionSideGeometry(item, section, tolerance, result, projectionSource);
+                if (projectionSource != null)
+                    AddProjectionSideGeometry(item, section, tolerance, result, projectionSource);
             }
         }
 
@@ -2011,7 +2202,6 @@ namespace NS_Parrot
                     return;
                 }
 
-                WarnSplitFailure(result, section, item.Index, "Brep 已与剖切面相交但无法分割，将使用完整对象参与投影。");
                 projectionSource.Add(item);
                 return;
             }
@@ -2804,9 +2994,7 @@ namespace NS_Parrot
 
         private static Rectangle3d CreateMake2DViewRectangle(List<SourceGeometry> source, SectionInfo section, Point3d localizationCenter)
         {
-            BoundingBox box = GetSourceBoundingBox(source);
-            double width = 1000.0;
-            double height = 1000.0;
+            const double halfSize = 2000.0;
 
             Vector3d lineDirection = section.Line.Direction;
             lineDirection.Z = 0.0;
@@ -2848,34 +3036,10 @@ namespace NS_Parrot
             Point3d rectangleOrigin = Point3d.Origin - viewDirection * (distanceToSection + 5.0);
             rectangleOrigin.Z = 0.0;
             Plane plane = new Plane(rectangleOrigin, xAxis, yAxis);
-
-            if (box.IsValid)
-            {
-                double sectionFromX = (section.Line.From - plane.Origin) * plane.XAxis;
-                double sectionToX = (section.Line.To - plane.Origin) * plane.XAxis;
-                double minX = Math.Min(sectionFromX, sectionToX);
-                double maxX = Math.Max(sectionFromX, sectionToX);
-                double minY = 0.0;
-                double maxY = 0.0;
-                foreach (Point3d corner in box.GetCorners())
-                {
-                    double x = (corner - plane.Origin) * plane.XAxis;
-                    double y = (corner - plane.Origin) * plane.YAxis;
-                    minX = Math.Min(minX, x);
-                    maxX = Math.Max(maxX, x);
-                    minY = Math.Min(minY, y);
-                    maxY = Math.Max(maxY, y);
-                }
-
-                double padding = Math.Max(box.Diagonal.Length * 0.05, 10.0);
-                minX -= padding;
-                maxX += padding;
-                minY -= padding;
-                maxY += padding;
-                return new Rectangle3d(plane, new Interval(minX, maxX), new Interval(minY, maxY));
-            }
-
-            return new Rectangle3d(plane, new Interval(-width, width), new Interval(-height, height));
+            return new Rectangle3d(
+                plane,
+                new Interval(-halfSize, halfSize),
+                new Interval(-halfSize, halfSize));
         }
 
         private static void ConnectInput(GH_Document document, GH_Component component, string nickName, int fallbackIndex, IGH_Param source)
@@ -3363,12 +3527,14 @@ namespace NS_Parrot
             DA.SetDataTree(4, hiddenOutput);
             DA.SetDataTree(5, hiddenTypeOutput);
             DA.SetDataList(6, cache.Names);
-            DA.SetDataTree(7, cache.LocalizedGeometry);
-            DA.SetDataList(8, diagnostics);
+            DA.SetDataList(7, diagnostics);
+#if false
+            DA.SetDataTree(8, cache.LocalizedGeometry);
             DA.SetDataTree(9, cache.LocalizedSectionLines);
             DA.SetDataTree(10, cache.ViewRectangles);
             DA.SetDataTree(11, cache.ParallelViews);
             DA.SetDataTree(12, cache.ClippingPlanes);
+#endif
         }
 
         private static bool LooksLikeMojibake(string message)
@@ -3392,14 +3558,43 @@ namespace NS_Parrot
         private static List<Transform> GetLayoutTransforms(SectionCache cache, double previewGap)
         {
             List<Transform> transforms = new List<Transform>();
+            List<BoundingBox> placedDrawingBoxes = new List<BoundingBox>();
             for (int i = 0; i < cache.Layouts.Count; i++)
             {
                 SectionLayoutInfo layout = cache.Layouts[i];
                 double gap = ResolvePreviewGap(previewGap, layout.SourceBox, RhinoDoc.ActiveDoc?.ModelAbsoluteTolerance ?? 0.001);
-                Vector3d move = ComputePreviewMove(layout.SourceBox, layout.DrawingBox,
-                    layout.ReferenceSourceBox, layout.ReferenceDrawingBox,
-                    layout.ViewDirection, gap, i);
-                transforms.Add(Transform.Translation(move));
+                if (!layout.DrawingBox.IsValid)
+                {
+                    transforms.Add(Transform.Identity);
+                    continue;
+                }
+
+                Vector3d direction = layout.ViewDirection;
+                direction.Z = 0.0;
+                if (!direction.Unitize())
+                    direction = Vector3d.XAxis;
+
+                double obstacleMax = layout.SourceBox.IsValid
+                    ? layout.SourceBox.GetCorners().Max(point => (point - Point3d.Origin) * direction)
+                    : 0.0;
+                foreach (BoundingBox placedBox in placedDrawingBoxes)
+                {
+                    if (placedBox.IsValid)
+                        obstacleMax = Math.Max(obstacleMax,
+                            placedBox.GetCorners().Max(point => (point - Point3d.Origin) * direction));
+                }
+
+                double drawingMin = layout.DrawingBox.GetCorners()
+                    .Min(point => (point - Point3d.Origin) * direction);
+                Vector3d spacingMove = direction * (obstacleMax + gap - drawingMin);
+                spacingMove.Z = 0.0;
+
+                Transform transform = Transform.Translation(spacingMove);
+                transforms.Add(transform);
+
+                BoundingBox placedDrawingBox = layout.DrawingBox;
+                placedDrawingBox.Transform(transform);
+                placedDrawingBoxes.Add(placedDrawingBox);
             }
             return transforms;
         }

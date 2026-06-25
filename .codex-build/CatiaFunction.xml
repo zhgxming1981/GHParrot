@@ -1,0 +1,85 @@
+﻿<?xml version="1.0"?>
+<doc>
+<assembly>
+<name>
+CatiaFunction
+</name>
+</assembly>
+<members>
+<member name="T:CatiaFunction.My.Resources.Resources">
+<summary>
+  A strongly-typed resource class, for looking up localized strings, etc.
+</summary>
+</member>
+<member name="P:CatiaFunction.My.Resources.Resources.ResourceManager">
+<summary>
+  Returns the cached ResourceManager instance used by this class.
+</summary>
+</member>
+<member name="P:CatiaFunction.My.Resources.Resources.Culture">
+<summary>
+  Overrides the current thread's CurrentUICulture property for all
+  resource lookups using this strongly typed resource class.
+</summary>
+</member>
+<member name="M:CatiaFunction.Common4Catia.GetRootPart(System.Object)">
+ <summary>
+ 获取part根对象
+ </summary>
+ <param name="body"></param>
+ <returns></returns>
+</member>
+<member name="M:CatiaFunction.Common4Catia.IsSubHybridBody(MECMOD.HybridBody,System.String)">
+ <summary>
+ 判断subHybridbody是否是parentName的子级目录
+ </summary>
+ <param name="subHybridbody"></param>子级'subHybridbody
+ <param name="parentName"></param>父级名称
+ <returns></returns>
+</member>
+<member name="M:CatiaFunction.Common4Catia.ConnectCatia">
+ <summary>
+ 连接Catia
+ </summary>
+ <returns></returns>
+</member>
+<member name="M:CatiaFunction.Common4Catia.SavePart2Stp(INFITF.Document,System.String)">
+ <summary>
+ 将part文件另存为stp格式
+ </summary>
+ <param name="doc"></param>要另存的文档
+ <param name="fileName"></param>目标文件名
+</member>
+<member name="M:CatiaFunction.Common4Catia.SaveAllParts2Stp(ProductStructureTypeLib.Product,System.String)">
+ <summary>
+ 将装配体的各个零件另存为stp格式
+ </summary>
+ <param name="product"></param>装配体根
+ <param name="path"></param>要保存的位置
+</member>
+<member name="M:CatiaFunction.Common4Catia.AddSonProduct(ProductStructureTypeLib.Product,System.String)">
+ <summary>
+ 在product1下建立product2，名字为categoryName
+ </summary>
+ <param name="parentProduct"></param>
+ <param name="categoryName"></param>
+ <returns></returns>
+</member>
+<member name="M:CatiaFunction.Common4Catia.InsertThePartToProduct(ProductStructureTypeLib.Product,System.String,System.String,System.String)">
+ <summary>
+ 将指定的part插入到position对象下面
+ </summary>
+ <param name="position"></param>要插入的位置
+ <param name="fullFileName"></param>part对应的文件名
+ <param name="instanceName"></param>实例名称
+ <param name="partNumber"></param>零件编号
+ <returns></returns>
+</member>
+<member name="M:CatiaFunction.Common4Catia.AddNurbsCurve(Rhino.Geometry.NurbsCurve,System.Boolean)">
+ <summary>
+ 此函数有问题，不能完全布置Rhino中的曲线
+ </summary>
+ <param name="curve"></param>
+</member>
+</members>
+</doc>

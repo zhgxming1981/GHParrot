@@ -25,8 +25,8 @@ Global
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{E35458D6-3E2A-40C2-AEE6-A8A86EE2496D}.Debug|Any CPU.ActiveCfg = Debug|x64
 		{E35458D6-3E2A-40C2-AEE6-A8A86EE2496D}.Debug|Any CPU.Build.0 = Debug|x64
-		{E35458D6-3E2A-40C2-AEE6-A8A86EE2496D}.Debug|x64.ActiveCfg = Release|x64
-		{E35458D6-3E2A-40C2-AEE6-A8A86EE2496D}.Debug|x64.Build.0 = Release|x64
+		{E35458D6-3E2A-40C2-AEE6-A8A86EE2496D}.Debug|x64.ActiveCfg = Debug|x64
+		{E35458D6-3E2A-40C2-AEE6-A8A86EE2496D}.Debug|x64.Build.0 = Debug|x64
 		{E35458D6-3E2A-40C2-AEE6-A8A86EE2496D}.Debug|x86.ActiveCfg = Debug|x86
 		{E35458D6-3E2A-40C2-AEE6-A8A86EE2496D}.Debug|x86.Build.0 = Debug|x86
 		{E35458D6-3E2A-40C2-AEE6-A8A86EE2496D}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -89,3 +89,4 @@ Global
 		SolutionGuid = {48630652-6047-41FE-8180-17A3196D1C99}
 	EndGlobalSection
 EndGlobal
+

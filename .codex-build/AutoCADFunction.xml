@@ -1,0 +1,96 @@
+﻿<?xml version="1.0"?>
+<doc>
+<assembly>
+<name>
+AutoCADFunction
+</name>
+</assembly>
+<members>
+<member name="T:AutoCADFunction.My.Resources.Resources">
+<summary>
+  A strongly-typed resource class, for looking up localized strings, etc.
+</summary>
+</member>
+<member name="P:AutoCADFunction.My.Resources.Resources.ResourceManager">
+<summary>
+  Returns the cached ResourceManager instance used by this class.
+</summary>
+</member>
+<member name="P:AutoCADFunction.My.Resources.Resources.Culture">
+<summary>
+  Overrides the current thread's CurrentUICulture property for all
+  resource lookups using this strongly typed resource class.
+</summary>
+</member>
+<member name="F:AutoCADFunction.AutoCADTool.TAcadApp">
+ <summary>
+ CAD程序的实例
+ </summary>
+ <remarks></remarks>
+</member>
+<member name="F:AutoCADFunction.AutoCADTool.iAcadDoc">
+ <summary>
+ CAD文档的指针
+ </summary>
+ <remarks></remarks>
+</member>
+<member name="M:AutoCADFunction.AutoCADTool.Add_CAD_NewDocument">
+ <summary>
+ 新建一个cad文档
+ </summary>
+</member>
+<member name="M:AutoCADFunction.AutoCADTool.GetSelectionSetOnScreen(System.Int32,System.String)">
+ <summary>
+ 在屏幕上选择元素，元素类型由TypeOfSelectObject指定
+ entityType是CAD内部定义的组码
+ </summary>
+ <param name="filterCode"></param>过滤器类型的组码
+ <param name="filterStr"></param>实体类型的组码
+ <returns></returns>
+</member>
+<member name="M:AutoCADFunction.AutoCADTool.GetSelectionSetOnScreen">
+ <summary>
+ 从屏幕获取选择集，对象类型为直线和文本
+ </summary>
+ <returns></returns>
+</member>
+<member name="M:AutoCADFunction.AutoCADTool.ConnectCAD(System.Boolean)">
+<summary>
+ 连接CAD
+ </summary>
+ <returns>连接成功返回true，否则返回false</returns>
+ <remarks></remarks>
+</member>
+<member name="M:AutoCADFunction.AutoCADTool.CheckModelSpaceIsActivety">
+ <summary>
+ 判断是当前是在模型空间还是在图纸空间
+ </summary>
+ <returns></returns>true表示在模型空间，false表示在图纸空间
+</member>
+<member name="M:AutoCADFunction.AutoCADTool.GetDistanceFor2Points(System.Double[],System.Double[])">
+ <summary>
+ 求解P1和P2的距离
+ </summary>
+ <param name="p1"></param>点1
+ <param name="p2"></param>点2
+ <returns></returns>
+</member>
+<member name="M:AutoCADFunction.AutoCADTool.Min(System.Double,System.Double,System.Double,System.Double)">
+ <summary>
+ 几个数中最小的
+ </summary>
+ <param name="a"></param>
+ <param name="b"></param>
+ <param name="c"></param>
+ <param name="d"></param>
+ <returns></returns>
+</member>
+<member name="M:AutoCADFunction.AutoCADTool.CAD_Text2Rhino3(System.Object)">
+ <summary>
+ 将 AutoCAD 文本导入 Rhino
+ </summary>
+ <param name="item">AutoCAD 文本对象（AcadText 或 AcadMText）</param>
+ <returns>Tuple: (Rhino TextEntity, 图层名称, 颜色)</returns>
+</member>
+</members>
+</doc>
