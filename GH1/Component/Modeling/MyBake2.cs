@@ -17,7 +17,7 @@ namespace NS_Parrot
         public MyBake2()
              : base("MyBake2", "MyBake2",
               "带自定义信息的bake2",
-              "parrot", "建模")
+              "Parrot", "Modeling")
         {
         }
 

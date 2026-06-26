@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using CommonFunction;
 using Grasshopper.Kernel;
@@ -15,7 +15,7 @@ namespace NS_Parrot
         public Text2GUID()
           : base("Text2GUID", "Text2GUID",
               "把文本转换为GUID",
-              "Parrot", "工具")
+              "Parrot", "Rhino")
         {
         }
 

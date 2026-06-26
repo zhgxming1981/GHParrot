@@ -13,7 +13,7 @@ namespace NS_Parrot
 
 
         public SectionParams(string name="section", string nickname="截面", string description = "自定义截面信息", 
-            string category = "Parrot", string subcategory = "库") : base(name, nickname, description, category, subcategory)
+            string category = "Parrot", string subcategory = "Library") : base(name, nickname, description, category, subcategory)
         {
             //base.Name = "";
             //base.NickName = "";

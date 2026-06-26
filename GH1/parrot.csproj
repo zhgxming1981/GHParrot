@@ -27,9 +27,9 @@
   </ItemGroup>
 	
   <ItemGroup>
-    <Compile Remove="Component\ExcelCAD\CADTxt2Rhino.cs" />
-    <Compile Remove="Component\ExcelCAD\GH2ExcelTemplate.cs" />
-    <Compile Remove="Component\ExcelCAD\ToSolidWorks.cs" />
+    <Compile Remove="Component\CAD\CADTxt2Rhino.cs" />
+    <Compile Remove="Component\Excel\GH2ExcelTemplate.cs" />
+    <Compile Remove="Component\Modeling\ToSolidWorks.cs" />
     <Compile Remove="Component\Library\SectionParams.cs" />
     <Compile Remove="Component\Library\SectionProperty.cs" />
     <Compile Remove="Component\Library\XingCaiLibray.cs" />
@@ -168,8 +168,16 @@
   </ItemGroup>
   
   <ItemGroup>
+    <Folder Include="Component\CAD\" />
+    <Folder Include="Component\Data\" />
+    <Folder Include="Component\Drawing\" />
+    <Folder Include="Component\Excel\" />
+    <Folder Include="Component\Geometry\" />
     <Folder Include="Component\Library\" />
     <Folder Include="Component\Modeling\" />
+    <Folder Include="Component\Rhino\" />
+    <Folder Include="Component\Tekla\" />
+    <Folder Include="Component\Utility\" />
   </ItemGroup>
   
   <PropertyGroup Condition="$(Configuration) == 'Debug' AND $([MSBuild]::IsOSPlatform(Windows))">

@@ -18,7 +18,7 @@ namespace NS_Parrot
         public XingCaiLibray()
           : base("XingCaiLibray", "型材库",
               "型材库",
-              "Parrot", "库")
+              "Parrot", "Library")
         {
         }
 

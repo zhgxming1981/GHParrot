@@ -16,7 +16,7 @@ namespace NS_Parrot
         public ReplaceObjectWithSameGuid()
           : base("ReplaceObjectWithSameGuid", "替换物件",
               "替换物件，保持Guid不变",
-              "Parrot", "工具")
+              "Parrot", "Rhino")
         {
         }
 
