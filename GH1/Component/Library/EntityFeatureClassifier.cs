@@ -295,7 +295,7 @@ namespace NS_Parrot
                 store.EnsureSchema();
                 List<FeatureDbRecord> databaseRecords = store.LoadRecords();
 
-                List<EntityFeature> features = BuildFeatures(materialTexts, colorTexts, otherTexts, geometries, activeCriteria, out int skippedOpenBrepCount);
+                List<EntityFeature> features = BuildFeatures(materialTexts, colorTexts, otherTexts, geometries, activeCriteria, out List<int> skippedOpenBrepIndices, out List<int> unnumberedEntityIndices);
                 _lastComputedFeatures.Clear();
                 _lastComputedFeatures.AddRange(features);
 
@@ -325,7 +325,7 @@ namespace NS_Parrot
                 {
                     int savedCount = store.SaveRecords(result.SaveCandidates.Values.ToList());
                     statusMessage = $"分类完成，共 {features.Count} 个实体；保存 {savedCount} 条特征记录。";
-                    statusMessage = AppendSkippedOpenBrepMessage(statusMessage, skippedOpenBrepCount);
+                    statusMessage = AppendSkippedEntityMessage(statusMessage, skippedOpenBrepIndices, unnumberedEntityIndices);
                     _lastSaveCandidates.Clear();
                     foreach (KeyValuePair<string, FeatureDbRecord> pair in result.SaveCandidates)
                     {
@@ -338,7 +338,7 @@ namespace NS_Parrot
                 else
                 {
                     statusMessage = BuildRunStatusMessage(features.Count, result.DatabaseMatchedBaseKeys.Count, databaseMatchedNumbers);
-                    statusMessage = AppendSkippedOpenBrepMessage(statusMessage, skippedOpenBrepCount);
+                    statusMessage = AppendSkippedEntityMessage(statusMessage, skippedOpenBrepIndices, unnumberedEntityIndices);
                     _lastSaveCandidates.Clear();
                     foreach (KeyValuePair<string, FeatureDbRecord> pair in result.SaveCandidates)
                     {
@@ -383,12 +383,25 @@ namespace NS_Parrot
             return message + "。";
         }
 
-        private static string AppendSkippedOpenBrepMessage(string message, int skippedOpenBrepCount)
+        private static string AppendSkippedEntityMessage(string message, List<int> skippedOpenBrepIndices, List<int> unnumberedEntityIndices)
         {
-            if (skippedOpenBrepCount <= 0)
+            int skippedOpenBrepCount = skippedOpenBrepIndices?.Count ?? 0;
+            List<int> uniqueUnnumberedIndices = (unnumberedEntityIndices ?? new List<int>())
+                .Distinct()
+                .OrderBy(x => x)
+                .ToList();
+
+            if (skippedOpenBrepCount <= 0 && uniqueUnnumberedIndices.Count <= 0)
                 return message;
 
-            return (message ?? string.Empty).TrimEnd('。') + $"；跳过 {skippedOpenBrepCount} 个开口 Brep。";
+            string result = (message ?? string.Empty).TrimEnd('。');
+            if (skippedOpenBrepCount > 0)
+                result += $"；跳过 {skippedOpenBrepCount} 个开口 Brep，序号：{string.Join(", ", skippedOpenBrepIndices)}";
+
+            if (uniqueUnnumberedIndices.Count > 0)
+                result += $"；不能编号实体序号：{string.Join(", ", uniqueUnnumberedIndices)}";
+
+            return result + "。";
         }
 
         private void CacheOutputs(List<string> numbers, List<int> baseNumbers, List<string> mirrorSides, List<string> featureSummaries)
@@ -918,9 +931,10 @@ namespace NS_Parrot
                 throw new ArgumentException(name + "数量必须与实体列表一致。");
         }
 
-        private List<EntityFeature> BuildFeatures(List<string> materialTexts, List<string> colorTexts, List<string> otherTexts, List<Brep> geometries, List<ComparisonCriterion> activeCriteria, out int skippedOpenBrepCount)
+        private List<EntityFeature> BuildFeatures(List<string> materialTexts, List<string> colorTexts, List<string> otherTexts, List<Brep> geometries, List<ComparisonCriterion> activeCriteria, out List<int> skippedOpenBrepIndices, out List<int> unnumberedEntityIndices)
         {
-            skippedOpenBrepCount = 0;
+            skippedOpenBrepIndices = new List<int>();
+            unnumberedEntityIndices = new List<int>();
             List<EntityFeature> features = new List<EntityFeature>(geometries.Count);
             bool compareVolume = activeCriteria != null && activeCriteria.Contains(ComparisonCriterion.Volume);
             bool compareLength = activeCriteria != null && activeCriteria.Contains(ComparisonCriterion.Length);
@@ -939,7 +953,8 @@ namespace NS_Parrot
                     if (compareVolume)
                     {
                         AddRuntimeMessage(GH_RuntimeMessageLevel.Error, $"第 {i + 1} 个 Brep 是开口 Brep，已跳过；勾选“体积”时只能使用闭合实体。");
-                        skippedOpenBrepCount++;
+                        skippedOpenBrepIndices.Add(i);
+                        unnumberedEntityIndices.Add(i);
                         continue;
                     }
 
@@ -957,7 +972,7 @@ namespace NS_Parrot
                 if (compareVolume && feature.Volume <= 0.0)
                 {
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Error, $"第 {i + 1} 个实体无法计算有效体积，已跳过。");
-                    skippedOpenBrepCount++;
+                    unnumberedEntityIndices.Add(i);
                     continue;
                 }
 

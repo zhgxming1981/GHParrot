@@ -321,9 +321,7 @@ namespace NS_Parrot
 
             if (!string.IsNullOrWhiteSpace(layerName))
             {
-                int layerIndex = doc.Layers.FindByFullPath(layerName, -1);
-                if (layerIndex < 0)
-                    layerIndex = doc.Layers.Add(layerName, color.IsEmpty ? Color.Black : color);
+                int layerIndex = EnsureLayer(doc, layerName, color.IsEmpty ? Color.Black : color);
 
                 if (layerIndex >= 0)
                     attributes.LayerIndex = layerIndex;
@@ -343,6 +341,57 @@ namespace NS_Parrot
             }
 
             return attributes;
+        }
+
+        private static int EnsureLayer(RhinoDoc doc, string layerName, Color color)
+        {
+            if (doc == null || string.IsNullOrWhiteSpace(layerName))
+                return -1;
+
+            layerName = layerName.Trim();
+            int layerIndex = doc.Layers.FindByFullPath(layerName, -1);
+            if (layerIndex >= 0)
+                return layerIndex;
+
+            string[] names = layerName.Split(new[] { "::" }, StringSplitOptions.RemoveEmptyEntries);
+            if (names.Length == 0)
+                return -1;
+
+            Guid parentId = Guid.Empty;
+            string fullPath = string.Empty;
+            for (int i = 0; i < names.Length; i++)
+            {
+                string name = names[i].Trim();
+                if (string.IsNullOrWhiteSpace(name))
+                    return -1;
+
+                fullPath = string.IsNullOrEmpty(fullPath) ? name : fullPath + "::" + name;
+                layerIndex = doc.Layers.FindByFullPath(fullPath, -1);
+                if (layerIndex >= 0)
+                {
+                    Layer existingLayer = doc.Layers.FindIndex(layerIndex);
+                    parentId = existingLayer == null ? Guid.Empty : existingLayer.Id;
+                    continue;
+                }
+
+                Layer layer = new Layer
+                {
+                    Name = name,
+                    Color = color
+                };
+
+                if (parentId != Guid.Empty)
+                    layer.ParentLayerId = parentId;
+
+                layerIndex = doc.Layers.Add(layer);
+                if (layerIndex < 0)
+                    return -1;
+
+                Layer newLayer = doc.Layers.FindIndex(layerIndex);
+                parentId = newLayer == null ? Guid.Empty : newLayer.Id;
+            }
+
+            return layerIndex;
         }
 
         private static void AddGroup(RhinoDoc doc, List<Guid> ids, bool isGroup, string groupName)

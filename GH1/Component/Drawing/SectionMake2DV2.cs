@@ -55,9 +55,9 @@ namespace NS_Parrot
         internal bool ButtonRun { get; set; }
 
         public SectionMake2DV2()
-          : base("SectionMake2D V2", "剖切Make2D V2",
+          : base("SectionMake2D", "剖切Make2D",
               "按剖切线批量生成截面线、截面面和 Make2D 可见线/隐藏线",
-              "Parrot", "几何")
+              "Parrot", "Drawing")
         {
         }
 
