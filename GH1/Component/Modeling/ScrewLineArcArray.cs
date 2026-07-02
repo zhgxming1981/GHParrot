@@ -8,11 +8,11 @@ using System.Collections.Generic;
 
 namespace NS_Parrot
 {
-    public class ScrewLineArray : GH_Component
+    public class ScrewLineArcArray : GH_Component
     {
         private const string SourceKey = "来源";
-        private const string SourceValue = "ScrewLineArray";
-        private const string BatchIdKey = "ScrewLineArrayId";
+        private const string SourceValue = "ScrewLineArcArray";
+        private const string BatchIdKey = "ScrewLineArcArrayId";
 
         private string _bakeId = Guid.NewGuid().ToString("D");
         private bool _lastBake;
@@ -20,10 +20,10 @@ namespace NS_Parrot
         private string _lastMessage = string.Empty;
         private readonly List<Guid> _lastBakedGuids = new List<Guid>();
 
-        public ScrewLineArray()
-          : base("ScrewLineArray", "ScrewLineArray",
-              "根据一条模板螺栓线生成参数化螺栓线阵列，并展开模板线上的规格、材质、孔类型",
-              "Parrot", "CAD")
+        public ScrewLineArcArray()
+          : base("弧形螺栓线阵列", "弧形螺栓线",
+              "根据一条模板螺栓线生成参数化弧形螺栓线阵列，并展开模板线上的规格、材质、孔类型",
+              "Parrot", "Modeling")
         {
         }
 
@@ -31,9 +31,9 @@ namespace NS_Parrot
         {
             pManager.AddLineParameter("螺栓线", "螺栓线", "一条或多条模板螺栓线；如果是 Rhino 中 Bake 的线，会尝试读取其 UserString", GH_ParamAccess.list);
             pManager.AddIntegerParameter("数量", "数量", "生成螺栓线数量", GH_ParamAccess.item, 1);
-            pManager.AddNumberParameter("间距", "间距", "相邻螺栓线间距", GH_ParamAccess.item, 300.0);
-            pManager.AddVectorParameter("阵列方向", "阵列方向", "阵列方向向量", GH_ParamAccess.item);
-            pManager.AddVectorParameter("初始位移", "初始位移", "先将模板螺栓线按此向量位移，位移后的线作为阵列源线", GH_ParamAccess.item, Vector3d.Zero);
+            pManager.AddPlaneParameter("平面", "平面", "用平面原点作为旋转中心，平面 Z 轴作为旋转轴", GH_ParamAccess.item, Plane.WorldXY);
+            pManager.AddNumberParameter("角度", "角度", "相邻螺栓线之间的旋转角度，单位为度", GH_ParamAccess.item, 0.0);
+            pManager.AddNumberParameter("初始角度", "初始角度", "模板螺栓线先绕平面旋转的角度，单位为度；旋转后的线作为阵列源线", GH_ParamAccess.item, 0.0);
             pManager.AddTextParameter("规格", "规格", "可选，覆盖模板线 UserString：螺栓规格/规格/孔规格/Spec，例如 ST4.8*16", GH_ParamAccess.item);
             pManager.AddTextParameter("材质", "材质", "可选，覆盖模板线 UserString：材质，例如 铝材、钢材", GH_ParamAccess.item);
             pManager.AddTextParameter("孔类型", "孔类型", "可选，覆盖模板线 UserString：孔类型，例如 gk,dk 或 过孔,底孔", GH_ParamAccess.item);
@@ -69,9 +69,9 @@ namespace NS_Parrot
         {
             List<Line> templateLines = new List<Line>();
             int count = 1;
-            double spacing = 300.0;
-            Vector3d direction = Vector3d.Unset;
-            Vector3d templateOffset = Vector3d.Zero;
+            Plane plane = Plane.WorldXY;
+            double angle = 0.0;
+            double initialAngle = 0.0;
             string inputSpec = string.Empty;
             string inputMaterial = string.Empty;
             string inputHoleTypes = string.Empty;
@@ -85,10 +85,9 @@ namespace NS_Parrot
             if (!DA.GetDataList(0, templateLines) || templateLines.Count == 0)
                 return;
             DA.GetData(1, ref count);
-            DA.GetData(2, ref spacing);
-            if (!DA.GetData(3, ref direction))
-                return;
-            DA.GetData(4, ref templateOffset);
+            DA.GetData(2, ref plane);
+            DA.GetData(3, ref angle);
+            DA.GetData(4, ref initialAngle);
             DA.GetData(5, ref inputSpec);
             DA.GetData(6, ref inputMaterial);
             DA.GetData(7, ref inputHoleTypes);
@@ -115,19 +114,14 @@ namespace NS_Parrot
                 return;
             }
 
-            if (!direction.IsValid || direction.Length <= RhinoMath.ZeroTolerance)
+            if (!plane.IsValid || !plane.ZAxis.IsValid || plane.ZAxis.Length <= RhinoMath.ZeroTolerance)
             {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "阵列方向无效。");
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "平面无效。");
                 return;
             }
 
-            if (!templateOffset.IsValid)
-            {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "初始位移无效。");
-                return;
-            }
-
-            direction.Unitize();
+            Vector3d axis = plane.ZAxis;
+            axis.Unitize();
             TemplateUserStrings userStrings = ReadTemplateUserStrings(templateLines[0], RhinoDoc.ActiveDoc);
             string spec = FirstNonEmpty(inputSpec, userStrings.Spec);
             string material = FirstNonEmpty(inputMaterial, userStrings.Material);
@@ -149,11 +143,13 @@ namespace NS_Parrot
 
             foreach (Line templateLine in templateLines)
             {
-                Line sourceLine = new Line(templateLine.From + templateOffset, templateLine.To + templateOffset);
                 for (int i = 0; i < count; i++)
                 {
-                    Vector3d offset = direction * (spacing * i);
-                    lines.Add(new Line(sourceLine.From + offset, sourceLine.To + offset));
+                    double currentAngle = RhinoMath.ToRadians(initialAngle + angle * i);
+                    Transform rotation = Transform.Rotation(currentAngle, axis, plane.Origin);
+                    Line line = templateLine;
+                    line.Transform(rotation);
+                    lines.Add(line);
                     specs.Add(spec);
                     materials.Add(material);
                     holeTypeList.Add(holeTypes);
@@ -453,9 +449,9 @@ namespace NS_Parrot
             return string.IsNullOrWhiteSpace(templateValue) ? string.Empty : templateValue.Trim();
         }
 
-        protected override System.Drawing.Bitmap Icon => GeneratedIcon.GetScrewLineArray();
+        protected override System.Drawing.Bitmap Icon => GeneratedIcon.GetScrewLineArcArray();
 
-        public override Guid ComponentGuid => new Guid("F4E625A7-EC4D-44B0-8F94-03F4EC3D74EF");
+        public override Guid ComponentGuid => new Guid("93C64B28-239A-4EF7-91F3-E32B93FB43B4");
 
         public override bool Write(GH_IWriter writer)
         {

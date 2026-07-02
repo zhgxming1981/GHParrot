@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the ToSTP_ByCatia class.
         /// </summary>
         public ToSTP_ByCatia()
-          : base("ToSTP_ByCatia", "ToCatiaSTP",
+          : base("通过Catia导出STP", "Catia导出STP",
               "通过Catia转STP",
               "Parrot", "Modeling")
         {

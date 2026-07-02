@@ -44,13 +44,13 @@ namespace NS_Parrot
         private string _lastInputSignature = string.Empty;
 
         public ScrewHoleByVector()
-          : this("ScrewHoleByVector", "ScrewHole",
+          : this("按螺钉线开孔", "螺钉开孔",
               "按一种规格，根据螺钉代表直线和孔数据库自动生成底孔、过孔、工艺孔")
         {
         }
 
         protected ScrewHoleByVector(string name, string nickname, string description)
-          : base(name, nickname, description, "Parrot", "CAD")
+          : base(name, nickname, description, "Parrot", "Modeling")
         {
         }
 
@@ -2121,7 +2121,7 @@ namespace NS_Parrot
     public class ScrewHoleByLineInfo : ScrewHoleByVector
     {
         public ScrewHoleByLineInfo()
-            : base("ScrewHoleByLineInfo", "ScrewHoleByLine",
+            : base("按线信息开孔", "线信息开孔",
                 "按螺钉线输入或 UserString 中的规格、孔类型批量生成底孔、过孔、工艺孔")
         {
         }

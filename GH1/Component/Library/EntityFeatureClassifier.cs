@@ -1336,22 +1336,6 @@ namespace NS_Parrot
         }
     }
 
-    public class EntityFeatureClassifierAbsolute : EntityFeatureClassifier
-    {
-        public EntityFeatureClassifierAbsolute()
-            : base("EntityFeatureClassifierAbsolute", "EFC绝对误差",
-                "根据字符串和几何特征对实体分类、编号；所有特征误差均按绝对误差比较")
-        {
-        }
-
-        protected override bool UseAbsoluteComparison(ComparisonCriterion criterion)
-        {
-            return true;
-        }
-
-        public override Guid ComponentGuid => new Guid("2AE6997E-F4D5-4E71-8506-42B9E851F719");
-    }
-
     internal sealed class EntityFeatureClassifierAttributes : GH_ComponentAttributes
     {
         private const float ButtonHeight = 20.0f;

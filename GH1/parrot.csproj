@@ -27,14 +27,6 @@
   </ItemGroup>
 	
   <ItemGroup>
-    <Compile Remove="Component\CAD\CADTxt2Rhino.cs" />
-    <Compile Remove="Component\Excel\GH2ExcelTemplate.cs" />
-    <Compile Remove="Component\Modeling\ToSolidWorks.cs" />
-    <Compile Remove="Component\Library\SectionParams.cs" />
-    <Compile Remove="Component\Library\SectionProperty.cs" />
-    <Compile Remove="Component\Library\XingCaiLibray.cs" />
-    <Compile Remove="Component\Modeling\MyBake2.cs" />
-    <Compile Remove="Component\Modeling\MyTransform.cs" />
     <Compile Remove="cpu.cs" />
     <Compile Remove="Double.cs" />
     <Compile Remove="GetGuid.cs" />
