@@ -21,7 +21,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the GroupThePlanes class.
         /// </summary>
         public CurvesGroupByPlane()
-          : base("CurvesGroupByPlane", "曲线合并",
+          : base("按平面合并曲线", "曲线合并",
               "合并后的曲线",
               "Parrot", "Geometry")
         {

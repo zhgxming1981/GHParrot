@@ -20,7 +20,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the GH2ExcelTemplateV2 class.
         /// </summary>
         public GH2ExcelTemplateV2()
-          : base("GH2ExcelTemplateV2", "GH2Excel",
+          : base("GH转Excel模板", "GH2Excel",
               "套用模板填写Excel表格增强版，可以从指定位置写入，也可以自动找到末尾追加",
               "Parrot", "Excel")
         {

@@ -16,7 +16,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the MyTag2 class.
         /// </summary>
         public CreateTextDot()
-          : base("CreateTextDot", "生成TextDot",
+          : base("生成TextDot", "生成TextDot",
               "直接生成TextDot",
               "Parrot", "Drawing")
         {

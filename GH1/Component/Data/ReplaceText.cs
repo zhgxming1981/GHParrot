@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the ReplaceText class.
         /// </summary>
         public ReplaceText()
-          : base("ReplaceText", "ReplaceText",
+          : base("替换文本", "替换文本",
               "替换文本",
               "Parrot", "Data")
         {

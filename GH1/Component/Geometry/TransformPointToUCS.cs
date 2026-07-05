@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the TransformPointToUCS class.
         /// </summary>
         public TransformPointToUCS()
-          : base("TransformPointToUCS", "P2U",
+          : base("点转UCS", "P2U",
               "将世界坐标系中的点变换到用户坐标系中",
               "Parrot", "Geometry")
         {

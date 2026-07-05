@@ -7,7 +7,7 @@ namespace NS_Parrot
     public class VectorLine2Plane : GH_Component
     {
         public VectorLine2Plane()
-          : base("VectorLine2Plane", "Line2Plane",
+          : base("线向量成平面", "Line2Plane",
               "根据有方向的线生成平面：线起点为平面原点，终点指向平面法向",
               "Parrot", "Geometry")
         {

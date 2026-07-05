@@ -13,7 +13,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the SetUnion class.
         /// </summary>
         public SetUnion()
-            : base("SetUnion", "并集", "两个选择集的并集", "Parrot", "Data")
+            : base("并集", "并集", "两个选择集的并集", "Parrot", "Data")
         {
         }
 

@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the Statistics_text class.
         /// </summary>
         public Statistics_text()
-          : base("Statistics_text", "统计字符",
+          : base("文本统计", "文本统计",
               "统计不同字符的数量",
               "Parrot", "Data")
         {

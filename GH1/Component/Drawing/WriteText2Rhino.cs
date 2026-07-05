@@ -14,7 +14,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the WriteText2Rhino class.
         /// </summary>
         public WriteText2Rhino()
-          : base("WriteText2Rhino", "向Rhino写文字",
+          : base("向Rhino写文字", "写文字",
               "向Rhino写文字",
               "Parrot", "Drawing")
         {

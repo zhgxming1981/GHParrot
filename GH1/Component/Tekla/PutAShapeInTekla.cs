@@ -22,7 +22,7 @@ namespace NS_Parrot
         /// new tabs/panels will automatically be created.
         /// </summary>
         public PutAShapeInTekla()
-          : base("PutAShapeInTekla", "������״",
+          : base("放入Tekla截面", "Tekla截面",
             "�����������������",
             "Parrot", "Tekla")
         {

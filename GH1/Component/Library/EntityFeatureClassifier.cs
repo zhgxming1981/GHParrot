@@ -82,7 +82,7 @@ namespace NS_Parrot
         public int MirrorScoreStorageDecimalPlaces { get; private set; } = 2;
 
         public EntityFeatureClassifier()
-          : this("EntityFeatureClassifier", "EntityFeatureClassifier",
+          : this("实体特征分类", "实体特征分类",
               "根据字符串和几何特征对实体分类、编号，并可保存到 SQLite 数据库")
         {
         }

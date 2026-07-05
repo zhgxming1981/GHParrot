@@ -13,7 +13,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the MaxItemInList class.
         /// </summary>
         public MaxItemInList()
-          : base("MaxItemInList", "找最大值",
+          : base("Max值", "Max值",
               "找列表中的最大值",
               "Parrot", "Data")
         {

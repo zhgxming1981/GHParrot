@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the ClearUerString class.
         /// </summary>
         public ClearUerString()
-          : base("ClearUerString", "清除UserString",
+          : base("清除UserString", "清除UserString",
               "清除UserString",
               "Parrot", "Rhino")
         {

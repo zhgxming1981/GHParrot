@@ -31,7 +31,7 @@ namespace NS_Parrot
         public List<VectorBlockBakeItem> BakeItems { get; } = new List<VectorBlockBakeItem>();
 
         public CADVectorBlock2GH()
-          : base("CADVectorBlock2GH", "CADVectorBlock",
+          : base("CAD向量块转GH", "CAD向量块",
               "导入CAD属性块中的代表向量线，并读取规格、间距、材质",
               "Parrot", "CAD")
         {

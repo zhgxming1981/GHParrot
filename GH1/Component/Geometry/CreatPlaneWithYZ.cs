@@ -14,7 +14,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the CreatPlaneWithYZ class.
         /// </summary>
         public CreatPlaneWithYZ()
-          : base("CreatPlaneWithYZ", "PlaneOYZ",
+          : base("创建YOZ平面", "PlaneOYZ",
               "通过yz轴生成平面",
               "Parrot", "Geometry")
         {

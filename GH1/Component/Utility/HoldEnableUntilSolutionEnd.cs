@@ -26,7 +26,7 @@ namespace NS_Parrot
         private string _message = "等待启动";
 
         public HoldEnableUntilSolutionEnd()
-          : base("HoldEnableUntilSolutionEnd", "保持启用",
+          : base("保持启用至解算结束", "保持启用",
               "把 Data 作为闸门转发到 Control，并通过 Control 连线或 Name 昵称临时启用目标电池，等待指定数量的 Grasshopper 解算结束后自动禁用。",
               "Parrot", "Utility")
         {

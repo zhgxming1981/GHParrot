@@ -25,7 +25,7 @@ namespace NS_Parrot
         private List<Guid> _lastResult = new List<Guid>();
 
         public CopyRhinoObjectToLayer()
-          : base("CopyRhinoObjectToLayer", "复制到图层",
+          : base("复制Rhino物件到图层", "复制到图层",
               "复制Rhino对象，并可指定复制后对象所在图层",
               "Parrot", "Rhino")
         {

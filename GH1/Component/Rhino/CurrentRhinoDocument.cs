@@ -13,7 +13,7 @@ namespace NS_Parrot
         private string _lastOpenedFilePath = "";
 
         public CurrentRhinoDocument()
-          : base("CurrentRhinoDocument", "当前文档",
+          : base("当前Rhino文档", "当前文档",
               "获取当前活动Rhino文档的完整路径和文件名，并在活动文档改变时自动更新",
               "Parrot", "Rhino")
         {

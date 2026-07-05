@@ -16,7 +16,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the RotateForTekla class.
         /// </summary>
         public RotateForTekla()
-          : base("RotateForTekla", "RotateForTekla",
+          : base("Tekla旋转", "Tekla旋转",
               "RotateForTekla",
               "Parrot", "Tekla")
         {

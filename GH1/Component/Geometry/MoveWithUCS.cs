@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the MoveWithUCS class.
         /// </summary>
         public MoveWithUCS()
-          : base("MoveWithUCS", "MoveUCS",
+          : base("按UCS移动", "MoveUCS",
               "沿用户坐标轴移动",
               "Parrot", "Geometry")
         {

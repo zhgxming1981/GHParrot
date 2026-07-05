@@ -20,7 +20,7 @@ namespace NS_Parrot
         public int Count { get; private set; }
 
         public ClickCounter()
-          : base("ClickCounter", "点击计数",
+          : base("点击计数", "点击计数",
               "点击组件按钮累计次数，输出初始值加点击次数，并在结果更新后输出一次脉冲",
               "Parrot", "Utility")
         {
@@ -101,7 +101,7 @@ namespace NS_Parrot
 
         protected override Bitmap Icon
         {
-            get { return null; }
+            get { return GeneratedIcon.Get("gen_ClickCounter"); }
         }
 
         public override Guid ComponentGuid

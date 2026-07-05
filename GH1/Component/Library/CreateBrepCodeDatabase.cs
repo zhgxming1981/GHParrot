@@ -20,7 +20,7 @@ namespace NS_Parrot
         private string _lastPath = string.Empty;
 
         public CreateBrepCodeDatabase()
-          : base("CreateBrepCodeDatabase", "CreateBrepDB",
+          : base("创建Brep编码库", "Brep编码库",
               "创建 EntityFeatureClassifier 使用的 SQLite 数据库",
               "Parrot", "Library")
         {

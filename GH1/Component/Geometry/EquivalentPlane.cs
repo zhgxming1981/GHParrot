@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the EquivalentPlane class.
         /// </summary>
         public EquivalentPlane()
-          : base("EquivalentPlane", "等效平面",
+          : base("等效平面", "等效平面",
               "判断2个平面是否是等效的，在一个平面内，只是原点不同",
               "Parrot", "Geometry")
         {

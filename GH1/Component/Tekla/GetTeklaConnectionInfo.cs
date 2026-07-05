@@ -16,7 +16,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the GetTeklaComponentInfo class.
         /// </summary>
         public GetTeklaConnectionInfo()
-          : base("GetTeklaConnectionInfo", "GetTeklaConnectionInfo",
+          : base("获取Tekla节点信息", "Tekla节点信息",
               "获取节点名称、位置等信息",
               "Parrot", "Tekla")
         {

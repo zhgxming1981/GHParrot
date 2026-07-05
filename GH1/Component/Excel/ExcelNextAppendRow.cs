@@ -24,7 +24,7 @@ namespace NS_Parrot
         public string ResultMessage { get; set; } = string.Empty;
 
         public ExcelNextAppendRow()
-          : base("ExcelNextAppendRow", "Excel追加行",
+          : base("Excel追加行", "Excel追加行",
               "点击按钮获取指定列最后一行的下一行行号，并输出一次Done信号",
               "Parrot", "Excel")
         {

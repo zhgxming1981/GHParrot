@@ -13,7 +13,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the CountOfElement class.
         /// </summary>
         public CountOfElement()
-          : base("CountOfElement", "CountOfElement",
+          : base("元素计数", "元素计数",
               "统计指定元素数量",
               "Parrot", "Data")
         {

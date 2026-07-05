@@ -20,7 +20,7 @@ namespace NS_Parrot
         private bool _lastInputRun;
 
         public SelectDuplicateRhinoObjects()
-          : base("SelectDuplicateRhinoObjects", "删重复",
+          : base("删除重复物件", "删重复",
               "删除Rhino文档中的重复对象，相当于执行SelDup后Delete",
               "Parrot", "Rhino")
         {

@@ -15,7 +15,7 @@ namespace NS_Parrot
         private bool _lastRun;
 
         public RecoverRhinoUI()
-          : base("RecoverRhinoUI", "FixRhUI",
+          : base("修复Rhino界面", "FixRhUI",
               "Try to recover a frozen Rhino sidebar or panel UI without restarting Rhino",
               "Parrot", "Rhino")
         {

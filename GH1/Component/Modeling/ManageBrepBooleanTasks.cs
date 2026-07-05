@@ -22,7 +22,7 @@ namespace NS_Parrot
         private BoundingBox _previewBox = BoundingBox.Empty;
 
         public ManageBrepBooleanTasks()
-          : base("ManageBrepBooleanTasks", "布尔任务绑定",
+          : base("布尔任务绑定", "布尔任务绑定",
               "在主实体上记录块颜色布尔任务，并预览参与布尔运算的对象",
               "Parrot", "Modeling")
         {

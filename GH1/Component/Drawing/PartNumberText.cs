@@ -25,7 +25,7 @@ namespace NS_Parrot
         internal bool ButtonPressed { get; set; }
 
         public PartNumberText()
-          : base("Part Number Text", "零件编号",
+          : base("零件编号", "零件编号",
               "生成零件编号文字，合并重叠编号，并避开零件投影线。",
               "Parrot", "Drawing")
         {

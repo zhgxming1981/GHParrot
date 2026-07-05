@@ -11,7 +11,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the Ungroup class.
         /// </summary>
         public Ungroup()
-          : base("Ungroup", "分解组",
+          : base("分解组", "分解组",
               "分解组",
               "Parrot", "Rhino")
         {

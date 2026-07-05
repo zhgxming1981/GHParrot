@@ -18,7 +18,7 @@ namespace NS_Parrot
         private bool _hasLastError = false;
 
         public GH_ExcelMultiSummary()
-          : base("GH_ExcelMultiSummary", "数据汇总表",
+          : base("GH数据汇总表", "数据汇总表",
               "自动填写数据汇总表",
               "Parrot", "Excel")
         {

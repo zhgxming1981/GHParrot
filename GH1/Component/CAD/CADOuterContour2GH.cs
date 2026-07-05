@@ -33,7 +33,7 @@ namespace NS_Parrot
         public List<OuterContourBakeItem> BakeItems { get; } = new List<OuterContourBakeItem>();
 
         public CADOuterContour2GH()
-          : base("CADOuterContour2GH", "CADOuterContour",
+          : base("CAD外轮廓转GH", "CAD外轮廓",
               "从CAD面域、多段线或图块中提取闭合外轮廓并导入为GH Surface",
               "Parrot", "CAD")
         {

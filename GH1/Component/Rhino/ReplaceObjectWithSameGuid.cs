@@ -14,7 +14,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the ReplaceObjectWithSameGuid class.
         /// </summary>
         public ReplaceObjectWithSameGuid()
-          : base("ReplaceObjectWithSameGuid", "替换物件",
+          : base("同GUID替换物件", "替换物件",
               "替换物件，保持Guid不变",
               "Parrot", "Rhino")
         {

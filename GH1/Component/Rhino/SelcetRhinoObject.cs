@@ -18,7 +18,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the SelcetRhinoObject class.
         /// </summary>
         public SelcetRhinoObject()
-          : base("SelcetRhinoObject", "选中物件",
+          : base("选择Rhino物件", "选中物件",
               "选中Rhino中的物件",
               "Parrot", "Rhino")
         {

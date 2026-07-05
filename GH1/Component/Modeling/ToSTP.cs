@@ -23,10 +23,11 @@ namespace NS_Parrot
         private int _lastGuidCount = -1;
         private int _stableGuidCount;
         private int _guidCheckCount;
+        private int _refreshScheduleToken;
         private Timer _refreshTimer;
 
         public ToSTP()
-          : base("ToSTP", "存为Stp",
+          : base("导出STP", "导出STP",
               "存为Stp，并由Catia打开",
               "Parrot", "Modeling")
         {
@@ -309,18 +310,41 @@ namespace NS_Parrot
         {
             StopRefreshTimer();
 
+            int token = ++_refreshScheduleToken;
+            GH_Document document = OnPingDocument();
+            if (document != null)
+            {
+                document.ScheduleSolution(Math.Max(1, waitMilliseconds), doc =>
+                {
+                    if (token != _refreshScheduleToken)
+                        return;
+
+                    ExpireSolution(false);
+                });
+                return;
+            }
+
             _refreshTimer = new Timer();
             _refreshTimer.Interval = Math.Max(1, waitMilliseconds);
             _refreshTimer.Tick += (sender, e) =>
             {
-                StopRefreshTimer();
-                ExpireSolution(true);
+                Timer timer = _refreshTimer;
+                _refreshTimer = null;
+                timer?.Stop();
+                timer?.Dispose();
+
+                if (token != _refreshScheduleToken)
+                    return;
+
+                ExpireSolution(false);
             };
             _refreshTimer.Start();
         }
 
         private void StopRefreshTimer()
         {
+            _refreshScheduleToken++;
+
             if (_refreshTimer == null)
                 return;
 

@@ -28,7 +28,7 @@ namespace NS_Parrot
         private BoundingBox _previewBox = BoundingBox.Empty;
 
         public BindBrepToGhBooleanController()
-          : base("BindBrepToGhBooleanController", "实体绑定",
+          : base("实体绑定", "实体绑定",
               "把Rhino实体绑定到当前GH电池，并按右键菜单中的布尔模式记录绑定关系",
               "Parrot", "Rhino")
         {

@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the Distance4Point2Plane class.
         /// </summary>
         public Distance4Point2Plane()
-          : base("Distance4Point2Plane", "P2P",
+          : base("点到平面距离", "P2P",
               "点到平面距离",
               "Parrot", "Geometry")
         {

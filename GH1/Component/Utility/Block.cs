@@ -16,7 +16,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the Block class.
         /// </summary>
         public Block()
-          : base("Block", "Block",
+          : base("数据块", "数据块",
               "解析block",
               "Parrot", "Utility")
         {

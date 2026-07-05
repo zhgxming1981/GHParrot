@@ -13,7 +13,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the GH2ExcelMData class.
         /// </summary>
         public GH2ExcelMData()
-          : base("GH2ExcelMData", "GH2ExcelMData",
+          : base("GH多数据转Excel", "GH2ExcelMData",
               "可以一次指定多个数据起点，每个数据分别写在相应起点处",
               "Parrot", "Excel")
         {

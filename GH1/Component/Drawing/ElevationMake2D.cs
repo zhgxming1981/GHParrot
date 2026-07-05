@@ -64,7 +64,7 @@ namespace NS_Parrot
         private HashSet<string> _hiddenLineTypes = new HashSet<string>(DefaultHiddenLineTypes, StringComparer.OrdinalIgnoreCase);
 
         public ElevationMake2D()
-          : base("ElevationMake2D", "正视图Make2D",
+          : base("正视图Make2D", "正视图Make2D",
               "沿指定视图方向对几何做 Make2D 投影，生成可见线、隐藏线、类型和 Parallel View",
               "Parrot", "Drawing")
         {

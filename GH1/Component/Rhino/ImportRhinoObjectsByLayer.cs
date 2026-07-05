@@ -30,7 +30,7 @@ namespace NS_Parrot
         private readonly List<GeometryBase> _previewGeometry = new List<GeometryBase>();
 
         public ImportRhinoObjectsByLayer()
-          : base("ImportRhinoObjectsByLayer", "ImportByLayer",
+          : base("按图层导入Rhino物件", "按图层导入",
               "从未打开的Rhino文件中读取指定图层对象，可选择导入到当前Rhino文档",
               "Parrot", "Rhino")
         {

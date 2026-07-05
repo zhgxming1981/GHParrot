@@ -14,7 +14,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the SetSubtraction class.
         /// </summary>
         public SetSubtraction()
-          : base("SetSubtraction", "差集", "求差集", "Parrot", "Data")
+          : base("差集", "差集", "求差集", "Parrot", "Data")
         {
         }
 

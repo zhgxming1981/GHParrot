@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the ClockwiseOrAnticlockwise class.
         /// </summary>
         public ClockwiseOrAnticlockwise()
-          : base("ClockwiseOrAnticlockwise", "顺/逆时针",
+          : base("顺逆时针", "顺逆时针",
               "判断给定的2点相对于参考面是顺时针还是逆时针",
               "Parrot", "Geometry")
         {

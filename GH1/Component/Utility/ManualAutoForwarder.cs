@@ -23,7 +23,7 @@ namespace NS_Parrot
         public ManualAutoForwarder()
           : base("手动自动转发器", "转发器",
               "按 Run 手动逐项转发列表数据；Seconds 有值时自动按间隔逐项转发。",
-              "Parrot", "Data")
+              "Parrot", "Utility")
         {
         }
 

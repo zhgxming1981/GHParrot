@@ -13,7 +13,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the TransformAxis class.
         /// </summary>
         public TransformThePointToWCS()
-          : base("TransformThePointToWCS", "P2W",
+          : base("点转WCS", "P2W",
               "将用户坐标系中的点转换到世界坐标系中",
               "Parrot", "Geometry")
         {

@@ -23,7 +23,7 @@ namespace NS_Parrot
         private bool _lastRunInput = false;
 
         public ClearExcelRange()
-          : base("ClearExcelRange", "清空Excel区域",
+          : base("清空Excel区域", "清空Excel区域",
               "点击按钮清空Excel指定单元格范围的值，并输出一次Done信号",
               "Parrot", "Excel")
         {

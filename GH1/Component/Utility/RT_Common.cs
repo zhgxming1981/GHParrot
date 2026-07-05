@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the RT_Common class.
         /// </summary>
         public RT_Common()
-          : base("RT_Common", "RT_Common",
+          : base("RT通用", "RT通用",
               "any object",
               "Parrot", "Utility")
         {

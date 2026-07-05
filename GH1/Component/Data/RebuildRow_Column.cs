@@ -13,7 +13,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the 行列重组 class.
         /// </summary>
         public RebuildRow_Column()
-          : base("RebuildRow_Column", "行列重组",
+          : base("行列重组", "行列重组",
               "行列重组",
               "Parrot", "Data")
         {

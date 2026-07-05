@@ -13,7 +13,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the Text2GUID class.
         /// </summary>
         public Text2GUID()
-          : base("Text2GUID", "Text2GUID",
+          : base("文本转GUID", "Text2GUID",
               "把文本转换为GUID",
               "Parrot", "Rhino")
         {

@@ -16,7 +16,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the MoveForTekla class.
         /// </summary>
         public MoveForTekla()
-          : base("MoveForTekla", "MoveForTekla",
+          : base("Tekla移动", "Tekla移动",
               "MoveForTekla",
               "Parrot", "Tekla")
         {

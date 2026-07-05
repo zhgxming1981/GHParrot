@@ -11,7 +11,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the TrueOrFalse class.
         /// </summary>
         public TrueOrFalse()
-          : base("TrueOrFalse", "T/F",
+          : base("True/False", "T/F",
               "查找True和False对应的索引号",
               "Parrot", "Utility")
         {

@@ -16,7 +16,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the ChangeLayer class.
         /// </summary>
         public ChangeLayer()
-          : base("ChangeLayer", "修改图层",
+          : base("修改图层", "修改图层",
               "修改Rhino物件的图层",
               "Parrot", "Rhino")
         {

@@ -27,7 +27,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the CAD2GH class.
         /// </summary>
         public CAD2GH()
-          : base("CAD2GH", "CAD2GH",
+          : base("CAD转GH", "CAD转GH",
               "将CAD中的直线、圆弧、多段线导入到Rhino中",
               "Parrot", "CAD")
         {

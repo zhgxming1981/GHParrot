@@ -13,7 +13,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the GetUserString class.
         /// </summary>
         public GetUserString()
-          : base("GetUserString", "获取UserStr",
+          : base("获取UserString", "获取UserString",
               "获取用定义的户字符串",
               "Parrot", "Rhino")
         {

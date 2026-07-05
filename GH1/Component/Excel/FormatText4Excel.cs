@@ -17,7 +17,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the MyComponent1 class.
         /// </summary>
         public FormatText4Excel()
-          : base("FormatText4Excel", "文本2excel预处理",
+          : base("Excel文本预处理", "Excel文本预处理",
               "文本2excel预处理，将一列数据变换为一行数据，中间用|分格",
               "Parrot", "Excel")
         {

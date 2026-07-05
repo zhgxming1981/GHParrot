@@ -28,7 +28,7 @@ namespace NS_Parrot
         private bool _lastMergeInput = false;
 
         public MergeExcelRangeSheets()
-          : base("MergeExcelRangeSheets", "合并Excel区域",
+          : base("合并Excel区域", "合并Excel区域",
               "将同一Excel文件中多个工作表的指定区域依次合并到新的工作表",
               "Parrot", "Excel")
         {

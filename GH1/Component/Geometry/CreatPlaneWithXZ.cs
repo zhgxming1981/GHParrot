@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the CreatPlaneWithXZ class.
         /// </summary>
         public CreatPlaneWithXZ()
-          : base("CreatPlaneWithXZ", "PlaneOXZ",
+          : base("创建XOZ平面", "PlaneOXZ",
               "通过xz轴生成平面",
               "Parrot", "Geometry")
         {

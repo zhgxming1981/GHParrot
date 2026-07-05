@@ -18,9 +18,9 @@ namespace NS_Parrot
         private Timer _resetTimer;
 
         public PulseTrigger()
-          : base("PulseTrigger", "脉冲触发",
+          : base("脉冲触发", "脉冲触发",
               "所有可变输入都有数据时输出一次True脉冲，用于串联需要Run触发的电池",
-              "Parrot", "Data")
+              "Parrot", "Utility")
         {
         }
 

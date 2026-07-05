@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the TransformTheVectorToWCS class.
         /// </summary>
         public TransformTheVectorToWCS()
-          : base("TransformTheVectorToWCS", "V2W",
+          : base("向量转WCS", "V2W",
               "将用户坐标系中的向量转换到世界坐标系中",
               "Parrot", "Geometry")
         {

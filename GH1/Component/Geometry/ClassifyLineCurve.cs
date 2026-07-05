@@ -11,7 +11,7 @@ namespace NS_Parrot
     public class ClassifyLineCurve : GH_Component
     {
         public ClassifyLineCurve()
-          : base("ClassifyLineCurve", "判断直线曲线",
+          : base("判断直线曲线", "判断直线曲线",
               "在指定精度下判断曲线是否为直线，并按原列表序号分类输出。",
               "Parrot", "Geometry")
         {

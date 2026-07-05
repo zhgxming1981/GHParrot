@@ -27,7 +27,7 @@ namespace NS_Parrot
         public int InsertedCount { get; private set; } = 0;
 
         public ExcelInsertPicture()
-          : base("ExcelInsertPicture", "ExcelPic",
+          : base("Excel插图", "Excel插图",
               "Read picture names from Pic cells and insert pictures into matching InsertCell cells. Pic and InsertCell must be on the same row.",
               "Parrot", "Excel")
         {

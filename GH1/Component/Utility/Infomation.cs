@@ -102,7 +102,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the MacOfLAN class.
         /// </summary>
         public Infomation()
-          : base("Infomation", "信息",
+          : base("信息", "信息",
               "提供一些系统信息",
               "Parrot", "Utility")
         {

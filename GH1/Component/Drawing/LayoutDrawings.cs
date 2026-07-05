@@ -27,7 +27,7 @@ namespace NS_Parrot
         private LayoutCache _cache = new LayoutCache();
 
         public LayoutDrawings()
-          : base("LayoutDrawings", "图纸布置",
+          : base("图纸布置", "图纸布置",
               "按正视图、左视图、右视图、俯视图、仰视图、后视图、剖视图和详图端口接入情况自动布置图纸，插入图框并生成基本标注和图名。",
               "Parrot", "Drawing")
         {

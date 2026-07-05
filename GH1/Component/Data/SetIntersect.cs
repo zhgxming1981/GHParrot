@@ -13,7 +13,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the SetIntersect class.
         /// </summary>
         public SetIntersect()
-          : base("SetIntersect", "交集", "求交集", "Parrot", "Data")
+          : base("交集", "交集", "求交集", "Parrot", "Data")
         {
         }
 

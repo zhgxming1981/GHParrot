@@ -20,7 +20,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the Gh2Excel class.
         /// </summary>
         public Gh2Excel()
-          : base("GH2Excel", "GH2Excel",
+          : base("GH转Excel", "GH转Excel",
               "将GH中的数据写入Excel中",
               "Parrot", "Excel")
         {

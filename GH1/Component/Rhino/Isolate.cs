@@ -14,7 +14,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the Isolate class.
         /// </summary>
         public Isolate()
-          : base("Isolate", "Isolate",
+          : base("隔离显示", "隔离显示",
               "隔离显示",
               "Parrot", "Rhino")
         {

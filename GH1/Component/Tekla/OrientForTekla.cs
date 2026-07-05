@@ -16,7 +16,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the OrientForTekla class.
         /// </summary>
         public OrientForTekla()
-          : base("OrientForTekla", "OrientForTekla",
+          : base("Tekla定向", "Tekla定向",
               "OrientForTekla, Copy",
               "Parrot", "Tekla")
         {

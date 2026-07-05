@@ -13,7 +13,7 @@ namespace NS_Parrot
     public class ExtrudeToSurface : GH_Component
     {
         public ExtrudeToSurface()
-          : base("ExtrudeToSurface", "拉伸至面",
+          : base("拉伸至面", "拉伸至面",
               "将闭合平面截面沿方向拉伸，并用目标曲面切割，得到从截面到曲面的实体",
               "Parrot", "Modeling")
         {

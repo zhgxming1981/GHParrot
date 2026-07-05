@@ -28,7 +28,7 @@ namespace NS_Parrot
         private readonly List<string> _visibilityRuntimeMessages = new List<string>();
 
         public SelectRhinoObjectByLayerRun()
-          : base("SelectRhinoObjectByLayerRun", "按图层选物",
+          : base("按图层选物", "按图层选物",
               "按图层获取Rhino对象Guid，Run未接线时实时更新；接入Button时等待Button信号",
               "Parrot", "Rhino")
         {

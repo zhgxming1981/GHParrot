@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the Statistics_number class.
         /// </summary>
         public Statistics_number()
-          : base("Statistics_number", "统计Num",
+          : base("数字统计", "数字统计",
               "统计不同数字的数量",
               "Parrot", "Data")
         {

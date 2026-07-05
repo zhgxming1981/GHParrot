@@ -13,7 +13,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the MinItemInList class.
         /// </summary>
         public MinItemInList()
-          : base("MinItemInList", "找最小值",
+          : base("Min值", "Min值",
               "找列表中的最小值",
               "Parrot", "Data")
         {

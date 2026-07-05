@@ -17,7 +17,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the Group class.
         /// </summary>
         public Group()
-          : base("Group", "Group",
+          : base("成组", "成组",
               "提取组内对象",
               "Parrot", "Rhino")
         {

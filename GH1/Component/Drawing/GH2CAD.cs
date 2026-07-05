@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the GH2CAD class.
         /// </summary>
         public GH2CAD()
-          : base("GH2CAD", "GH2CAD",
+          : base("GH转CAD", "GH2CAD",
               "将GH中的直线、圆弧、多段线导入到CAD中",
               "Parrot", "Drawing")
         {

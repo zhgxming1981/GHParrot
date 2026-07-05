@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the Sketch class.
         /// </summary>
         public Sketch()
-          : base("Sketch", "草图",
+          : base("草图", "草图",
               "将Rhino中的草图导入到catia中",
               "Parrot", "Geometry")
         {

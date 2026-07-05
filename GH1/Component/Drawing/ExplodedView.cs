@@ -33,7 +33,7 @@ namespace NS_Parrot
         public bool ButtonRun { get; set; }
 
         public ExplodedView()
-          : base("ExplodedView", "爆炸图",
+          : base("爆炸图", "爆炸图",
               "按Guid生成GH爆炸图预览，不移动原Rhino对象",
               "Parrot", "Drawing")
         {

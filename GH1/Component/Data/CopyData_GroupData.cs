@@ -18,7 +18,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the CopyData_GroupData class.
         /// </summary>
         public CopyData_GroupData()
-          : base("CopyData_GroupData", "数据复制分组",
+          : base("数据复制分组", "数据复制分组",
               "数据复制分组",
               "Parrot", "Data")
         {

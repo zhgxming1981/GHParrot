@@ -12,7 +12,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the BakeForTekla class.
         /// </summary>
         public BakeForTekla()
-          : base("BakeForTekla", "BakeForTekla",
+          : base("Bake到Tekla", "Bake到Tekla",
               "BakeForTekla",
               "Parrot", "Tekla")
         {

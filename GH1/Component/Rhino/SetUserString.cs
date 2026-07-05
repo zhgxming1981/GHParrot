@@ -22,7 +22,7 @@ namespace NS_Parrot
         private bool _lastInputRun;
 
         public SetUserString()
-          : base("SetUserString", "写入UserStr",
+          : base("写入UserString", "写入UserString",
               "给Rhino对象写入UserString",
               "Parrot", "Rhino")
         {

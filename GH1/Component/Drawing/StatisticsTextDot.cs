@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the StatisticsDotText class.
         /// </summary>
         public StatisticsTextDot()
-          : base("StatisticsTextDot", "统计TextDot",
+          : base("统计TextDot", "统计TextDot",
               "Description",
               "Parrot", "Drawing")
         {

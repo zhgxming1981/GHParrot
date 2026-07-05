@@ -14,7 +14,7 @@ namespace NS_Parrot
         public DataGate()
           : base("数据闸门", "数据闸门",
               "按刷新按钮转发并缓存上游数据，用于阻止参数修改立即触发下游重计算",
-              "Parrot", "Data")
+              "Parrot", "Utility")
         {
         }
 

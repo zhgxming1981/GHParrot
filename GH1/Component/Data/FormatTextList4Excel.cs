@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the GetUserStringByKey class.
         /// </summary>
         public FormatTextList4Excel()
-          : base("FormatTextList4Excel", "格式化文本",
+          : base("Excel文本格式化", "格式化文本",
               "将列表格式转化为Excel写入格式",
               "Parrot", "Data")
         {

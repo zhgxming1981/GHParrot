@@ -18,7 +18,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the SelectRhinoObjectByLayer class.
         /// </summary>
         public SelectRhinoObjectByLayer()
-          : base("SelectRhinoObjectByLayer", "按图层选中",
+          : base("按图层选中", "按图层选中",
               "按图层选中",
               "Parrot", "Rhino")
         {

@@ -14,7 +14,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the EquivalentVector class.
         /// </summary>
         public EquivalentVector()
-          : base("EquivalentVector", "等效向量",
+          : base("等效向量", "等效向量",
               "判断2个向量是否等效",
               "Parrot", "Geometry")
         {

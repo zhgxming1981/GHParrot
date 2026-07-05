@@ -17,7 +17,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the GetReferenceSurface class.
         /// </summary>
         public GetReferenceSurface()
-          : base("GetReferenceSurface", "获取参考面",
+          : base("获取参考面", "获取参考面",
               "获取参考面",
               "Parrot", "Modeling")
         {

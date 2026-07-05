@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the DeconstructRhinoObjectAttributes class.
         /// </summary>
         public DeconstructRhinoObjectAttributes()
-          : base("DeconstructRhinoObjectAttributes", "解析属性",
+          : base("解析Rhino属性", "解析属性",
               "解析Rhino对象属性",
               "Parrot", "Rhino")
         {

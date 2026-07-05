@@ -48,7 +48,7 @@ namespace NS_Parrot
         private const string SourceFileTimeKey = "Parrot.ImportRhinoBlock_V2.SourceFileLastWriteUtc";
 
         public ImportRhinoBlock_V2()
-          : base("ImportRhinoBlock_V2", "ImportRhinoBlock_V2",
+          : base("导入Rhino块V2", "导入块V2",
               "从未打开的Rhino文件导入指定块，并在当前Rhino中新增一个块实例",
               "Parrot", "Rhino")
         {

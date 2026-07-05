@@ -11,7 +11,7 @@ namespace NS_Parrot
     public class GetFileNamesByExtension : GH_Component
     {
         public GetFileNamesByExtension()
-          : base("GetFileNamesByExtension", "FileNames",
+          : base("按扩展名取文件", "取文件名",
               "获取指定文件夹中指定后缀的文件名",
               "Parrot", "Utility")
         {

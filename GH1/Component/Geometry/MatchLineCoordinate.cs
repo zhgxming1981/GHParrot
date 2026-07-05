@@ -13,7 +13,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the MatchLineCoordinate class.
         /// </summary>
         public MatchLineCoordinate()
-          : base("MatchLineCoordinate", "坐标匹配",
+          : base("坐标匹配", "坐标匹配",
               "坐标匹配，x1,y1,z1,x2,y2,z2",
               "Parrot", "Geometry")
         {

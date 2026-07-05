@@ -17,7 +17,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the NumberForTekla class.
         /// </summary>
         public NumberForTekla()
-          : base("NumberForTekla", "tekla编号",
+          : base("Tekla编号", "Tekla编号",
               "Description",
               "Parrot", "Tekla")
         {

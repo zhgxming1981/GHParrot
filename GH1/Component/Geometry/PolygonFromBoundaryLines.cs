@@ -13,7 +13,7 @@ namespace NS_Parrot
     public class PolygonFromBoundaryLines : GH_Component
     {
         public PolygonFromBoundaryLines()
-          : base("PolygonFromBoundaryLines", "边线成多边形",
+          : base("边线成多边形", "边线成多边形",
               "根据多条无序边线生成一个闭合多边形。边线按直线处理，可相交、可不相交、可过长。",
               "Parrot", "Geometry")
         {

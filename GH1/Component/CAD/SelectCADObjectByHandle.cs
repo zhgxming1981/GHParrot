@@ -22,7 +22,7 @@ namespace NS_Parrot
         public List<string> Messages { get; } = new List<string>();
 
         public SelectCADObjectByHandle()
-          : base("SelectCADObjectByHandle", "选中CAD句柄",
+          : base("按CAD句柄选择", "选中CAD句柄",
               "根据CAD句柄选中CAD对象，并缩放到对象位置",
               "Parrot", "CAD")
         {

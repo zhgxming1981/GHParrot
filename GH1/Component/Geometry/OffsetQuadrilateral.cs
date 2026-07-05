@@ -16,7 +16,7 @@ namespace NS_Parrot
         private readonly List<LabelData> _labels = new List<LabelData>();
 
         public OffsetQuadrilateral()
-          : base("OffsetQuadrilateral", "四边形偏移",
+          : base("四边形偏移", "四边形偏移",
               "输入平面四边形面和正法向，按上、下、左、右偏移生成新的四边形。正值向内，负值向外。",
               "Parrot", "Geometry")
         {

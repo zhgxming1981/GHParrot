@@ -15,7 +15,7 @@ namespace NS_Parrot
         private string _lastDocumentPath = "";
 
         public SelectRhinoBlockByName()
-          : base("SelectRhinoBlockByName", "按块名选块",
+          : base("按块名选块", "按块名选块",
               "按块名和图层筛选当前Rhino模型中的块实例，输入支持正则表达式",
               "Parrot", "Rhino")
         {

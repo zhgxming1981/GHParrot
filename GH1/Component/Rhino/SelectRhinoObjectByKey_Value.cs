@@ -15,7 +15,7 @@ namespace NS_Parrot
         /// Initializes a new instance of the SelectRhinoObjectByKey_Value class.
         /// </summary>
         public SelectRhinoObjectByKey_Value()
-          : base("SelectRhinoObjectByKey_Value", "按Uerstring选中",
+          : base("按UserString选择", "按UserString选择",
               "按Uerstring选中",
               "Parrot", "Rhino")
         {
