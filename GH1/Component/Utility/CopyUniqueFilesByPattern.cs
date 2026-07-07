@@ -88,6 +88,7 @@ namespace NS_Parrot
                 Directory.CreateDirectory(fullTargetFolder);
 
                 List<string> files = Directory.EnumerateFiles(fullSourceFolder, searchPattern, SearchOption.AllDirectories)
+                    .Where(file => MatchesSuffix(file, pattern))
                     .Where(file => !IsInDirectory(file, fullTargetFolder))
                     .ToList();
 
@@ -135,15 +136,42 @@ namespace NS_Parrot
 
             string result = pattern.Trim();
             if (result.IndexOfAny(new[] { '*', '?' }) >= 0)
+            {
+                if (result.StartsWith(".", StringComparison.Ordinal))
+                    return "*" + result;
+
+                if (result.IndexOf('.') < 0)
+                    return "*." + result;
+
                 return result;
+            }
 
             if (result.StartsWith(".", StringComparison.Ordinal))
-                return "*" + result;
+                return "*";
 
             if (result.IndexOf('.') < 0)
-                return "*." + result;
+                return "*";
 
             return result;
+        }
+
+        private static bool MatchesSuffix(string filePath, string pattern)
+        {
+            if (string.IsNullOrWhiteSpace(pattern))
+                return true;
+
+            string result = pattern.Trim();
+            if (result == "*")
+                return true;
+
+            if (result.IndexOfAny(new[] { '*', '?' }) >= 0)
+                return true;
+
+            string extension = result.StartsWith(".", StringComparison.Ordinal)
+                ? result
+                : "." + result;
+
+            return string.Equals(Path.GetExtension(filePath), extension, StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsInDirectory(string filePath, string directory)
