@@ -20,8 +20,8 @@ namespace NS_Parrot
         /// Initializes a new instance of the GH2ExcelTemplateV2 class.
         /// </summary>
         public GH2ExcelTemplateV2()
-          : base("GH转Excel模板", "GH2Excel",
-              "套用模板填写Excel表格增强版，可以从指定位置写入，也可以自动找到末尾追加",
+          : base("按模板写入Excel", "Excel模板",
+              "套用模板写入 Excel，可从指定位置写入，也可以自动找到末尾追加",
               "Parrot", "Excel")
         {
         }
@@ -36,21 +36,21 @@ namespace NS_Parrot
 
         protected override void RegisterInputParams(GH_InputParamManager p)
         {
-            p.AddTextParameter("TemplatePath", "TP", "模板路径（可空）", GH_ParamAccess.item);
-            p.AddTextParameter("TemplateSheet", "TS", "模板Sheet（可空）", GH_ParamAccess.item);
-            p.AddTextParameter("TargetPath", "DP", "目标路径", GH_ParamAccess.item);
-            p.AddTextParameter("TargetSheet", "DS", "目标Sheet", GH_ParamAccess.item);
-            p.AddTextParameter("StartCell", "SC", "起始单元格", GH_ParamAccess.item);
-            p.AddTextParameter("Data", "D", "数据 A|B|C", GH_ParamAccess.list);
-            p.AddBooleanParameter("Overwrite", "O", "覆盖模式", GH_ParamAccess.item, true);
-            p.AddBooleanParameter("Write", "W", "执行", GH_ParamAccess.item, false);
-            p.AddBooleanParameter("显示", "显示", "写入完成后是否显示Excel，默认true", GH_ParamAccess.item, true);
+            p.AddTextParameter("模板", "模板", "模板 Excel 文件完整路径；目标文件不存在时会复制此模板生成目标文件", GH_ParamAccess.item);
+            p.AddTextParameter("模板表", "模板表", "模板 Sheet 名；目标 Sheet 不存在时，会优先复制这个 Sheet", GH_ParamAccess.item);
+            p.AddTextParameter("路径", "路径", "目标 Excel 文件完整路径；目标文件不存在时会从模板复制生成", GH_ParamAccess.item);
+            p.AddTextParameter("表", "表", "目标 Sheet 名；不存在时会新建，或从模板表复制后命名", GH_ParamAccess.item);
+            p.AddTextParameter("位置", "位置", "起始位置，例如 A1", GH_ParamAccess.item);
+            p.AddTextParameter("数据", "数据", "要写入的数据，每项一行，列用 | 分隔，例如 A|B|C", GH_ParamAccess.list);
+            p.AddBooleanParameter("覆盖", "覆盖", "True 覆盖起始位置后的旧内容；False 从起始列末尾追加", GH_ParamAccess.item, true);
+            p.AddBooleanParameter("写入", "写入", "从 False 变为 True 时执行写入，也可以点击电池按钮执行", GH_ParamAccess.item, false);
+            p.AddBooleanParameter("显示", "显示", "写入完成后是否显示 Excel，默认 True", GH_ParamAccess.item, true);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager p)
         {
-            p.AddTextParameter("Log", "L", "日志", GH_ParamAccess.item);
-            p.AddBooleanParameter("Done", "Done", "写入完成后输出一次true脉冲，可连接下一级写入电池", GH_ParamAccess.item);
+            p.AddTextParameter("日志", "日志", "写入日志", GH_ParamAccess.item);
+            p.AddBooleanParameter("完成", "完成", "写入完成后输出一次 True 脉冲，可连接下一级写入电池", GH_ParamAccess.item);
         }
 
         public override void CreateAttributes()
@@ -63,7 +63,7 @@ namespace NS_Parrot
         {
             base.AppendAdditionalMenuItems(menu);
 
-            Menu_AppendItem(menu, "运行 Run", OnRunClicked);
+            Menu_AppendItem(menu, "运行", OnRunClicked);
             Menu_AppendItem(menu, "显示 Excel", OnShowExcelClicked);
         }
 
@@ -106,7 +106,7 @@ namespace NS_Parrot
             }
             catch
             {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "未找到Excel实例");
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "未找到 Excel 实例");
             }
         }
 
@@ -325,10 +325,10 @@ namespace NS_Parrot
                         app.Visible = false;
 
                     app.ScreenUpdating = false;
-                    System.Windows.Forms.MessageBox.Show("写入已经完成", "GH2Excel", System.Windows.Forms.MessageBoxButtons.OK, System.Windows.Forms.MessageBoxIcon.Information);
+                    System.Windows.Forms.MessageBox.Show("写入已经完成", "GH转Excel模板", System.Windows.Forms.MessageBoxButtons.OK, System.Windows.Forms.MessageBoxIcon.Information);
                 }
 
-                DA.SetData(0, $"完成：{rowCount}行 × {colCount}列");
+                DA.SetData(0, $"完成：{rowCount} 行 x {colCount} 列");
                 DA.SetData(1, true);
                 PulseDone();
             }
