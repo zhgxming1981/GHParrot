@@ -59,10 +59,27 @@ namespace NS_Parrot
             Attributes = new ClickCounterAttributes(this);
         }
 
+        protected override void AppendAdditionalComponentMenuItems(ToolStripDropDown menu)
+        {
+            base.AppendAdditionalComponentMenuItems(menu);
+
+            Menu_AppendSeparator(menu);
+            Menu_AppendItem(menu, "归零", (sender, args) => ResetCount());
+        }
+
         public void Increment()
         {
             Count++;
             _pulse = true;
+            CurrentButtonColor = ButtonColor.Black;
+            ExpireSolution(true);
+        }
+
+        private void ResetCount()
+        {
+            Count = 0;
+            _pulse = false;
+            StopPulseResetTimer();
             CurrentButtonColor = ButtonColor.Black;
             ExpireSolution(true);
         }

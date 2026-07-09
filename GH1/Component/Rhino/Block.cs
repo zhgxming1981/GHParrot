@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using CommonFunction;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Types;
-using Rhino.DocObjects;
 using Rhino;
+using Rhino.DocObjects;
 using Rhino.Geometry;
 using Grasshopper.Kernel.Special;
 
@@ -16,9 +16,9 @@ namespace NS_Parrot
         /// Initializes a new instance of the Block class.
         /// </summary>
         public Block()
-          : base("数据块", "数据块",
-              "解析block",
-              "Parrot", "Utility")
+          : base("解析块", "解析块",
+              "解析Rhino块",
+              "Parrot", "Rhino")
         {
         }
 
@@ -40,7 +40,6 @@ namespace NS_Parrot
             pManager.AddGeometryParameter("炸开块", "炸开块", "彻底炸开块", GH_ParamAccess.list);
             pManager.AddGenericParameter("属性", "属性", "属性", GH_ParamAccess.list);
             pManager.AddTransformParameter("变换", "变换", "变换", GH_ParamAccess.list);
-
         }
 
         /// <summary>
@@ -49,15 +48,14 @@ namespace NS_Parrot
         /// <param name="DA">The DA object is used to retrieve from inputs and store in outputs.</param>
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-
             if (!CHardware.CheckLegality())
                 return;
 
             GH_Guid guid = null;
             if (!DA.GetData(0, ref guid)) { return; }
 
-            Rhino.DocObjects.RhinoObject obj = RhinoDoc.ActiveDoc.Objects.Find(guid.Value);
-            if (obj is Rhino.DocObjects.InstanceObject)
+            RhinoObject obj = RhinoDoc.ActiveDoc.Objects.Find(guid.Value);
+            if (obj is InstanceObject)
             {
                 InstanceObject blockObject = (InstanceObject)obj;
                 DA.SetData(0, blockObject.InstanceDefinition.Name);
@@ -79,10 +77,7 @@ namespace NS_Parrot
                 DA.SetDataList(2, geo);
                 DA.SetDataList(3, obj_att);
                 DA.SetDataList(4, transform);
-              
             }
-
-
         }
 
         /// <summary>

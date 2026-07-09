@@ -1,4 +1,6 @@
+using GH_IO.Serialization;
 using Grasshopper.Kernel;
+using Grasshopper.Kernel.Parameters;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -8,9 +10,22 @@ using Excel = Microsoft.Office.Interop.Excel;
 
 namespace NS_Parrot
 {
-    public class GH_ExcelSummary : GH_Component
+    public class GH_ExcelSummary : GH_Component, IGH_VariableParameterComponent
     {
+        private const string SettingsChunk = "ExcelSummarySettings";
+        private const string NumberColumnNickName = "编号列";
+        private const string PrefixNickName = "前缀";
+        private const string WidthNickName = "长度";
+        private const string StartNickName = "起始";
+        private const string ConnectNickName = "连字";
+        private const string RunNickName = "Run";
+        private const string PathNickName = "路径";
+        private const string SheetNickName = "Sheet";
+        private const string RuleNickName = "分类列";
+        private const string StatusNickName = "状态";
+
         private bool _triggerRun = false;
+        private bool _numberingEnabled = true;
 
         public GH_ExcelSummary()
           : base("Excel分类汇总", "Excel汇总",
@@ -29,21 +44,33 @@ namespace NS_Parrot
                 "分类与汇总列定义，格式同 GH_ExcelMultiSummary 的 CD 端口：A~D,(E~G),H~J,{K~M},L；()=分类列，{}=汇总列，其它=复制列",
                 GH_ParamAccess.item
             );
-            p.AddTextParameter("新编号列", "编号列", "新编号写回此列，留空则跳过编号", GH_ParamAccess.item);
-            p.AddTextParameter("编号前缀", "前缀", "带双引号如\"A\"=固定前缀A，不带引号如A=从A列读取前缀", GH_ParamAccess.item);
-            p.AddIntegerParameter("编号长度", "长度", "编号数字补齐长度，0=不补齐", GH_ParamAccess.item, 0);
-            p.AddIntegerParameter("起始编号", "起始", "起始序号，默认1", GH_ParamAccess.item, 1);
-            p.AddTextParameter("连字符", "连字", "前缀与数字间的连接符，列前缀模式时生效", GH_ParamAccess.item);
-            p.AddBooleanParameter("Run", "Run", "上升沿触发执行", GH_ParamAccess.item, false);
+            p.AddTextParameter("新编号列", NumberColumnNickName, "新编号写回此列", GH_ParamAccess.item);
+            p.AddTextParameter("编号前缀", PrefixNickName, "带双引号如\"A\"=固定前缀A，不带引号如A=从A列读取前缀", GH_ParamAccess.item);
+            p.AddIntegerParameter("编号长度", WidthNickName, "编号数字补齐长度，0=不补齐", GH_ParamAccess.item, 0);
+            p.AddIntegerParameter("起始编号", StartNickName, "起始序号，默认1", GH_ParamAccess.item, 1);
+            p.AddTextParameter("连字符", ConnectNickName, "前缀与数字间的连接符，列前缀模式时生效", GH_ParamAccess.item);
+            p.AddBooleanParameter("Run", RunNickName, "上升沿触发执行", GH_ParamAccess.item, false);
+
+            for (int i = 3; i <= 7; i++)
+                p[i].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager p)
         {
-            p.AddTextParameter("状态", "状态", "执行结果信息", GH_ParamAccess.item);
+            p.AddTextParameter("状态", StatusNickName, "执行结果信息", GH_ParamAccess.item);
         }
 
         protected override void AppendAdditionalComponentMenuItems(ToolStripDropDown menu)
         {
+            base.AppendAdditionalComponentMenuItems(menu);
+
+            Menu_AppendSeparator(menu);
+            ToolStripMenuItem numberingMenu = new ToolStripMenuItem("编号模式");
+            menu.Items.Add(numberingMenu);
+            Menu_AppendItem(numberingMenu.DropDown, "加编号", (s, e) => SetNumberingMode(true), true, _numberingEnabled);
+            Menu_AppendItem(numberingMenu.DropDown, "不加编号", (s, e) => SetNumberingMode(false), true, !_numberingEnabled);
+
+            Menu_AppendSeparator(menu);
             Menu_AppendItem(menu, "运行", (s, e) => { _triggerRun = true; ExpireSolution(true); });
             Menu_AppendItem(menu, "显示Excel", (s, e) =>
             {
@@ -55,7 +82,6 @@ namespace NS_Parrot
                 }
                 catch { }
             });
-            base.AppendAdditionalComponentMenuItems(menu);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -83,12 +109,12 @@ namespace NS_Parrot
                     DA.SetData(0, "错误：请输入分类列");
                     return;
                 }
-                DA.GetData(3, ref numberColumn);
-                DA.GetData(4, ref prefixInput);
-                DA.GetData(5, ref numberWidth);
-                DA.GetData(6, ref startNo);
-                DA.GetData(7, ref connectString);
-                DA.GetData(8, ref run);
+                bool gotNumberColumn = GetInputData(DA, NumberColumnNickName, ref numberColumn);
+                bool gotPrefix = GetInputData(DA, PrefixNickName, ref prefixInput);
+                bool gotWidth = GetInputData(DA, WidthNickName, ref numberWidth);
+                bool gotStart = GetInputData(DA, StartNickName, ref startNo);
+                bool gotConnect = GetInputData(DA, ConnectNickName, ref connectString);
+                GetInputData(DA, RunNickName, ref run);
 
                 if (!_triggerRun && !run)
                 {
@@ -121,24 +147,51 @@ namespace NS_Parrot
                 bool useFixedPrefix = false;
                 string fixedPrefix = "";
                 int prefixColumnIndex = -1;
-                bool hasNumbering = !string.IsNullOrWhiteSpace(numberColumn);
+                bool hasNumbering = _numberingEnabled;
 
                 if (hasNumbering)
                 {
-                    if (string.IsNullOrEmpty(prefixInput))
+                    if (!gotNumberColumn || string.IsNullOrWhiteSpace(numberColumn))
                     {
-                        DA.SetData(0, "错误：新编号列非空时，编号前缀不能为空");
+                        DA.SetData(0, "错误：加编号模式下，编号列不能为空");
+                        return;
+                    }
+                    if (!gotPrefix || string.IsNullOrWhiteSpace(prefixInput))
+                    {
+                        DA.SetData(0, "错误：加编号模式下，编号前缀不能为空");
+                        return;
+                    }
+                    if (!gotWidth)
+                    {
+                        DA.SetData(0, "错误：加编号模式下，编号长度不能为空");
+                        return;
+                    }
+                    if (!gotStart)
+                    {
+                        DA.SetData(0, "错误：加编号模式下，起始编号不能为空");
                         return;
                     }
                     if (prefixInput.StartsWith("\"") && prefixInput.EndsWith("\""))
                     {
                         useFixedPrefix = true;
                         fixedPrefix = prefixInput.Substring(1, prefixInput.Length - 2);
+                        connectString = "";
                     }
                     else
                     {
+                        if (!gotConnect || string.IsNullOrWhiteSpace(connectString))
+                        {
+                            DA.SetData(0, "错误：列前缀编号时，连字符不能为空");
+                            return;
+                        }
+
                         useFixedPrefix = false;
                         prefixColumnIndex = ColumnNameToIndex(prefixInput.Trim());
+                        if (prefixColumnIndex <= 0)
+                        {
+                            DA.SetData(0, "错误：编号前缀列无效");
+                            return;
+                        }
                     }
                 }
 
@@ -147,49 +200,95 @@ namespace NS_Parrot
 
                 try
                 {
-                    app = new Excel.Application();
-                    app.Visible = false;
-                    app.ScreenUpdating = false;
-                    app.DisplayAlerts = false;
-                    app.EnableEvents = false;
-                    app.Calculation = Excel.XlCalculation.xlCalculationManual;
+                    try
+                    {
+                        app = new Excel.Application();
+                    }
+                    catch (Exception ex)
+                    {
+                        DA.SetData(0, "错误：启动Excel失败，原因：" + ex.Message);
+                        return;
+                    }
 
-                    wb = app.Workbooks.Open(filePath);
-                    Excel.Worksheet ws = GetSheet(wb, sheetName);
+                    TryPrepareExcelState(app);
+
+                    try
+                    {
+                        wb = app.Workbooks.Open(filePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        DA.SetData(0, "错误：打开Excel文件失败，原因：" + ex.Message);
+                        return;
+                    }
+
+                    Excel.Worksheet ws;
+                    try
+                    {
+                        ws = GetSheet(wb, sheetName);
+                    }
+                    catch (Exception ex)
+                    {
+                        DA.SetData(0, "错误：获取Sheet失败，原因：" + ex.Message);
+                        return;
+                    }
                     if (ws == null)
                     {
                         DA.SetData(0, "错误：未找到Sheet \"" + sheetName + "\"");
                         return;
                     }
 
-                    ws.Activate();
-                    int lastRow = ws.UsedRange.Rows.Count;
+                    int lastRow;
+                    try
+                    {
+                        ws.Activate();
+                        lastRow = ws.UsedRange.Rows.Count;
+                    }
+                    catch (Exception ex)
+                    {
+                        DA.SetData(0, "错误：读取数据区域失败，原因：" + ex.Message);
+                        return;
+                    }
                     if (lastRow <= 1)
                     {
                         DA.SetData(0, "错误：Sheet中无数据");
                         return;
                     }
 
-                    SortSheet(ws, classColumns);
-                    string resultMsg = BuildSummary(wb, ws, copyColumns, classColumns, sumColumns, parsed.ordered,
-                        hasNumbering, numberColumn, useFixedPrefix, fixedPrefix,
-                        prefixColumnIndex, numberWidth, startNo, connectString);
-                    wb.Save();
+                    string resultMsg;
+                    try
+                    {
+                        resultMsg = BuildSummary(wb, ws, copyColumns, classColumns, sumColumns, parsed.ordered,
+                            hasNumbering, numberColumn, useFixedPrefix, fixedPrefix,
+                            prefixColumnIndex, numberWidth, startNo, connectString);
+                    }
+                    catch (Exception ex)
+                    {
+                        DA.SetData(0, "错误：生成汇总失败，原因：" + ex.Message);
+                        return;
+                    }
+
+                    try
+                    {
+                        wb.Save();
+                    }
+                    catch (Exception ex)
+                    {
+                        DA.SetData(0, "错误：保存Excel失败，原因：" + ex.Message);
+                        return;
+                    }
                     DA.SetData(0, resultMsg);
                 }
                 finally
                 {
                     if (app != null)
-                    {
-                        app.ScreenUpdating = true;
-                        app.DisplayAlerts = true;
-                        app.EnableEvents = true;
-                        app.Calculation = Excel.XlCalculation.xlCalculationAutomatic;
-                    }
+                        TryRestoreExcelState(app);
+
                     ReleaseComObject(wb);
+
                     if (app != null)
                     {
-                        app.Quit();
+                        TryQuitExcel(app);
                         ReleaseComObject(app);
                     }
                 }
@@ -198,6 +297,321 @@ namespace NS_Parrot
             {
                 DA.SetData(0, "错误：" + ex.Message);
             }
+        }
+
+        private void SetNumberingMode(bool enabled)
+        {
+            if (_numberingEnabled == enabled)
+                return;
+
+            _numberingEnabled = enabled;
+            NormalizeParams(true);
+            ExpireSolution(true);
+        }
+
+        public bool CanInsertParameter(GH_ParameterSide side, int index)
+        {
+            return false;
+        }
+
+        public bool CanRemoveParameter(GH_ParameterSide side, int index)
+        {
+            return false;
+        }
+
+        public IGH_Param CreateParameter(GH_ParameterSide side, int index)
+        {
+            return null;
+        }
+
+        public bool DestroyParameter(GH_ParameterSide side, int index)
+        {
+            return false;
+        }
+
+        public void VariableParameterMaintenance()
+        {
+            NormalizeParams(false);
+        }
+
+        private void NormalizeParams(bool notify)
+        {
+            bool changed = NormalizeInputParams();
+            changed |= NormalizeOutputParams();
+
+            if (notify && changed)
+            {
+                Params.OnParametersChanged();
+                if (Attributes != null)
+                    Attributes.ExpireLayout();
+            }
+        }
+
+        private bool NormalizeInputParams()
+        {
+            var desired = GetDesiredInputNickNames();
+            bool changed = false;
+            var desiredSet = new HashSet<string>(desired, StringComparer.OrdinalIgnoreCase);
+            var firstIndexByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < Params.Input.Count; i++)
+            {
+                string nickName = Params.Input[i].NickName;
+                if (!firstIndexByName.ContainsKey(nickName))
+                    firstIndexByName[nickName] = i;
+            }
+
+            for (int i = Params.Input.Count - 1; i >= 0; i--)
+            {
+                string nickName = Params.Input[i].NickName;
+                if (!desiredSet.Contains(nickName) || firstIndexByName[nickName] != i)
+                {
+                    Params.UnregisterInputParameter(Params.Input[i], false);
+                    changed = true;
+                }
+            }
+
+            for (int i = 0; i < desired.Count; i++)
+            {
+                string nickName = desired[i];
+                int currentIndex = FindInputIndex(nickName);
+                if (currentIndex < 0)
+                {
+                    Params.RegisterInputParam(CreateStandardInputParam(nickName), Math.Min(i, Params.Input.Count));
+                    changed = true;
+                    continue;
+                }
+
+                MaintainStandardInputParam(Params.Input[currentIndex], nickName);
+            }
+
+            return changed;
+        }
+
+        private bool NormalizeOutputParams()
+        {
+            bool changed = false;
+
+            for (int i = Params.Output.Count - 1; i >= 0; i--)
+            {
+                if (i > 0)
+                {
+                    Params.UnregisterOutputParameter(Params.Output[i], false);
+                    changed = true;
+                }
+            }
+
+            if (Params.Output.Count == 0)
+            {
+                Params.RegisterOutputParam(CreateStatusParam());
+                changed = true;
+            }
+
+            if (Params.Output.Count > 0)
+                MaintainStandardOutputParam(Params.Output[0]);
+
+            return changed;
+        }
+
+        private List<string> GetDesiredInputNickNames()
+        {
+            var desired = new List<string> { PathNickName, SheetNickName, RuleNickName };
+            if (_numberingEnabled)
+                desired.AddRange(new[] { NumberColumnNickName, PrefixNickName, WidthNickName, StartNickName, ConnectNickName });
+            desired.Add(RunNickName);
+            return desired;
+        }
+
+        private IGH_Param CreateStandardInputParam(string nickName)
+        {
+            switch (nickName)
+            {
+                case PathNickName: return CreatePathParam();
+                case SheetNickName: return CreateSheetParam();
+                case RuleNickName: return CreateRuleParam();
+                case NumberColumnNickName: return CreateNumberColumnParam();
+                case PrefixNickName: return CreatePrefixParam();
+                case WidthNickName: return CreateWidthParam();
+                case StartNickName: return CreateStartParam();
+                case ConnectNickName: return CreateConnectParam();
+                case RunNickName: return CreateRunParam();
+                default: return new Param_String { NickName = nickName, Name = nickName, Access = GH_ParamAccess.item, Optional = true };
+            }
+        }
+
+        private void MaintainStandardInputParam(IGH_Param param, string nickName)
+        {
+            IGH_Param standard = CreateStandardInputParam(nickName);
+            param.Name = standard.Name;
+            param.NickName = standard.NickName;
+            param.Description = standard.Description;
+            param.Access = standard.Access;
+            param.Optional = standard.Optional;
+        }
+
+        private void MaintainStandardOutputParam(IGH_Param param)
+        {
+            IGH_Param standard = CreateStatusParam();
+            param.Name = standard.Name;
+            param.NickName = standard.NickName;
+            param.Description = standard.Description;
+            param.Access = standard.Access;
+            param.Optional = standard.Optional;
+        }
+
+        private int FindInputIndex(string nickName)
+        {
+            for (int i = 0; i < Params.Input.Count; i++)
+            {
+                if (string.Equals(Params.Input[i].NickName, nickName, StringComparison.OrdinalIgnoreCase))
+                    return i;
+            }
+
+            return -1;
+        }
+
+        private bool GetInputData<T>(IGH_DataAccess da, string nickName, ref T value)
+        {
+            int index = FindInputIndex(nickName);
+            return index >= 0 && da.GetData(index, ref value);
+        }
+
+        private static Param_String CreatePathParam()
+        {
+            return new Param_String
+            {
+                Name = "文件路径",
+                NickName = PathNickName,
+                Description = "Excel文件完整路径",
+                Access = GH_ParamAccess.item
+            };
+        }
+
+        private static Param_String CreateSheetParam()
+        {
+            return new Param_String
+            {
+                Name = "Sheet名",
+                NickName = SheetNickName,
+                Description = "目标工作表名称，为空则使用活动Sheet",
+                Access = GH_ParamAccess.item
+            };
+        }
+
+        private static Param_String CreateRuleParam()
+        {
+            return new Param_String
+            {
+                Name = "分类列",
+                NickName = RuleNickName,
+                Description = "分类与汇总列定义，格式同 GH_ExcelMultiSummary 的 CD 端口：A~D,(E~G),H~J,{K~M},L；()=分类列，{}=汇总列，其它=复制列",
+                Access = GH_ParamAccess.item
+            };
+        }
+
+        private static Param_Boolean CreateRunParam()
+        {
+            return new Param_Boolean
+            {
+                Name = "Run",
+                NickName = RunNickName,
+                Description = "上升沿触发执行",
+                Access = GH_ParamAccess.item,
+                Optional = true
+            };
+        }
+
+        private static Param_String CreateStatusParam()
+        {
+            return new Param_String
+            {
+                Name = "状态",
+                NickName = StatusNickName,
+                Description = "执行结果信息",
+                Access = GH_ParamAccess.item
+            };
+        }
+
+        private static Param_String CreateNumberColumnParam()
+        {
+            return new Param_String
+            {
+                Name = "新编号列",
+                NickName = NumberColumnNickName,
+                Description = "新编号写回此列",
+                Access = GH_ParamAccess.item,
+                Optional = true
+            };
+        }
+
+        private static Param_String CreatePrefixParam()
+        {
+            return new Param_String
+            {
+                Name = "编号前缀",
+                NickName = PrefixNickName,
+                Description = "带双引号如\"A\"=固定前缀A，不带引号如A=从A列读取前缀",
+                Access = GH_ParamAccess.item,
+                Optional = true
+            };
+        }
+
+        private static Param_Integer CreateWidthParam()
+        {
+            return new Param_Integer
+            {
+                Name = "编号长度",
+                NickName = WidthNickName,
+                Description = "编号数字补齐长度，0=不补齐",
+                Access = GH_ParamAccess.item,
+                Optional = true
+            };
+        }
+
+        private static Param_Integer CreateStartParam()
+        {
+            return new Param_Integer
+            {
+                Name = "起始编号",
+                NickName = StartNickName,
+                Description = "起始序号",
+                Access = GH_ParamAccess.item,
+                Optional = true
+            };
+        }
+
+        private static Param_String CreateConnectParam()
+        {
+            return new Param_String
+            {
+                Name = "连字符",
+                NickName = ConnectNickName,
+                Description = "前缀与数字间的连接符，列前缀模式时生效",
+                Access = GH_ParamAccess.item,
+                Optional = true
+            };
+        }
+
+        public override bool Write(GH_IWriter writer)
+        {
+            GH_IWriter chunk = writer.CreateChunk(SettingsChunk);
+            chunk.SetBoolean("NumberingEnabled", _numberingEnabled);
+            return base.Write(writer);
+        }
+
+        public override bool Read(GH_IReader reader)
+        {
+            bool result = base.Read(reader);
+            GH_IReader chunk = reader.FindChunk(SettingsChunk);
+            if (chunk != null)
+            {
+                bool numberingEnabled = _numberingEnabled;
+                if (chunk.TryGetBoolean("NumberingEnabled", ref numberingEnabled))
+                    _numberingEnabled = numberingEnabled;
+            }
+
+            NormalizeParams(true);
+            return result;
         }
 
         private (List<int> copyColumns, List<int> classColumns, List<int> sumColumns, List<(int col, int type)> ordered) ParseColumnRules(string rule)
@@ -211,7 +625,7 @@ namespace NS_Parrot
                 return (copyCols, classCols, sumCols, ordered);
 
             rule = rule.Replace((char)0xFF0C, ',');
-            var parts = rule.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+            var parts = SplitRuleParts(rule);
 
             foreach (var raw in parts)
             {
@@ -230,6 +644,59 @@ namespace NS_Parrot
                     type = 2;
                     part = part.Substring(1, part.Length - 2).Trim();
                 }
+
+                AddColumnToken(part, type, copyCols, classCols, sumCols, ordered);
+            }
+
+            copyCols = copyCols.Distinct().ToList();
+            classCols = classCols.Distinct().ToList();
+            sumCols = sumCols.Distinct().ToList();
+
+            foreach (var col in sumCols.ToList())
+            {
+                copyCols.Remove(col);
+                classCols.Remove(col);
+            }
+
+            foreach (var col in classCols.ToList())
+            {
+                copyCols.Remove(col);
+            }
+
+            return (copyCols, classCols, sumCols, ordered);
+        }
+
+        private List<string> SplitRuleParts(string rule)
+        {
+            var parts = new List<string>();
+            int depth = 0;
+            int start = 0;
+
+            for (int i = 0; i < rule.Length; i++)
+            {
+                char c = rule[i];
+                if (c == '(' || c == '{')
+                    depth++;
+                else if ((c == ')' || c == '}') && depth > 0)
+                    depth--;
+                else if (c == ',' && depth == 0)
+                {
+                    parts.Add(rule.Substring(start, i - start));
+                    start = i + 1;
+                }
+            }
+
+            parts.Add(rule.Substring(start));
+            return parts.Where(part => !string.IsNullOrWhiteSpace(part)).ToList();
+        }
+
+        private void AddColumnToken(string token, int type, List<int> copyCols, List<int> classCols, List<int> sumCols, List<(int col, int type)> ordered)
+        {
+            foreach (string raw in token.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string part = raw.Trim();
+                if (string.IsNullOrEmpty(part))
+                    continue;
 
                 if (part.Contains("~"))
                 {
@@ -253,23 +720,6 @@ namespace NS_Parrot
                     AddParsedColumn(ColumnNameToIndex(part), type, copyCols, classCols, sumCols, ordered);
                 }
             }
-
-            copyCols = copyCols.Distinct().ToList();
-            classCols = classCols.Distinct().ToList();
-            sumCols = sumCols.Distinct().ToList();
-
-            foreach (var col in sumCols.ToList())
-            {
-                copyCols.Remove(col);
-                classCols.Remove(col);
-            }
-
-            foreach (var col in classCols.ToList())
-            {
-                copyCols.Remove(col);
-            }
-
-            return (copyCols, classCols, sumCols, ordered);
         }
 
         private void AddParsedColumn(int col, int type, List<int> copyCols, List<int> classCols, List<int> sumCols, List<(int col, int type)> ordered)
@@ -321,71 +771,71 @@ namespace NS_Parrot
             return null;
         }
 
-        private void SortSheet(Excel.Worksheet ws, List<int> classColumns)
-        {
-            int usedRows = ws.UsedRange.Rows.Count;
-            int usedCols = ws.UsedRange.Columns.Count;
-            int firstRow = ws.UsedRange.Row;
-
-            ws.Sort.SortFields.Clear();
-
-            foreach (int col in classColumns)
-            {
-                var keyRange = ws.Range[ws.Cells[firstRow, col], ws.Cells[firstRow + usedRows - 1, col]];
-                ws.Sort.SortFields.Add(keyRange,
-                    Excel.XlSortOn.xlSortOnValues,
-                    Excel.XlSortOrder.xlAscending,
-                    Excel.XlSortDataOption.xlSortNormal);
-            }
-
-            var sortRange = ws.Range[ws.Cells[firstRow, 1], ws.Cells[firstRow + usedRows - 1, usedCols]];
-            ws.Sort.SetRange(sortRange);
-            ws.Sort.Header = Excel.XlYesNoGuess.xlYes;
-            ws.Sort.Orientation = Excel.XlSortOrientation.xlSortColumns;
-            ws.Sort.SortMethod = Excel.XlSortMethod.xlPinYin;
-            ws.Sort.MatchCase = false;
-            ws.Sort.Apply();
-        }
-
         private string BuildSummary(Excel.Workbook wb, Excel.Worksheet sourceSheet,
             List<int> copyColumns, List<int> classColumns, List<int> sumColumns, List<(int col, int type)> ordered,
             bool hasNumbering, string numberColumnName,
             bool useFixedPrefix, string fixedPrefix,
             int prefixColumnIndex, int numberWidth, int startNo, string connectString)
         {
-            int lastRow = sourceSheet.UsedRange.Rows.Count;
+            Excel.Range usedRange;
+            int usedRows;
+            int usedCols;
+            int firstRow;
+            int firstCol;
+            int lastRow;
+            int lastCol;
+            int headerRow;
+            int firstDataRow;
+            object usedData;
 
-            object[,] prefixData = null;
-            if (hasNumbering && !useFixedPrefix)
+            try
             {
-                prefixData = (object[,])sourceSheet.Range[
-                    sourceSheet.Cells[1, prefixColumnIndex],
-                    sourceSheet.Cells[lastRow, prefixColumnIndex]].Value2;
+                usedRange = sourceSheet.UsedRange;
+                usedRows = usedRange.Rows.Count;
+                usedCols = usedRange.Columns.Count;
+                firstRow = usedRange.Row;
+                firstCol = usedRange.Column;
+                lastRow = firstRow + usedRows - 1;
+                lastCol = firstCol + usedCols - 1;
+                headerRow = firstRow;
+                firstDataRow = firstRow + 1;
+                usedData = usedRange.Value2;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("读取数据区域失败，原因：" + ex.Message, ex);
             }
 
-            var summaryRows = new List<SummaryRow>();
-            object[] prevClassValues = null;
-            SummaryRow currentGroup = null;
-            int numberCounter = startNo;
-            string lastPrefixText = null;
+            ValidateReadableColumns(ordered.Select(item => item.col), firstCol, lastCol);
+            ValidateReadableColumns(classColumns, firstCol, lastCol);
+            ValidateReadableColumns(sumColumns, firstCol, lastCol);
+            if (hasNumbering && !useFixedPrefix)
+                ValidateReadableColumns(new[] { prefixColumnIndex }, firstCol, lastCol);
 
-            for (int row = 2; row <= lastRow; row++)
+            var summaryRows = new List<SummaryRow>();
+            var groups = new Dictionary<string, SummaryRow>();
+            var prefixCounters = new Dictionary<string, int>();
+            int fixedPrefixCounter = startNo;
+
+            for (int row = firstDataRow; row <= lastRow; row++)
             {
                 var currentValues = classColumns
-                    .Select(col => (sourceSheet.Cells[row, col] as Excel.Range)?.Value2)
+                    .Select(col => GetSheetValue(usedData, row, col, firstRow, firstCol))
                     .ToArray();
+                string groupKey = BuildGroupKey(currentValues);
 
-                bool isNewGroup = (row == 2) || !ValuesEqual(prevClassValues, currentValues);
-
-                if (isNewGroup)
+                if (!groups.TryGetValue(groupKey, out SummaryRow currentGroup))
                 {
-                    currentGroup = new SummaryRow();
-                    currentGroup.Values = new Dictionary<int, object>();
-                    currentGroup.SumValues = new Dictionary<int, double>();
+                    currentGroup = new SummaryRow
+                    {
+                        Values = new Dictionary<int, object>(),
+                        SumValues = new Dictionary<int, double>(),
+                        SourceRows = new List<int>()
+                    };
 
                     foreach (var item in ordered)
                     {
-                        object value = (sourceSheet.Cells[row, item.col] as Excel.Range)?.Value2;
+                        object value = GetSheetValue(usedData, row, item.col, firstRow, firstCol);
                         if (item.type == 2)
                             currentGroup.SumValues[item.col] = ToDouble(value);
                         else
@@ -396,68 +846,65 @@ namespace NS_Parrot
                     {
                         if (!useFixedPrefix)
                         {
-                            string currentPrefixText = GetCellText(prefixData[row, 1]);
-                            if (row == 2 || currentPrefixText != lastPrefixText)
-                            {
-                                numberCounter = 1;
-                            }
+                            string currentPrefixText = GetCellText(GetSheetValue(usedData, row, prefixColumnIndex, firstRow, firstCol));
+                            int numberCounter = prefixCounters.ContainsKey(currentPrefixText) ? prefixCounters[currentPrefixText] : startNo;
                             currentGroup.NumberText = BuildNumberText(currentPrefixText, numberCounter, numberWidth, connectString);
-                            numberCounter++;
-                            lastPrefixText = currentPrefixText;
+                            prefixCounters[currentPrefixText] = numberCounter + 1;
                         }
                         else
                         {
-                            currentGroup.NumberText = BuildNumberText(fixedPrefix, numberCounter, numberWidth, connectString);
-                            numberCounter++;
+                            currentGroup.NumberText = BuildNumberText(fixedPrefix, fixedPrefixCounter, numberWidth, connectString);
+                            fixedPrefixCounter++;
                         }
                     }
 
+                    groups[groupKey] = currentGroup;
                     summaryRows.Add(currentGroup);
                 }
                 else
                 {
                     foreach (int col in sumColumns)
                     {
-                        object value = (sourceSheet.Cells[row, col] as Excel.Range)?.Value2;
+                        object value = GetSheetValue(usedData, row, col, firstRow, firstCol);
                         if (!currentGroup.SumValues.ContainsKey(col))
                             currentGroup.SumValues[col] = 0;
                         currentGroup.SumValues[col] += ToDouble(value);
                     }
                 }
 
-                if (hasNumbering && currentGroup != null)
-                {
-                    int numCol = ColumnNameToIndex(numberColumnName);
-                    sourceSheet.Cells[row, numCol].Value2 = currentGroup.NumberText;
-                }
-
-                prevClassValues = currentValues;
+                currentGroup.SourceRows.Add(row);
             }
 
-            int sheetNo = 1;
-            string baseName = sourceSheet.Name + "(汇总)";
-            string newSheetName = baseName;
-            while (true)
+            if (hasNumbering)
             {
-                bool exists = false;
-                foreach (Excel.Worksheet s in wb.Sheets)
+                try
                 {
-                    if (s.Name == newSheetName) { exists = true; break; }
+                    WriteNumberingToSource(sourceSheet, summaryRows, numberColumnName);
                 }
-                if (!exists) break;
-                sheetNo++;
-                newSheetName = baseName.Replace("(汇总)", "") + "(" + sheetNo + ")";
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException("写回编号失败，原因：" + ex.Message, ex);
+                }
             }
 
-            var newSheet = (Excel.Worksheet)wb.Sheets.Add();
-            newSheet.Name = newSheetName;
+            Excel.Worksheet newSheet;
+            try
+            {
+                string newSheetName = GetAvailableSummarySheetName(wb, sourceSheet.Name);
+                newSheet = (Excel.Worksheet)wb.Sheets.Add();
+                newSheet.Name = newSheetName;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("创建汇总Sheet失败，原因：" + ex.Message, ex);
+            }
 
             int outRows = summaryRows.Count + 1;
             int outCols = ordered.Count + (hasNumbering ? 1 : 0);
             var outputData = new object[outRows, outCols];
 
             for (int i = 0; i < ordered.Count; i++)
-                outputData[0, i] = sourceSheet.Cells[1, ordered[i].col].Value2;
+                outputData[0, i] = GetSheetValue(usedData, headerRow, ordered[i].col, firstRow, firstCol);
             if (hasNumbering)
                 outputData[0, outCols - 1] = "编号";
 
@@ -476,23 +923,91 @@ namespace NS_Parrot
                     outputData[i + 1, outCols - 1] = row.NumberText;
             }
 
-            var targetRange = newSheet.Range[
-                newSheet.Cells[1, 1],
-                newSheet.Cells[outRows, outCols]];
-            targetRange.Value2 = outputData;
+            try
+            {
+                var targetRange = newSheet.Range[
+                    newSheet.Cells[1, 1],
+                    newSheet.Cells[outRows, outCols]];
+                targetRange.Value2 = outputData;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("写入汇总结果失败，原因：" + ex.Message, ex);
+            }
 
-            return "完成：共" + summaryRows.Count + "组，" + (lastRow - 1) + "行";
+            return "完成：共" + summaryRows.Count + "组，" + (usedRows - 1) + "行";
         }
 
-        private bool ValuesEqual(object[] a, object[] b)
+        private string GetAvailableSummarySheetName(Excel.Workbook wb, string sourceSheetName)
         {
-            if (a == null || b == null) return false;
-            if (a.Length != b.Length) return false;
-            for (int i = 0; i < a.Length; i++)
+            string suffix = "(汇总)";
+            string baseName = TrimSheetName(sourceSheetName + suffix);
+            string newSheetName = baseName;
+            int sheetNo = 1;
+
+            while (SheetExists(wb, newSheetName))
             {
-                if (!object.Equals(a[i], b[i])) return false;
+                sheetNo++;
+                string numberSuffix = "(" + sheetNo + ")";
+                newSheetName = TrimSheetName(sourceSheetName + numberSuffix);
             }
-            return true;
+
+            return newSheetName;
+        }
+
+        private string TrimSheetName(string name)
+        {
+            string trimmed = name.Trim();
+            if (trimmed.Length > 31)
+                trimmed = trimmed.Substring(0, 31);
+
+            return trimmed;
+        }
+
+        private bool SheetExists(Excel.Workbook wb, string sheetName)
+        {
+            foreach (Excel.Worksheet sheet in wb.Sheets)
+            {
+                if (string.Equals(sheet.Name, sheetName, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private void ValidateReadableColumns(IEnumerable<int> columns, int firstCol, int lastCol)
+        {
+            foreach (int col in columns.Distinct())
+            {
+                if (col < firstCol || col > lastCol)
+                    throw new InvalidOperationException("列 " + IndexToColumnName(col) + " 不在当前数据区域内");
+            }
+        }
+
+        private object GetSheetValue(object usedData, int sheetRow, int sheetCol, int firstRow, int firstCol)
+        {
+            if (usedData is object[,] values)
+                return values[sheetRow - firstRow + 1, sheetCol - firstCol + 1];
+
+            return usedData;
+        }
+
+        private string BuildGroupKey(object[] values)
+        {
+            return string.Join("\u001F", values.Select(value => GetCellText(value)));
+        }
+
+        private void WriteNumberingToSource(Excel.Worksheet sourceSheet, List<SummaryRow> summaryRows, string numberColumnName)
+        {
+            int numberColumn = ColumnNameToIndex(numberColumnName);
+            if (numberColumn <= 0)
+                throw new InvalidOperationException("编号列无效");
+
+            foreach (SummaryRow row in summaryRows)
+            {
+                foreach (int sourceRow in row.SourceRows)
+                    sourceSheet.Cells[sourceRow, numberColumn].Value2 = row.NumberText;
+            }
         }
 
         private double ToDouble(object value)
@@ -514,6 +1029,28 @@ namespace NS_Parrot
             return prefix + connect + numStr;
         }
 
+        private void TryPrepareExcelState(Excel.Application app)
+        {
+            try { app.Visible = false; } catch { }
+            try { app.ScreenUpdating = false; } catch { }
+            try { app.DisplayAlerts = false; } catch { }
+            try { app.EnableEvents = false; } catch { }
+            try { app.Calculation = Excel.XlCalculation.xlCalculationManual; } catch { }
+        }
+
+        private void TryRestoreExcelState(Excel.Application app)
+        {
+            try { app.ScreenUpdating = true; } catch { }
+            try { app.DisplayAlerts = true; } catch { }
+            try { app.EnableEvents = true; } catch { }
+            try { app.Calculation = Excel.XlCalculation.xlCalculationAutomatic; } catch { }
+        }
+
+        private void TryQuitExcel(Excel.Application app)
+        {
+            try { app.Quit(); } catch { }
+        }
+
         private void ReleaseComObject(object obj)
         {
             try { if (obj != null) Marshal.ReleaseComObject(obj); }
@@ -525,6 +1062,7 @@ namespace NS_Parrot
             public Dictionary<int, object> Values { get; set; }
             public Dictionary<int, double> SumValues { get; set; }
             public string NumberText { get; set; }
+            public List<int> SourceRows { get; set; }
         }
 
         protected override System.Drawing.Bitmap Icon
