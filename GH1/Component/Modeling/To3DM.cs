@@ -22,6 +22,7 @@ namespace NS_Parrot
         private const int GuidStableRefreshMilliseconds = 500;
 
         private readonly List<string> _autoFilePaths = new List<string>();
+        private readonly List<string> _exportFailureDetails = new List<string>();
         private string _lastInputSignature;
         private string _lastStatus;
         private string _pendingRhinoFilePath;
@@ -304,6 +305,7 @@ namespace NS_Parrot
             _autoFail = 0;
             _autoRecordSuccess = 0;
             _autoRecordFail = 0;
+            _exportFailureDetails.Clear();
 
             if (_autoFilePaths.Count == 0)
             {
@@ -372,6 +374,15 @@ namespace NS_Parrot
 
             if (!string.IsNullOrWhiteSpace(errorMessage))
             {
+                if (fail > 0)
+                {
+                    string sourceRhinoPath = NormalizePath(_pendingRhinoFilePath);
+                    if (string.IsNullOrWhiteSpace(sourceRhinoPath))
+                        sourceRhinoPath = NormalizePath(RhinoDoc.ActiveDoc?.Path);
+
+                    AddExportFailure(sourceRhinoPath, "(未进入零件导出阶段)", Guid.Empty, "", errorMessage);
+                }
+
                 _lastStatus = BuildCurrentPrefix() + errorMessage;
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, _lastStatus);
             }
@@ -385,6 +396,8 @@ namespace NS_Parrot
                     fileName = "当前文档";
 
                 _lastStatus = BuildCurrentPrefix() + $"当前文件：{fileName}；导出成功 {success}，失败 {fail}；记录成功 {recordSuccess}，记录失败 {recordFail}。";
+                if (!_autoRunning && fail > 0)
+                    _lastStatus += BuildFailureDetails();
             }
 
             if (!_autoRunning)
@@ -414,7 +427,7 @@ namespace NS_Parrot
                 _autoRunning = false;
                 _paused = false;
                 _stopRequested = false;
-                _lastStatus = $"自动执行完成：文件 {_autoFilePaths.Count} 个；导出成功 {_autoSuccess}，失败 {_autoFail}；记录成功 {_autoRecordSuccess}，记录失败 {_autoRecordFail}。";
+                _lastStatus = $"自动执行完成：文件 {_autoFilePaths.Count} 个；导出成功 {_autoSuccess}，失败 {_autoFail}；记录成功 {_autoRecordSuccess}，记录失败 {_autoRecordFail}。" + BuildFailureDetails();
                 return;
             }
 
@@ -484,15 +497,22 @@ namespace NS_Parrot
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "无法取得当前 Rhino 文件名，不能生成导出子文件夹。");
                 fail += guidList.Count;
+                for (int i = 0; i < guidList.Count; i++)
+                {
+                    string partName = i < fileNames.Count ? (fileNames[i] ?? "").Trim() : "";
+                    AddExportFailure(sourceRhinoPath, partName, guidList[i].Value, "", "无法取得当前 Rhino 文件名，不能生成导出子文件夹。");
+                }
                 return;
             }
 
             for (int i = 0; i < guidList.Count; i++)
             {
+                string fileName = (fileNames[i] ?? "").Trim();
                 RhinoObject rhinoObject = doc?.Objects.FindId(guidList[i].Value);
                 if (rhinoObject == null)
                 {
                     fail++;
+                    AddExportFailure(sourceRhinoPath, fileName, guidList[i].Value, "", "找不到对应的 Rhino 对象。");
                     continue;
                 }
 
@@ -500,6 +520,7 @@ namespace NS_Parrot
                 {
                     fail++;
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "保存路径数量少于实体数量");
+                    AddExportFailure(sourceRhinoPath, fileName, guidList[i].Value, "", "保存路径数量少于实体数量。");
                     continue;
                 }
 
@@ -507,6 +528,7 @@ namespace NS_Parrot
                 if (string.IsNullOrWhiteSpace(saveRoot))
                 {
                     fail++;
+                    AddExportFailure(sourceRhinoPath, fileName, guidList[i].Value, "", "保存路径为空。");
                     continue;
                 }
 
@@ -514,13 +536,14 @@ namespace NS_Parrot
                 {
                     fail++;
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "保存路径请输入导出根目录，不要填写文件名或后缀名：" + saveRoot);
+                    AddExportFailure(sourceRhinoPath, fileName, guidList[i].Value, saveRoot, "保存路径包含文件名或后缀名。");
                     continue;
                 }
 
-                string fileName = (fileNames[i] ?? "").Trim();
                 if (string.IsNullOrWhiteSpace(fileName))
                 {
                     fail++;
+                    AddExportFailure(sourceRhinoPath, "(空文件名)", guidList[i].Value, "", "文件名为空。");
                     continue;
                 }
 
@@ -528,6 +551,7 @@ namespace NS_Parrot
                 {
                     fail++;
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "文件名不要填写后缀名，程序会自动添加 .stp / .3dm：" + fileName);
+                    AddExportFailure(sourceRhinoPath, fileName, guidList[i].Value, "", "文件名包含后缀名。");
                     continue;
                 }
 
@@ -537,14 +561,14 @@ namespace NS_Parrot
 
                 string basePath = Path.Combine(directory, fileName);
                 if (_exportStp)
-                    ExportOneFormat(doc, rhinoObject, guidList[i].Value, basePath + ".stp", "stp", sourceRhinoPath, modelCodes, i, ref success, ref fail, ref recordSuccess, ref recordFail);
+                    ExportOneFormat(doc, rhinoObject, guidList[i].Value, fileName, basePath + ".stp", "stp", sourceRhinoPath, modelCodes, i, ref success, ref fail, ref recordSuccess, ref recordFail);
 
                 if (_export3dm)
-                    ExportOneFormat(doc, rhinoObject, guidList[i].Value, basePath + ".3dm", "3dm", sourceRhinoPath, modelCodes, i, ref success, ref fail, ref recordSuccess, ref recordFail);
+                    ExportOneFormat(doc, rhinoObject, guidList[i].Value, fileName, basePath + ".3dm", "3dm", sourceRhinoPath, modelCodes, i, ref success, ref fail, ref recordSuccess, ref recordFail);
             }
         }
 
-        private void ExportOneFormat(RhinoDoc doc, RhinoObject rhinoObject, Guid objectGuid, string exportPath, string exportFormat, string sourceRhinoPath, List<string> modelCodes, int itemIndex, ref int success, ref int fail, ref int recordSuccess, ref int recordFail)
+        private void ExportOneFormat(RhinoDoc doc, RhinoObject rhinoObject, Guid objectGuid, string partName, string exportPath, string exportFormat, string sourceRhinoPath, List<string> modelCodes, int itemIndex, ref int success, ref int fail, ref int recordSuccess, ref int recordFail)
         {
             doc.Objects.UnselectAll();
             rhinoObject.Select(true, true);
@@ -563,7 +587,24 @@ namespace NS_Parrot
             {
                 fail++;
                 RhinoApp.WriteLine("导出失败: " + exportPath);
+                AddExportFailure(sourceRhinoPath, partName, objectGuid, exportPath, exportFormat.ToUpperInvariant() + " 导出命令返回失败。");
             }
+        }
+
+        private void AddExportFailure(string sourceRhinoPath, string partName, Guid objectGuid, string exportPath, string reason)
+        {
+            string sourceText = string.IsNullOrWhiteSpace(sourceRhinoPath) ? "(当前未保存文档)" : sourceRhinoPath;
+            string partText = string.IsNullOrWhiteSpace(partName) ? "(空文件名)" : partName;
+            string targetText = string.IsNullOrWhiteSpace(exportPath) ? "(未生成目标路径)" : exportPath;
+            _exportFailureDetails.Add($"源文件：{sourceText}；零件：{partText}；Guid：{objectGuid}；目标：{targetText}；原因：{reason}");
+        }
+
+        private string BuildFailureDetails()
+        {
+            if (_exportFailureDetails.Count == 0)
+                return string.Empty;
+
+            return System.Environment.NewLine + "失败明细：" + System.Environment.NewLine + string.Join(System.Environment.NewLine, _exportFailureDetails);
         }
 
 #if MODEL_EXPORT_DATABASE

@@ -228,6 +228,7 @@ namespace NS_Parrot
             Excel.Worksheet ws = null;
             Excel.Range range = null;
             bool appCreated = false;
+            bool workbookOpenedByComponent = false;
 
             try
             {
@@ -242,7 +243,7 @@ namespace NS_Parrot
 
                 try
                 {
-                    wb = GetOrOpenWorkbook(app, filePath);
+                    wb = GetOrOpenWorkbook(app, filePath, out workbookOpenedByComponent);
                 }
                 catch (Exception ex)
                 {
@@ -319,6 +320,8 @@ namespace NS_Parrot
             {
                 ReleaseCom(range);
                 ReleaseCom(ws);
+                if (workbookOpenedByComponent)
+                    TryCloseWorkbook(wb);
                 ReleaseCom(wb);
                 if (app != null && appCreated)
                     TryQuitExcel(app);
@@ -334,6 +337,7 @@ namespace NS_Parrot
             Excel.Application app = null;
             Excel.Workbook wb = null;
             bool appCreated = false;
+            bool workbookOpenedByComponent = false;
 
             try
             {
@@ -348,7 +352,7 @@ namespace NS_Parrot
 
                 try
                 {
-                    wb = GetOrOpenWorkbook(app, filePath);
+                    wb = GetOrOpenWorkbook(app, filePath, out workbookOpenedByComponent);
                 }
                 catch (Exception ex)
                 {
@@ -379,6 +383,8 @@ namespace NS_Parrot
             }
             finally
             {
+                if (workbookOpenedByComponent)
+                    TryCloseWorkbook(wb);
                 ReleaseCom(wb);
                 if (app != null && appCreated)
                     TryQuitExcel(app);
@@ -420,8 +426,9 @@ namespace NS_Parrot
             }
         }
 
-        private static Excel.Workbook GetOrOpenWorkbook(Excel.Application app, string filePath)
+        private static Excel.Workbook GetOrOpenWorkbook(Excel.Application app, string filePath, out bool workbookOpenedByComponent)
         {
+            workbookOpenedByComponent = false;
             string fullPath = Path.GetFullPath(filePath);
 
             foreach (Excel.Workbook workbook in app.Workbooks)
@@ -439,7 +446,9 @@ namespace NS_Parrot
             if (!File.Exists(fullPath))
                 throw new FileNotFoundException("Excel 文件不存在。", fullPath);
 
-            return app.Workbooks.Open(fullPath);
+            Excel.Workbook openedWorkbook = app.Workbooks.Open(fullPath);
+            workbookOpenedByComponent = true;
+            return openedWorkbook;
         }
 
         private static Excel.Worksheet GetWorksheet(Excel.Workbook wb, string sheetName)
@@ -472,6 +481,17 @@ namespace NS_Parrot
             try
             {
                 app.Quit();
+            }
+            catch
+            {
+            }
+        }
+
+        private static void TryCloseWorkbook(Excel.Workbook workbook)
+        {
+            try
+            {
+                workbook?.Close(false);
             }
             catch
             {

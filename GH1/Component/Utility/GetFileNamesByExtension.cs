@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
 
 namespace NS_Parrot
 {
@@ -19,16 +21,17 @@ namespace NS_Parrot
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddTextParameter("文件夹", "Folder", "要搜索的文件夹路径", GH_ParamAccess.item);
-            pManager.AddTextParameter("后缀名", "Ext", "要筛选的文件后缀，可为空，例如 .xlsx 或 xlsx", GH_ParamAccess.item, string.Empty);
-            pManager.AddBooleanParameter("搜索子文件夹", "Recursive", "是否搜索子文件夹，默认不搜索", GH_ParamAccess.item, false);
+            pManager.AddTextParameter("文件夹", "文件夹", "要搜索的文件夹路径", GH_ParamAccess.item);
+            pManager.AddTextParameter("后缀名", "后缀名", "要筛选的文件后缀，可为空，例如 .xlsx 或 xlsx", GH_ParamAccess.item, string.Empty);
+            pManager.AddBooleanParameter("搜索子文件夹", "搜索子文件夹", "是否搜索子文件夹，默认为否", GH_ParamAccess.item, false);
+            pManager.AddBooleanParameter("包含快捷方式", "包含快捷方式", "是否包含 .lnk 快捷方式，并输出其实际指向路径，默认为否", GH_ParamAccess.item, false);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
-            pManager.AddTextParameter("文件名", "Name", "匹配到的文件名，不包含完整路径", GH_ParamAccess.list);
-            pManager.AddTextParameter("无后缀名", "BaseName", "匹配到的文件名，不包含后缀名", GH_ParamAccess.list);
-            pManager.AddTextParameter("完整路径", "Path", "匹配到的文件完整路径", GH_ParamAccess.list);
+            pManager.AddTextParameter("文件名", "文件名", "匹配到的文件名，不包含完整路径", GH_ParamAccess.list);
+            pManager.AddTextParameter("无后缀名", "无后缀名", "匹配到的文件名，不包含后缀名", GH_ParamAccess.list);
+            pManager.AddTextParameter("完整路径", "完整路径", "匹配到的文件完整路径；快捷方式输出实际指向路径", GH_ParamAccess.list);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -39,12 +42,14 @@ namespace NS_Parrot
             string folder = string.Empty;
             string extension = string.Empty;
             bool recursive = false;
+            bool includeShortcuts = false;
 
             if (!DA.GetData(0, ref folder))
                 return;
 
             DA.GetData(1, ref extension);
             DA.GetData(2, ref recursive);
+            DA.GetData(3, ref includeShortcuts);
 
             if (string.IsNullOrWhiteSpace(folder))
             {
@@ -62,16 +67,18 @@ namespace NS_Parrot
             {
                 string normalizedExtension = NormalizeExtension(extension);
                 SearchOption option = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+                IEnumerable<string> paths = Directory.EnumerateFiles(folder, "*", option)
+                    .Select(file => ResolvePath(file, includeShortcuts))
+                    .Where(path => !string.IsNullOrWhiteSpace(path));
 
-                IEnumerable<string> files = Directory.EnumerateFiles(folder, "*", option);
                 if (!string.IsNullOrEmpty(normalizedExtension))
                 {
-                    files = files.Where(file =>
-                        string.Equals(Path.GetExtension(file), normalizedExtension, StringComparison.OrdinalIgnoreCase));
+                    paths = paths.Where(path =>
+                        string.Equals(Path.GetExtension(path), normalizedExtension, StringComparison.OrdinalIgnoreCase));
                 }
 
-                List<string> fullPaths = files
-                    .OrderBy(file => Path.GetFileName(file), StringComparer.OrdinalIgnoreCase)
+                List<string> fullPaths = paths
+                    .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
                     .ToList();
                 List<string> fileNames = fullPaths
                     .Select(Path.GetFileName)
@@ -92,6 +99,48 @@ namespace NS_Parrot
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "读取文件夹失败：" + ex.Message);
             }
+        }
+
+        private string ResolvePath(string file, bool includeShortcuts)
+        {
+            if (!includeShortcuts || !string.Equals(Path.GetExtension(file), ".lnk", StringComparison.OrdinalIgnoreCase))
+                return file;
+
+            string targetPath = GetShortcutTargetPath(file);
+            if (string.IsNullOrWhiteSpace(targetPath))
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "无法解析快捷方式，已跳过：" + file);
+                return null;
+            }
+
+            return targetPath;
+        }
+
+        private static string GetShortcutTargetPath(string shortcutPath)
+        {
+            Type shellType = Type.GetTypeFromProgID("WScript.Shell");
+            if (shellType == null)
+                return null;
+
+            object shell = null;
+            object shortcut = null;
+            try
+            {
+                shell = Activator.CreateInstance(shellType);
+                shortcut = shellType.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { shortcutPath });
+                return shortcut.GetType().InvokeMember("TargetPath", BindingFlags.GetProperty, null, shortcut, null) as string;
+            }
+            finally
+            {
+                ReleaseComObject(shortcut);
+                ReleaseComObject(shell);
+            }
+        }
+
+        private static void ReleaseComObject(object comObject)
+        {
+            if (comObject != null && Marshal.IsComObject(comObject))
+                Marshal.FinalReleaseComObject(comObject);
         }
 
         private static string NormalizeExtension(string extension)

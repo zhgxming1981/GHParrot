@@ -3,6 +3,7 @@ using Grasshopper.Kernel;
 using Grasshopper.Kernel.Parameters;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -26,10 +27,11 @@ namespace NS_Parrot
 
         private bool _triggerRun = false;
         private bool _numberingEnabled = true;
+        private string _lastStatus;
 
         public GH_ExcelSummary()
           : base("Excel分类汇总", "Excel汇总",
-              "对Excel中指定列进行分类汇总，支持多列分类、多列汇总、自动编号",
+              "对Excel中指定列进行分类汇总，支持多列分类、多列汇总、排序、自动编号",
               "Parrot", "Excel")
         {
         }
@@ -41,7 +43,7 @@ namespace NS_Parrot
             p.AddTextParameter(
                 "分类列",
                 "分类列",
-                "分类与汇总列定义，格式同 GH_ExcelMultiSummary 的 CD 端口：A~D,(E~G),H~J,{K~M},L；()=分类列，{}=汇总列，其它=复制列",
+                "分类与汇总列定义，例如 A,(B),^C,D,{E}；()=分类列，{}=汇总列，其它=复制列，~=连续列范围。列名前加 ^ 表示汇总结果按该源表列升序，! 表示降序；如 (^B~H) 表示 B~H 均为分类列且结果按 B 升序。可标记多列，按书写顺序依次排序。",
                 GH_ParamAccess.item
             );
             p.AddTextParameter("新编号列", NumberColumnNickName, "新编号写回此列", GH_ParamAccess.item);
@@ -118,14 +120,14 @@ namespace NS_Parrot
 
                 if (!_triggerRun && !run)
                 {
-                    DA.SetData(0, "就绪");
+                    DA.SetData(0, _lastStatus ?? "就绪");
                     return;
                 }
                 _triggerRun = false;
 
                 if (!System.IO.File.Exists(filePath))
                 {
-                    DA.SetData(0, "错误：文件不存在");
+                    ReportExecutionError(DA, "错误：文件不存在");
                     return;
                 }
 
@@ -135,12 +137,12 @@ namespace NS_Parrot
                 var sumColumns = parsed.sumColumns;
                 if (classColumns.Count == 0)
                 {
-                    DA.SetData(0, "错误：分类列中缺少分类列（用()标记）");
+                    ReportExecutionError(DA, "错误：分类列中缺少分类列（用()标记）");
                     return;
                 }
                 if (sumColumns.Count == 0)
                 {
-                    DA.SetData(0, "错误：分类列中缺少汇总列（用{}标记）");
+                    ReportExecutionError(DA, "错误：分类列中缺少汇总列（用{}标记）");
                     return;
                 }
 
@@ -153,22 +155,22 @@ namespace NS_Parrot
                 {
                     if (!gotNumberColumn || string.IsNullOrWhiteSpace(numberColumn))
                     {
-                        DA.SetData(0, "错误：加编号模式下，编号列不能为空");
+                        ReportExecutionError(DA, "错误：加编号模式下，编号列不能为空");
                         return;
                     }
                     if (!gotPrefix || string.IsNullOrWhiteSpace(prefixInput))
                     {
-                        DA.SetData(0, "错误：加编号模式下，编号前缀不能为空");
+                        ReportExecutionError(DA, "错误：加编号模式下，编号前缀不能为空");
                         return;
                     }
                     if (!gotWidth)
                     {
-                        DA.SetData(0, "错误：加编号模式下，编号长度不能为空");
+                        ReportExecutionError(DA, "错误：加编号模式下，编号长度不能为空");
                         return;
                     }
                     if (!gotStart)
                     {
-                        DA.SetData(0, "错误：加编号模式下，起始编号不能为空");
+                        ReportExecutionError(DA, "错误：加编号模式下，起始编号不能为空");
                         return;
                     }
                     if (prefixInput.StartsWith("\"") && prefixInput.EndsWith("\""))
@@ -181,7 +183,7 @@ namespace NS_Parrot
                     {
                         if (!gotConnect || string.IsNullOrWhiteSpace(connectString))
                         {
-                            DA.SetData(0, "错误：列前缀编号时，连字符不能为空");
+                            ReportExecutionError(DA, "错误：列前缀编号时，连字符不能为空");
                             return;
                         }
 
@@ -189,7 +191,7 @@ namespace NS_Parrot
                         prefixColumnIndex = ColumnNameToIndex(prefixInput.Trim());
                         if (prefixColumnIndex <= 0)
                         {
-                            DA.SetData(0, "错误：编号前缀列无效");
+                            ReportExecutionError(DA, "错误：编号前缀列无效");
                             return;
                         }
                     }
@@ -197,16 +199,18 @@ namespace NS_Parrot
 
                 Excel.Application app = null;
                 Excel.Workbook wb = null;
+                bool appCreated = false;
+                bool workbookOpenedByComponent = false;
 
                 try
                 {
                     try
                     {
-                        app = new Excel.Application();
+                        app = GetExcelApplication(out appCreated);
                     }
                     catch (Exception ex)
                     {
-                        DA.SetData(0, "错误：启动Excel失败，原因：" + ex.Message);
+                        ReportExecutionError(DA, "错误：启动Excel失败，原因：" + ex.Message);
                         return;
                     }
 
@@ -214,11 +218,11 @@ namespace NS_Parrot
 
                     try
                     {
-                        wb = app.Workbooks.Open(filePath);
+                        wb = GetOrOpenWorkbook(app, filePath, out workbookOpenedByComponent);
                     }
                     catch (Exception ex)
                     {
-                        DA.SetData(0, "错误：打开Excel文件失败，原因：" + ex.Message);
+                        ReportExecutionError(DA, "错误：打开Excel文件失败，原因：" + ex.Message);
                         return;
                     }
 
@@ -229,12 +233,12 @@ namespace NS_Parrot
                     }
                     catch (Exception ex)
                     {
-                        DA.SetData(0, "错误：获取Sheet失败，原因：" + ex.Message);
+                        ReportExecutionError(DA, "错误：获取Sheet失败，原因：" + ex.Message);
                         return;
                     }
                     if (ws == null)
                     {
-                        DA.SetData(0, "错误：未找到Sheet \"" + sheetName + "\"");
+                        ReportExecutionError(DA, "错误：未找到Sheet \"" + sheetName + "\"");
                         return;
                     }
 
@@ -246,25 +250,25 @@ namespace NS_Parrot
                     }
                     catch (Exception ex)
                     {
-                        DA.SetData(0, "错误：读取数据区域失败，原因：" + ex.Message);
+                        ReportExecutionError(DA, "错误：读取数据区域失败，原因：" + ex.Message);
                         return;
                     }
                     if (lastRow <= 1)
                     {
-                        DA.SetData(0, "错误：Sheet中无数据");
+                        ReportExecutionError(DA, "错误：Sheet中无数据");
                         return;
                     }
 
                     string resultMsg;
                     try
                     {
-                        resultMsg = BuildSummary(wb, ws, copyColumns, classColumns, sumColumns, parsed.ordered,
+                        resultMsg = BuildSummary(wb, ws, copyColumns, classColumns, sumColumns, parsed.ordered, parsed.sortColumns,
                             hasNumbering, numberColumn, useFixedPrefix, fixedPrefix,
                             prefixColumnIndex, numberWidth, startNo, connectString);
                     }
                     catch (Exception ex)
                     {
-                        DA.SetData(0, "错误：生成汇总失败，原因：" + ex.Message);
+                        ReportExecutionError(DA, "错误：生成汇总失败，原因：" + ex.Message);
                         return;
                     }
 
@@ -274,29 +278,39 @@ namespace NS_Parrot
                     }
                     catch (Exception ex)
                     {
-                        DA.SetData(0, "错误：保存Excel失败，原因：" + ex.Message);
+                        ReportExecutionError(DA, "错误：保存Excel失败，原因：" + ex.Message);
                         return;
                     }
+                    ws.Activate();
+                    app.Visible = true;
+                    app.ScreenUpdating = true;
+                    app.DisplayAlerts = true;
+                    _lastStatus = resultMsg;
                     DA.SetData(0, resultMsg);
                 }
                 finally
                 {
                     if (app != null)
+                    {
                         TryRestoreExcelState(app);
+                        try { app.Visible = true; } catch { }
+                    }
 
                     ReleaseComObject(wb);
-
-                    if (app != null)
-                    {
-                        TryQuitExcel(app);
-                        ReleaseComObject(app);
-                    }
+                    ReleaseComObject(app);
                 }
             }
             catch (Exception ex)
             {
-                DA.SetData(0, "错误：" + ex.Message);
+                ReportExecutionError(DA, "错误：" + ex.Message);
             }
+        }
+
+        private void ReportExecutionError(IGH_DataAccess dataAccess, string message)
+        {
+            _lastStatus = message;
+            dataAccess.SetData(0, message);
+            AddRuntimeMessage(GH_RuntimeMessageLevel.Error, message);
         }
 
         private void SetNumberingMode(bool enabled)
@@ -504,7 +518,7 @@ namespace NS_Parrot
             {
                 Name = "分类列",
                 NickName = RuleNickName,
-                Description = "分类与汇总列定义，格式同 GH_ExcelMultiSummary 的 CD 端口：A~D,(E~G),H~J,{K~M},L；()=分类列，{}=汇总列，其它=复制列",
+                Description = "分类与汇总列定义，例如 A,(B),^C,D,{E}；()=分类列，{}=汇总列，其它=复制列，~=连续列范围。列名前加 ^ 表示汇总结果按该源表列升序，! 表示降序；如 (^B~H) 表示 B~H 均为分类列且结果按 B 升序。可标记多列，按书写顺序依次排序。",
                 Access = GH_ParamAccess.item
             };
         }
@@ -614,15 +628,16 @@ namespace NS_Parrot
             return result;
         }
 
-        private (List<int> copyColumns, List<int> classColumns, List<int> sumColumns, List<(int col, int type)> ordered) ParseColumnRules(string rule)
+        private (List<int> copyColumns, List<int> classColumns, List<int> sumColumns, List<(int col, int type)> ordered, List<(int col, bool ascending)> sortColumns) ParseColumnRules(string rule)
         {
             var copyCols = new List<int>();
             var classCols = new List<int>();
             var sumCols = new List<int>();
             var ordered = new List<(int col, int type)>();
+            var sortCols = new List<(int col, bool ascending)>();
 
             if (string.IsNullOrWhiteSpace(rule))
-                return (copyCols, classCols, sumCols, ordered);
+                return (copyCols, classCols, sumCols, ordered, sortCols);
 
             rule = rule.Replace((char)0xFF0C, ',');
             var parts = SplitRuleParts(rule);
@@ -645,7 +660,7 @@ namespace NS_Parrot
                     part = part.Substring(1, part.Length - 2).Trim();
                 }
 
-                AddColumnToken(part, type, copyCols, classCols, sumCols, ordered);
+                AddColumnToken(part, type, copyCols, classCols, sumCols, ordered, sortCols);
             }
 
             copyCols = copyCols.Distinct().ToList();
@@ -663,7 +678,8 @@ namespace NS_Parrot
                 copyCols.Remove(col);
             }
 
-            return (copyCols, classCols, sumCols, ordered);
+            sortCols = sortCols.GroupBy(item => item.col).Select(group => group.First()).ToList();
+            return (copyCols, classCols, sumCols, ordered, sortCols);
         }
 
         private List<string> SplitRuleParts(string rule)
@@ -690,13 +706,28 @@ namespace NS_Parrot
             return parts.Where(part => !string.IsNullOrWhiteSpace(part)).ToList();
         }
 
-        private void AddColumnToken(string token, int type, List<int> copyCols, List<int> classCols, List<int> sumCols, List<(int col, int type)> ordered)
+        private void AddColumnToken(string token, int type, List<int> copyCols, List<int> classCols, List<int> sumCols, List<(int col, int type)> ordered, List<(int col, bool ascending)> sortCols)
         {
             foreach (string raw in token.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 string part = raw.Trim();
                 if (string.IsNullOrEmpty(part))
                     continue;
+
+                bool? ascending = null;
+                if (part.Length > 1)
+                {
+                    if (part[0] == '^')
+                    {
+                        ascending = true;
+                        part = part.Substring(1).Trim();
+                    }
+                    else if (part[0] == '!')
+                    {
+                        ascending = false;
+                        part = part.Substring(1).Trim();
+                    }
+                }
 
                 if (part.Contains("~"))
                 {
@@ -714,10 +745,16 @@ namespace NS_Parrot
                     {
                         AddParsedColumn(c, type, copyCols, classCols, sumCols, ordered);
                     }
+
+                    if (ascending.HasValue)
+                        sortCols.Add((fromCol, ascending.Value));
                 }
                 else
                 {
-                    AddParsedColumn(ColumnNameToIndex(part), type, copyCols, classCols, sumCols, ordered);
+                    int column = ColumnNameToIndex(part);
+                    AddParsedColumn(column, type, copyCols, classCols, sumCols, ordered);
+                    if (ascending.HasValue)
+                        sortCols.Add((column, ascending.Value));
                 }
             }
         }
@@ -772,7 +809,7 @@ namespace NS_Parrot
         }
 
         private string BuildSummary(Excel.Workbook wb, Excel.Worksheet sourceSheet,
-            List<int> copyColumns, List<int> classColumns, List<int> sumColumns, List<(int col, int type)> ordered,
+            List<int> copyColumns, List<int> classColumns, List<int> sumColumns, List<(int col, int type)> ordered, List<(int col, bool ascending)> sortColumns,
             bool hasNumbering, string numberColumnName,
             bool useFixedPrefix, string fixedPrefix,
             int prefixColumnIndex, int numberWidth, int startNo, string connectString)
@@ -875,6 +912,8 @@ namespace NS_Parrot
                 currentGroup.SourceRows.Add(row);
             }
 
+            SortSummaryRows(summaryRows, sortColumns);
+
             if (hasNumbering)
             {
                 try
@@ -936,6 +975,37 @@ namespace NS_Parrot
             }
 
             return "完成：共" + summaryRows.Count + "组，" + (usedRows - 1) + "行";
+        }
+
+        private void SortSummaryRows(List<SummaryRow> summaryRows, List<(int col, bool ascending)> sortColumns)
+        {
+            if (summaryRows == null || summaryRows.Count < 2 || sortColumns == null || sortColumns.Count == 0)
+                return;
+
+            summaryRows.Sort((left, right) =>
+            {
+                foreach (var sortColumn in sortColumns)
+                {
+                    left.Values.TryGetValue(sortColumn.col, out object leftValue);
+                    right.Values.TryGetValue(sortColumn.col, out object rightValue);
+                    int comparison = CompareSummaryValues(leftValue, rightValue);
+                    if (comparison != 0)
+                        return sortColumn.ascending ? comparison : -comparison;
+                }
+
+                return 0;
+            });
+        }
+
+        private int CompareSummaryValues(object left, object right)
+        {
+            string leftText = GetCellText(left);
+            string rightText = GetCellText(right);
+            if (double.TryParse(leftText, NumberStyles.Any, CultureInfo.InvariantCulture, out double leftNumber) &&
+                double.TryParse(rightText, NumberStyles.Any, CultureInfo.InvariantCulture, out double rightNumber))
+                return leftNumber.CompareTo(rightNumber);
+
+            return string.Compare(leftText, rightText, StringComparison.CurrentCultureIgnoreCase);
         }
 
         private string GetAvailableSummarySheetName(Excel.Workbook wb, string sourceSheetName)
@@ -1049,6 +1119,42 @@ namespace NS_Parrot
         private void TryQuitExcel(Excel.Application app)
         {
             try { app.Quit(); } catch { }
+        }
+
+        private Excel.Application GetExcelApplication(out bool appCreated)
+        {
+            try
+            {
+                appCreated = false;
+                return (Excel.Application)Marshal.GetActiveObject("Excel.Application");
+            }
+            catch
+            {
+                appCreated = true;
+                return new Excel.Application();
+            }
+        }
+
+        private Excel.Workbook GetOrOpenWorkbook(Excel.Application app, string filePath, out bool workbookOpenedByComponent)
+        {
+            workbookOpenedByComponent = false;
+            string fullPath = System.IO.Path.GetFullPath(filePath);
+
+            foreach (Excel.Workbook workbook in app.Workbooks)
+            {
+                try
+                {
+                    if (string.Equals(System.IO.Path.GetFullPath(workbook.FullName), fullPath, StringComparison.OrdinalIgnoreCase))
+                        return workbook;
+                }
+                catch
+                {
+                }
+            }
+
+            Excel.Workbook openedWorkbook = app.Workbooks.Open(fullPath);
+            workbookOpenedByComponent = true;
+            return openedWorkbook;
         }
 
         private void ReleaseComObject(object obj)

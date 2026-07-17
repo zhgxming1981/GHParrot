@@ -55,6 +55,7 @@ namespace NS_Parrot
             Excel.Worksheet targetWs = null;
             bool appCreated = false;
             bool targetCreated = false;
+            bool sourceOpenedByComponent = false;
 
             try
             {
@@ -63,7 +64,7 @@ namespace NS_Parrot
                 app.ScreenUpdating = false;
                 app.DisplayAlerts = false;
 
-                sourceWb = GetOrOpenWorkbook(app, sourcePath);
+                sourceWb = GetOrOpenWorkbook(app, sourcePath, out sourceOpenedByComponent);
                 targetWb = GetOrCreateWorkbook(app, targetPath, out targetCreated);
                 targetWs = GetOrCreateWorksheet(targetWb, targetSheetName);
                 int startRow;
@@ -115,11 +116,12 @@ namespace NS_Parrot
             }
             finally
             {
+                bool sourceIsTarget = IsSameWorkbook(sourceWb, targetWb);
                 ReleaseCom(targetWs);
                 ReleaseCom(targetWb);
+                if (sourceOpenedByComponent && !sourceIsTarget)
+                    TryCloseWorkbook(sourceWb);
                 ReleaseCom(sourceWb);
-                if (app != null && appCreated)
-                    app.Quit();
                 ReleaseCom(app);
             }
         }
@@ -346,9 +348,16 @@ namespace NS_Parrot
 
         private static Excel.Workbook GetOrOpenWorkbook(Excel.Application app, string filePath)
         {
+            bool workbookOpenedByComponent;
+            return GetOrOpenWorkbook(app, filePath, out workbookOpenedByComponent);
+        }
+
+        private static Excel.Workbook GetOrOpenWorkbook(Excel.Application app, string filePath, out bool workbookOpenedByComponent)
+        {
             if (string.IsNullOrWhiteSpace(filePath))
                 throw new ArgumentException("Excel文件路径为空。");
 
+            workbookOpenedByComponent = false;
             string fullPath = Path.GetFullPath(filePath);
 
             foreach (Excel.Workbook workbook in app.Workbooks)
@@ -366,7 +375,9 @@ namespace NS_Parrot
             if (!File.Exists(fullPath))
                 throw new FileNotFoundException("Excel文件不存在。", fullPath);
 
-            return app.Workbooks.Open(fullPath);
+            Excel.Workbook openedWorkbook = app.Workbooks.Open(fullPath);
+            workbookOpenedByComponent = true;
+            return openedWorkbook;
         }
 
         private static Excel.Workbook GetOrCreateWorkbook(Excel.Application app, string filePath, out bool created)
@@ -413,6 +424,17 @@ namespace NS_Parrot
             catch
             {
                 return ReferenceEquals(first, second);
+            }
+        }
+
+        private static void TryCloseWorkbook(Excel.Workbook workbook)
+        {
+            try
+            {
+                workbook?.Close(false);
+            }
+            catch
+            {
             }
         }
 
