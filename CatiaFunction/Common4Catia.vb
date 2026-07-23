@@ -550,11 +550,122 @@ Public NotInheritable Class Common4Catia
         mFactory = mSketch.OpenEdition()
     End Sub
 
+    ''' <summary>
+    ''' 在指定的三维平面上新建并打开草图。曲线坐标应使用该平面的局部 XY 坐标。
+    ''' </summary>
+    Public Sub OpenEditOnPlane(sketchName As String, sketchPlane As Plane)
+        If CATIA Is Nothing Then
+            CATIA = ConnectCatia()
+        End If
+        If CATIA Is Nothing Then
+            Throw New InvalidOperationException("未检测到正在运行的 CATIA。")
+        End If
+
+        Dim oDoc As Document = CATIA.ActiveDocument
+        If oDoc Is Nothing OrElse Not TypeOf oDoc Is PartDocument Then
+            Throw New InvalidOperationException("请先在 CATIA 中激活一个 CATPart 文件。")
+        End If
+
+        mPart = CType(oDoc, PartDocument).Part
+        Dim oBody As Body = mPart.Bodies.Item(1)
+        Dim hybridBody As HybridBody = mPart.HybridBodies.Add()
+        hybridBody.Name = sketchName & "_定位平面"
+
+        Dim normal As Vector3d = sketchPlane.Normal
+        normal.Unitize()
+        Dim d As Double = -(normal.X * sketchPlane.OriginX + normal.Y * sketchPlane.OriginY + normal.Z * sketchPlane.OriginZ)
+        Dim hybridShapeFactory = mPart.HybridShapeFactory
+        Dim planeFeature = hybridShapeFactory.AddNewPlaneEquation(normal.X, normal.Y, normal.Z, d)
+        planeFeature.Name = sketchName & "_定位平面"
+        hybridBody.AppendHybridShape(planeFeature)
+        mPart.Update()
+
+        Dim support As Reference = mPart.CreateReferenceFromObject(planeFeature)
+        mSketch = oBody.Sketches.Add(support)
+        mSketch.Name = sketchName
+
+        Dim axisData As Object() = {
+            sketchPlane.OriginX, sketchPlane.OriginY, sketchPlane.OriginZ,
+            sketchPlane.XAxis.X, sketchPlane.XAxis.Y, sketchPlane.XAxis.Z,
+            sketchPlane.YAxis.X, sketchPlane.YAxis.Y, sketchPlane.YAxis.Z
+        }
+        mSketch.SetAbsoluteAxisData(axisData)
+        mFactory = mSketch.OpenEdition()
+    End Sub
+
     Sub CloseEdit()
         mSketch.CloseEdition()
         mPart.InWorkObject = mSketch
         mPart.Update()
+        CATIA.RefreshDisplay = True
+        CATIA.ActiveWindow.ActiveViewer.Update()
     End Sub
+
+    ''' <summary>
+    ''' 将 IGES 中的几何复制到当前 CATPart 的几何图形集，粘贴结果不保留外部链接。
+    ''' </summary>
+    Public Function ImportIgesAsDatumCurves(filePath As String, groupName As String, targetPlane As Plane) As Integer
+        If CATIA Is Nothing Then CATIA = ConnectCatia()
+        If CATIA Is Nothing Then Throw New InvalidOperationException("未检测到正在运行的 CATIA。")
+
+        Dim targetDocument As PartDocument = TryCast(CATIA.ActiveDocument, PartDocument)
+        If targetDocument Is Nothing Then Throw New InvalidOperationException("请先在 CATIA 中激活一个 CATPart 文件。")
+        If Not IO.File.Exists(filePath) Then Throw New IO.FileNotFoundException("未找到 IGES 文件。", filePath)
+
+        Dim importedDocument As PartDocument = TryCast(CATIA.Documents.Open(filePath), PartDocument)
+        If importedDocument Is Nothing Then Throw New InvalidOperationException("CATIA 未能将 IGES 打开为 CATPart。")
+
+        Try
+            Dim importedPart As Part = importedDocument.Part
+            If importedPart.HybridBodies.Count = 0 Then Throw New InvalidOperationException("IGES 文件中没有可复制的曲线几何。")
+
+            Dim importedBody As HybridBody = importedPart.HybridBodies.Item(1)
+            Dim importedSelection As Selection = importedDocument.Selection
+            importedSelection.Clear()
+            importedSelection.Add(importedBody)
+            importedSelection.Copy()
+
+            targetDocument.Activate()
+            mPart = targetDocument.Part
+            Dim targetBody As HybridBody = mPart.HybridBodies.Add()
+            targetBody.Name = groupName
+            Dim normal As Vector3d = targetPlane.Normal
+            normal.Unitize()
+            Dim d As Double = -(normal.X * targetPlane.OriginX + normal.Y * targetPlane.OriginY + normal.Z * targetPlane.OriginZ)
+            Dim supportPlane = mPart.HybridShapeFactory.AddNewPlaneEquation(normal.X, normal.Y, normal.Z, d)
+            supportPlane.Name = groupName & "_目标平面"
+            targetBody.AppendHybridShape(supportPlane)
+            mPart.Update()
+            Dim targetSelection As Selection = targetDocument.Selection
+            targetSelection.Clear()
+            targetSelection.Add(targetBody)
+            Dim pasteFormat As String = "CATPrtResultWithOutLink"
+            targetSelection.PasteSpecial(pasteFormat)
+            mPart.Update()
+            Dim importedCount As Integer = targetBody.HybridShapes.Count
+            Dim supportReference As Reference = mPart.CreateReferenceFromObject(supportPlane)
+            Dim datumCount As Integer = 0
+            For i As Integer = 2 To importedCount
+                Dim sourceShape = targetBody.HybridShapes.Item(i)
+                Dim sourceReference As Reference = mPart.CreateReferenceFromObject(sourceShape)
+                Dim projection = mPart.HybridShapeFactory.AddNewProject(sourceReference, supportReference)
+                targetBody.AppendHybridShape(projection)
+                mPart.Update()
+                Dim projectionReference As Reference = mPart.CreateReferenceFromObject(projection)
+                Dim datum = mPart.HybridShapeFactory.AddNewCurveDatum(projectionReference)
+                datum.Name = groupName & "_" & datumCount + 1
+                targetBody.AppendHybridShape(datum)
+                mPart.HybridShapeFactory.DeleteObjectForDatum(projectionReference)
+                datumCount = datumCount + 1
+            Next
+            mPart.Update()
+            CATIA.RefreshDisplay = True
+            CATIA.ActiveWindow.ActiveViewer.Update()
+            Return datumCount
+        Finally
+            importedDocument.Close()
+        End Try
+    End Function
 
 
 
