@@ -45,7 +45,7 @@ namespace NS_Parrot
 
             try
             {
-                ColumnRules parsed = ParseColumnRules(columnRule);
+                SummaryColumnRules parsed = SummaryColumnRuleParser.Parse(columnRule);
                 if (parsed.ClassColumns.Count == 0)
                 {
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "分类列中缺少分类列，请用 () 标记。");
@@ -67,7 +67,7 @@ namespace NS_Parrot
             }
         }
 
-        private static List<SummaryGroup> BuildSummary(List<string> lines, ColumnRules rules)
+        private static List<SummaryGroup> BuildSummary(List<string> lines, SummaryColumnRules rules)
         {
             List<SummaryGroup> groups = new List<SummaryGroup>();
             Dictionary<string, SummaryGroup> groupMap = new Dictionary<string, SummaryGroup>();
@@ -104,13 +104,13 @@ namespace NS_Parrot
             return groups;
         }
 
-        private static string BuildOutputLine(SummaryGroup group, ColumnRules rules)
+        private static string BuildOutputLine(SummaryGroup group, SummaryColumnRules rules)
         {
             List<string> cells = new List<string>();
 
-            foreach (ColumnRuleItem item in rules.Ordered)
+            foreach (SummaryColumnRuleItem item in rules.Ordered)
             {
-                if (item.Type == ColumnRuleType.Sum)
+                if (item.Type == SummaryColumnType.Sum)
                     cells.Add(FormatNumber(group.SumValues.TryGetValue(item.Column, out double value) ? value : 0));
                 else
                     cells.Add(GetCell(group.FirstRowCells, item.Column));
@@ -293,21 +293,21 @@ namespace NS_Parrot
                 .ToList();
         }
 
-        private static void SortGroups(List<SummaryGroup> groups, List<SortColumn> sortColumns)
+        private static void SortGroups(List<SummaryGroup> groups, List<SummarySortColumn> sortColumns)
         {
             if (groups == null || groups.Count < 2 || sortColumns == null || sortColumns.Count == 0)
                 return;
 
             groups.Sort((left, right) =>
             {
-                foreach (SortColumn sortColumn in sortColumns)
+                foreach (SummarySortColumn sortColumn in sortColumns)
                 {
                     int comparison = CompareCellValues(
                         GetCell(left.FirstRowCells, sortColumn.Column),
                         GetCell(right.FirstRowCells, sortColumn.Column));
 
                     if (comparison != 0)
-                        return sortColumn.Direction == SortDirection.Ascending ? comparison : -comparison;
+                    return sortColumn.Ascending ? comparison : -comparison;
                 }
 
                 return 0;

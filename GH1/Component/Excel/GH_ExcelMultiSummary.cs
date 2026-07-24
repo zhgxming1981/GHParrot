@@ -423,6 +423,13 @@ namespace NS_Parrot
 
         private (int[] copyCols, int[] groupCols, int[] sumCols, List<(int col, int type)> ordered) ParseColumns(string input)
         {
+            SummaryColumnRules parsed = SummaryColumnRuleParser.Parse(input);
+            return (
+                parsed.CopyColumns.ToArray(),
+                parsed.ClassColumns.ToArray(),
+                parsed.SumColumns.ToArray(),
+                parsed.Ordered.Select(item => (item.Column, (int)item.Type)).ToList());
+
             var parts = input.Split(new[] { ',', '，' }, StringSplitOptions.RemoveEmptyEntries);
 
             List<int> copy = new List<int>();
@@ -493,13 +500,7 @@ namespace NS_Parrot
 
         private int ColumnNameToIndex(string col)
         {
-            int result = 0;
-            foreach (char c in col.Trim().ToUpperInvariant())
-            {
-                if (c < 'A' || c > 'Z') return 0;
-                result = result * 26 + (c - 'A' + 1);
-            }
-            return result;
+            return SummaryColumnRuleParser.ColumnNameToIndex(col);
         }
 
         private void Release(object o)

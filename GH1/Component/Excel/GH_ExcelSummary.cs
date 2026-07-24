@@ -630,6 +630,14 @@ namespace NS_Parrot
 
         private (List<int> copyColumns, List<int> classColumns, List<int> sumColumns, List<(int col, int type)> ordered, List<(int col, bool ascending)> sortColumns) ParseColumnRules(string rule)
         {
+            SummaryColumnRules parsed = SummaryColumnRuleParser.Parse(rule);
+            return (
+                parsed.CopyColumns.ToList(),
+                parsed.ClassColumns.ToList(),
+                parsed.SumColumns.ToList(),
+                parsed.Ordered.Select(item => (item.Column, (int)item.Type)).ToList(),
+                parsed.SortColumns.Select(item => (item.Column, item.Ascending)).ToList());
+
             var copyCols = new List<int>();
             var classCols = new List<int>();
             var sumCols = new List<int>();
@@ -772,28 +780,12 @@ namespace NS_Parrot
 
         private int ColumnNameToIndex(string colName)
         {
-            colName = colName.Trim().ToUpperInvariant();
-            if (string.IsNullOrEmpty(colName)) return 0;
-
-            int result = 0;
-            foreach (char c in colName)
-            {
-                if (c < 'A' || c > 'Z') return 0;
-                result = result * 26 + (c - 'A' + 1);
-            }
-            return result;
+            return SummaryColumnRuleParser.ColumnNameToIndex(colName);
         }
 
         private string IndexToColumnName(int index)
         {
-            string result = "";
-            while (index > 0)
-            {
-                int remainder = (index - 1) % 26;
-                result = (char)('A' + remainder) + result;
-                index = (index - 1) / 26;
-            }
-            return result;
+            return SummaryColumnRuleParser.IndexToColumnName(index);
         }
 
         private Excel.Worksheet GetSheet(Excel.Workbook wb, string name)
