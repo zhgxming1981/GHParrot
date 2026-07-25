@@ -30,6 +30,7 @@ namespace NS_Parrot
         public bool DonePulse { get; set; } = false;
         public string ResultMessage { get; set; } = string.Empty;
         public int RowCount { get; private set; } = 0;
+        public List<string> DataRows { get; private set; } = new List<string>();
 
         private bool _lastRunInput = false;
 
@@ -62,6 +63,7 @@ namespace NS_Parrot
             pManager.AddIntegerParameter("行数", "行数", "本次写入的结果行数", GH_ParamAccess.item);
             pManager.AddBooleanParameter("完成", "完成", "执行完成后输出一次 True 脉冲", GH_ParamAccess.item);
             pManager.AddTextParameter("日志", "日志", "执行结果或错误信息", GH_ParamAccess.item);
+            pManager.AddTextParameter("数据", "数据", "分类后的数据；每行格式为 A|B|C", GH_ParamAccess.list);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -108,6 +110,7 @@ namespace NS_Parrot
             DA.SetData(0, RowCount);
             DA.SetData(1, DonePulse);
             DA.SetData(2, ResultMessage);
+            DA.SetDataList(3, DataRows);
         }
 
         public override void CreateAttributes()
@@ -143,12 +146,14 @@ namespace NS_Parrot
                 List<object[]> rows = BuildRows();
                 WriteRows(rows);
                 RowCount = rows.Count;
+                DataRows = ToPipeRows(rows);
                 ResultMessage = "汇总完成，共写入 " + RowCount + " 行。";
                 PulseDone();
             }
             catch (Exception ex)
             {
                 DonePulse = false;
+                DataRows = new List<string>();
                 ResultMessage = "汇总失败: " + ex.Message;
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, ResultMessage);
                 ExpireSolution(true);
@@ -287,6 +292,19 @@ namespace NS_Parrot
                     app.Quit();
                 ReleaseCom(app);
             }
+        }
+
+        private static List<string> ToPipeRows(IEnumerable<object[]> rows)
+        {
+            List<string> result = new List<string>();
+            foreach (object[] row in rows)
+            {
+                string[] values = new string[row.Length];
+                for (int index = 0; index < row.Length; index++)
+                    values[index] = row[index] == null ? string.Empty : row[index].ToString();
+                result.Add(string.Join("|", values));
+            }
+            return result;
         }
 
         private void ValidateInputs()

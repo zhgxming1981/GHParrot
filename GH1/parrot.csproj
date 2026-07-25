@@ -96,6 +96,7 @@
   </ItemGroup>
   
   <ItemGroup>
+    <ProjectReference Include="..\NXStepExport\NXStepExport.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\AutoCADFunction\AutoCADFunction.vbproj" />
     <ProjectReference Include="..\CatiaFunction\CatiaFunction.vbproj" />
     <ProjectReference Include="..\CommonFunction\CommonFunction.csproj" />

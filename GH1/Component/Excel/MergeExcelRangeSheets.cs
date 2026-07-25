@@ -23,6 +23,7 @@ namespace NS_Parrot
         public string TargetStartCell { get; private set; } = "A1";
         public List<string> EmptyTexts { get; private set; } = new List<string>();
         public bool MergeInput { get; private set; } = false;
+        public bool ShowExcelAfterMerge { get; private set; } = false;
         public bool DonePulse { get; set; } = false;
         public string ResultMessage { get; set; } = string.Empty;
         private bool _lastMergeInput = false;
@@ -105,9 +106,8 @@ namespace NS_Parrot
                     TargetPath,
                     TargetSheet,
                     TargetStartCell,
-                    EmptyTexts);
-
-                ExcelPulseTools.ShowExcel(TargetPath, TargetSheet);
+                    EmptyTexts,
+                    ShowExcelAfterMerge);
                 ResultMessage = "合并完成，共写入 " + count + " 行。";
                 PulseDone(expireNow);
             }
@@ -128,19 +128,12 @@ namespace NS_Parrot
 
         protected override void AppendAdditionalComponentMenuItems(ToolStripDropDown menu)
         {
-            Menu_AppendItem(menu, "显示写入Excel", ShowExcelMenuClicked);
+            Menu_AppendItem(menu, "显示Excel", ToggleShowExcelAfterMerge, true, ShowExcelAfterMerge);
         }
 
-        private void ShowExcelMenuClicked(object sender, EventArgs e)
+        private void ToggleShowExcelAfterMerge(object sender, EventArgs e)
         {
-            try
-            {
-                ExcelPulseTools.ShowExcel(TargetPath, TargetSheet);
-            }
-            catch (Exception ex)
-            {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "显示Excel失败: " + ex.Message);
-            }
+            ShowExcelAfterMerge = !ShowExcelAfterMerge;
         }
 
         public void PulseDone(bool expireNow = true)

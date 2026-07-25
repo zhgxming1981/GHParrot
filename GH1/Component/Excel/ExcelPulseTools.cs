@@ -49,6 +49,11 @@ namespace NS_Parrot
 
         public static int MergeSameRangeFromSheets(string sourcePath, IEnumerable<string> ignoreSheetNames, string rangeText, string targetPath, string targetSheetName, string targetStartCellText, IEnumerable<string> emptyTexts)
         {
+            return MergeSameRangeFromSheets(sourcePath, ignoreSheetNames, rangeText, targetPath, targetSheetName, targetStartCellText, emptyTexts, false);
+        }
+
+        public static int MergeSameRangeFromSheets(string sourcePath, IEnumerable<string> ignoreSheetNames, string rangeText, string targetPath, string targetSheetName, string targetStartCellText, IEnumerable<string> emptyTexts, bool showExcel)
+        {
             Excel.Application app = null;
             Excel.Workbook sourceWb = null;
             Excel.Workbook targetWb = null;
@@ -56,10 +61,12 @@ namespace NS_Parrot
             bool appCreated = false;
             bool targetCreated = false;
             bool sourceOpenedByComponent = false;
+            bool excelWasVisible = false;
 
             try
             {
                 app = GetExcelApplication(out appCreated);
+                excelWasVisible = app.Visible;
                 app.Visible = false;
                 app.ScreenUpdating = false;
                 app.DisplayAlerts = false;
@@ -112,16 +119,31 @@ namespace NS_Parrot
                     targetWb.SaveAs(Path.GetFullPath(targetPath));
                 else
                     targetWb.Save();
+
+                if (showExcel || excelWasVisible)
+                {
+                    targetWs.Activate();
+                    app.Visible = true;
+                    app.ScreenUpdating = true;
+                    app.DisplayAlerts = true;
+                    app.WindowState = Excel.XlWindowState.xlMaximized;
+                }
                 return copiedRows;
             }
             finally
             {
                 bool sourceIsTarget = IsSameWorkbook(sourceWb, targetWb);
                 ReleaseCom(targetWs);
-                ReleaseCom(targetWb);
                 if (sourceOpenedByComponent && !sourceIsTarget)
                     TryCloseWorkbook(sourceWb);
                 ReleaseCom(sourceWb);
+
+                if (appCreated && !showExcel && !excelWasVisible)
+                {
+                    TryCloseWorkbook(targetWb);
+                    app.Quit();
+                }
+                ReleaseCom(targetWb);
                 ReleaseCom(app);
             }
         }

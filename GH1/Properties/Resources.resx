@@ -451,4 +451,40 @@
   <data name="gen_ai_GH_ExcelSummary" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\gen_ai_GH_ExcelSummary.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
   </data>
+  <data name="gen_Excel2OpenWorkbook" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_Excel2OpenWorkbook.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_Excel2SetSheet" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_Excel2SetSheet.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_Excel2Run" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_Excel2Run.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_Excel2Read" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_Excel2Read.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_Excel2Write" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_Excel2Write.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_Excel2ClearRange" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_Excel2ClearRange.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_Excel2NextAppendRow" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_Excel2NextAppendRow.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_Excel2InsertPicture" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_Excel2InsertPicture.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_Excel2MergeRanges" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_Excel2MergeRanges.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_Excel2FilterByNumber" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_Excel2FilterByNumber.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_Excel2MultiData" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_Excel2MultiData.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
+  <data name="gen_Excel2ShowHide" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\gen_Excel2ShowHide.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
 </root>

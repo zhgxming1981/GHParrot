@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>AnyCPU;x64</Platforms>
+    <AssemblyName>UGNxStepExport</AssemblyName>
+    <OutputPath>bin\$(Platform)\$(Configuration)\</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="NXOpen">
+      <HintPath>$(NxBaseDir)\NXBIN\managed\NXOpen.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="NXOpen.Utilities">
+      <HintPath>$(NxBaseDir)\NXBIN\managed\NXOpen.Utilities.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="CopyJournalToParrotOutput" AfterTargets="Build">
+    <MakeDir Directories="$(ParrotOutputDir)x64\$(Configuration)\net48" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ParrotOutputDir)x64\$(Configuration)\net48" />
+  </Target>
+</Project>
