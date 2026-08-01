@@ -7,6 +7,7 @@ using Grasshopper.Kernel.Attributes;
 using Grasshopper.Kernel.Types;
 using Rhino;
 using Rhino.DocObjects;
+using Rhino.FileIO;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -572,9 +573,25 @@ namespace NS_Parrot
         {
             doc.Objects.UnselectAll();
             rhinoObject.Select(true, true);
-            RhinoApp.SendKeystrokes(" ", true);
 
-            if (doc.ExportSelected(exportPath))
+            bool exportSucceeded;
+            if (string.Equals(exportFormat, "3dm", StringComparison.OrdinalIgnoreCase))
+            {
+                var writeOptions = new Rhino.FileIO.FileWriteOptions
+                {
+                    WriteSelectedObjectsOnly = true,
+                    SuppressDialogBoxes = true,
+                    UpdateDocumentPath = false
+                };
+                exportSucceeded = doc.WriteFile(exportPath, writeOptions) && ContainsExportedObjects(exportPath);
+            }
+            else
+            {
+                RhinoApp.SendKeystrokes(" ", true);
+                exportSucceeded = doc.ExportSelected(exportPath);
+            }
+
+            if (exportSucceeded)
             {
                 success++;
 #if MODEL_EXPORT_DATABASE
@@ -588,6 +605,19 @@ namespace NS_Parrot
                 fail++;
                 RhinoApp.WriteLine("导出失败: " + exportPath);
                 AddExportFailure(sourceRhinoPath, partName, objectGuid, exportPath, exportFormat.ToUpperInvariant() + " 导出命令返回失败。");
+            }
+        }
+
+        private static bool ContainsExportedObjects(string exportPath)
+        {
+            try
+            {
+                File3dm exportedFile = File3dm.Read(exportPath);
+                return exportedFile != null && exportedFile.Objects.Count > 0;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -882,6 +912,14 @@ namespace NS_Parrot
                 diagnostics = $"命令已执行但当前文档未切换。目标：{filePath}，当前文档：{NormalizePath(RhinoDoc.ActiveDoc?.Path)}";
                 return false;
             }
+
+            if (!RhinoApp.RunScript("_-Show _Enter", false))
+            {
+                diagnostics = "Rhino 文件已打开，但执行 Show 命令失败。";
+                return false;
+            }
+
+            RhinoApp.Wait();
 
             return true;
         }

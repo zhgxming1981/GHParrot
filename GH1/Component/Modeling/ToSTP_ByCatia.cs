@@ -104,9 +104,12 @@ namespace NS_Parrot
                 {
                     //============================ // 1️⃣ 当前文件夹 //============================ 
                     string srcDir = System.IO.Path.GetDirectoryName(file);
-                    string parentDir = System.IO.Directory.GetParent(srcDir).FullName;
+                    var parentDirectory = System.IO.Directory.GetParent(srcDir);
+                    if (parentDirectory == null)
+                        throw new InvalidOperationException("源文件所在目录不能是根目录。");
+                    string parentDir = parentDirectory.FullName;
                     string folderName = System.IO.Path.GetFileName(srcDir);
-                    if (folderName.Contains("_catia"))
+                    if (folderName.IndexOf("_catia", StringComparison.OrdinalIgnoreCase) >= 0)
                         continue;
                     //============================ // 2️⃣ 目标目录 //============================ 
                 
@@ -144,7 +147,10 @@ namespace NS_Parrot
                     log.AppendLine(file + " 异常: " + ex.Message);
                 }
 
-                string logPath = Path.Combine(dstDir, "转换日志.txt");
+                string logDirectory = string.IsNullOrEmpty(dstDir)
+                    ? System.IO.Path.GetDirectoryName(file)
+                    : dstDir;
+                string logPath = Path.Combine(logDirectory, "转换日志.txt");
                 System.IO.File.WriteAllText(logPath, log.ToString());
             }
 

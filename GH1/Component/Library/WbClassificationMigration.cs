@@ -18,1725 +18,8 @@ using System.Windows.Forms;
 
 namespace NS_Parrot
 {
-    // ========================================================================
-    // 共享工具
-    // ========================================================================
-    internal static class WbUtil
-    {
-        /// <summary>容差百分比比较：|a-b| &lt;= max(|a|,|b|,1e-9) * |p| / 100</summary>
-        internal static bool Percent(double a, double b, double p)
-        {
-            double s = Math.Max(Math.Max(Math.Abs(a), Math.Abs(b)), 1e-9);
-            return Math.Abs(a - b) <= s * Math.Abs(p) / 100.0;
-        }
+    internal enum WbMigrationPhase { Extracting, Finalizing }
 
-        /// <summary>根据相对/绝对模式选择比较方式</summary>
-        internal static bool WithinTolerance(double a, double b, double tol, bool isRelative) =>
-            isRelative ? Percent(a, b, tol) : Math.Abs(a - b) <= Math.Abs(tol);
-
-        internal static double Round(double x, int d) =>
-            Math.Round(x, Math.Max(0, Math.Min(12, d)), MidpointRounding.AwayFromZero);
-
-        /// <summary>全精度格式，用于序列化</summary>
-        internal static string FR(double x) => x.ToString("R", CultureInfo.InvariantCulture);
-
-        /// <summary>可读格式，用于诊断</summary>
-        internal static string FD(double x) => x.ToString("0.######", CultureInfo.InvariantCulture);
-
-        internal static string PointText(Point3d p) =>
-            "(" + FD(p.X) + "," + FD(p.Y) + "," + FD(p.Z) + ")";
-
-        internal static string VectorText(Vector3d v) =>
-            "(" + FD(v.X) + "," + FD(v.Y) + "," + FD(v.Z) + ")";
-
-        internal static string B64(string x) =>
-            Convert.ToBase64String(Encoding.UTF8.GetBytes(x ?? string.Empty));
-
-        /// <summary>材质/颜色匹配。严格模式：双方均非空且相等，或双方均为空才通过；宽松模式：任一方为空即通过。</summary>
-        internal static bool SameOptionalText(string a, string b, bool strict)
-        {
-            bool aEmpty = string.IsNullOrWhiteSpace(a);
-            bool bEmpty = string.IsNullOrWhiteSpace(b);
-            if (strict) return (aEmpty && bEmpty) || (!aEmpty && !bEmpty && string.Equals(a, b, StringComparison.Ordinal));
-            return aEmpty || bEmpty || string.Equals(a, b, StringComparison.Ordinal);
-        }
-
-        /// <summary>
-        /// 二分图完美匹配（DFS 增广路径）。
-        /// 要求两侧元素数量相等，每个左侧元素必须找到互不冲突的右侧元素。
-        /// 所有采样参数均为硬编码常量，保证跨文件、跨时间的绝对稳定。
-        /// </summary>
-        internal static bool TryBipartiteMatch<T>(
-            List<T> left, List<T> right,
-            Func<T, T, bool> compatible)
-        {
-            int n = left.Count;
-            if (n == 0) return true;
-            int[] assigned = Enumerable.Repeat(-1, n).ToArray();
-            for (int i = 0; i < n; i++)
-            {
-                if (!DfsAssign(i, left, right, compatible, assigned, new bool[n]))
-                    return false;
-            }
-            return true;
-        }
-
-        private static bool DfsAssign<T>(
-            int leftIdx, List<T> left, List<T> right,
-            Func<T, T, bool> compatible,
-            int[] assigned, bool[] visited)
-        {
-            for (int j = 0; j < right.Count; j++)
-            {
-                if (visited[j] || !compatible(left[leftIdx], right[j]))
-                    continue;
-                visited[j] = true;
-                if (assigned[j] < 0 ||
-                    DfsAssign(assigned[j], left, right, compatible, assigned, visited))
-                {
-                    assigned[j] = leftIdx;
-                    return true;
-                }
-            }
-            return false;
-        }
-    }
-
-    // ========================================================================
-    // 数据结构
-    // ========================================================================
-    internal sealed class WbLoopBoundary
-    {
-        public List<Curve> Curves;
-        public Curve ClosedCurve;
-        public double Perimeter;
-        public WbLoopBoundary(List<Curve> curves, Curve closedCurve)
-        {
-            Curves = curves;
-            ClosedCurve = closedCurve;
-            Perimeter = curves.Sum(c => c.GetLength());
-        }
-    }
-
-    internal sealed class WbOrientedBox
-    {
-        public Point3d Center;
-        public double[] Sizes; // 3 边，降序
-    }
-
-    internal sealed class WbHole
-    {
-        public double Perimeter, Area;
-        public double U, V, W;       // 局部坐标（主轴系）
-        public double NU, NV, NW;    // 局部法向
-        public double X, Y, Z;       // 世界坐标（仅诊断）
-        public string CenterMode;    // 质心模式（仅诊断）
-        public bool IsDegenerate;    // 非平面内环（无法获得面积质心和稳定法向）
-        public string DegenerateType = string.Empty; // 退化原因
-        // 退化孔辅助特征（用于低置信度匹配）
-        public double DegenerateProjectedArea;  // 拟合平面投影面积
-        public double DegenerateCircularity;    // 圆形度：4π×面积/周长²
-        public double DegenerateAspectRatio;    // 二维包围盒纵横比
-        public double DegenerateNormalU, DegenerateNormalV, DegenerateNormalW; // 拟合法向（局部坐标）
-
-        public WbHole(double perimeter, double area,
-            double u, double v, double w,
-            double nu, double nv, double nw,
-            double x = 0, double y = 0, double z = 0,
-            string centerMode = "",
-            bool isDegenerate = false, string degenerateType = "")
-        {
-            Perimeter = perimeter; Area = area;
-            U = u; V = v; W = w;
-            NU = nu; NV = nv; NW = nw;
-            X = x; Y = y; Z = z;
-            CenterMode = centerMode ?? string.Empty;
-            IsDegenerate = isDegenerate;
-            DegenerateType = degenerateType ?? string.Empty;
-        }
-    }
-
-    internal sealed class WbOuterProfile
-    {
-        public double Area, Perimeter;
-        public double NU, NV, NW;
-        public bool IsAvailable =>
-            Area > RhinoMath.ZeroTolerance &&
-            Perimeter > RhinoMath.ZeroTolerance;
-    }
-
-    // ========================================================================
-    // 特征向量
-    // ========================================================================
-    internal sealed class WbFeature
-    {
-        internal const string Header = "ENTITY_FEATURE_V9";
-
-        // --- 参与匹配 ---
-        public string Material = string.Empty;
-        public string Color = string.Empty;
-        public double[] BoundingBox = new double[3];  // 降序三边（内部优化：不再存 CSV 字符串）
-        public double Area, Volume;
-        public double[] Inertia = new double[3];
-        public double MirrorScore, HoleMirrorScore;
-        public bool IsDegenerate;          // 惯量退化：任意相邻主惯量比 > 0.99
-        public bool UsedFallbackTolerance; // 曲线拼接时回退容差被使用（ActiveDoc==null）
-        public bool HasDegenerateHoles      // 含非平面内环（孔面积=0、法向为零向量）
-        {
-            get
-            {
-                foreach (var h in Holes)
-                    if (h.IsDegenerate) return true;
-                return false;
-            }
-        }
-        public List<WbHole> Holes = new List<WbHole>();
-        public List<WbOuterProfile> OuterProfiles = new List<WbOuterProfile>();
-
-        // --- 仅诊断 ---
-        public Point3d Centroid = Point3d.Unset;
-        public Point3d LocalOrigin = Point3d.Unset;
-        public Vector3d[] Axes = new Vector3d[3];
-
-        // ================================================================
-        // 特征提取（一次 Brep 遍历）
-        // ================================================================
-        public static WbFeature Create(
-            string material, string color, Brep brep,
-            Dictionary<V5Criterion, int> decimals, double inertiaDegenerateRatio,
-            double fallbackTolerance, int index)
-        {
-            if (brep == null)
-                throw new ArgumentException("第 " + (index + 1).ToString(CultureInfo.InvariantCulture) +
-                    " 个 Brep 为空。");
-
-            AreaMassProperties area = AreaMassProperties.Compute(brep, true, true, true, true);
-            if (area == null)
-                throw new ArgumentException("第 " + (index + 1).ToString(CultureInfo.InvariantCulture) +
-                    " 个 Brep 无法计算面积属性。");
-
-            VolumeMassProperties volume = brep.IsSolid
-                ? VolumeMassProperties.Compute(brep, true, true, true, true)
-                : null;
-
-            if (!TryPrincipal(volume, out Point3d center, out double[] inertia, out Vector3d[] axes) &&
-                !TryPrincipal(area, out center, out inertia, out axes))
-                throw new ArgumentException("第 " + (index + 1).ToString(CultureInfo.InvariantCulture) +
-                    " 个 Brep 无法计算主惯量轴。");
-
-            // 面质心：确定性来源，跨文件绝对稳定
-            List<Point3d> faceCentroids = CollectFaceCentroids(brep);
-            if (faceCentroids.Count > 0)
-                OrientAxesByMirrorPoints(faceCentroids, center, axes);
-            MakeRightHanded(axes);
-
-            WbOrientedBox box = CalculateOrientedBoundingBox(brep, center, axes);
-
-            var f = new WbFeature
-            {
-                Material = material ?? string.Empty,
-                Color = color ?? string.Empty,
-                BoundingBox = box.Sizes,
-                Area = WbUtil.Round(area.Area, decimals[V5Criterion.Area]),
-                Volume = WbUtil.Round(volume == null ? 0 : volume.Volume, decimals[V5Criterion.Volume]),
-                Inertia = inertia.Select(x => WbUtil.Round(x, decimals[V5Criterion.Inertia])).ToArray(),
-                Centroid = center,
-                LocalOrigin = box.Center,
-                Axes = axes.Select(x => x).ToArray()
-            };
-
-            // 一次遍历提取孔 + 外轮廓
-            ExtractFeatures(brep, center, axes, decimals, index, fallbackTolerance,
-                out f.Holes, out f.OuterProfiles, out f.UsedFallbackTolerance);
-
-            f.MirrorScore = ComputeMirrorScore(faceCentroids, center, axes);
-            f.HoleMirrorScore = ComputeHoleMirrorScore(f.Holes);
-
-            // 惯量退化检测：相邻主惯量比值 > 99% 则标记，后续匹配将遍历全部轴排列
-            double[] rawInertia = inertia;  // 舍入前原始值，避免舍入精度干扰退化判断
-            f.IsDegenerate =
-                (rawInertia[0] > 1e-10 && rawInertia[1] / rawInertia[0] > inertiaDegenerateRatio) ||
-                (rawInertia[1] > 1e-10 && rawInertia[2] / rawInertia[1] > inertiaDegenerateRatio);
-
-            return f;
-        }
-
-        // ================================================================
-        // 串行化（向后兼容 V8 格式）
-        // ================================================================
-        public string Serialize()
-        {
-            string holes = string.Join("/", Holes.Select(h =>
-            {
-                var baseFields = new[] {
-                    WbUtil.FR(h.Perimeter), WbUtil.FR(h.Area),
-                    WbUtil.FR(h.U), WbUtil.FR(h.V), WbUtil.FR(h.W),
-                    WbUtil.FR(h.NU), WbUtil.FR(h.NV), WbUtil.FR(h.NW)
-                };
-                if (!h.IsDegenerate)
-                    return string.Join(",", baseFields);
-                // 退化孔：8 基本字段 + "D" 标记 + 1 退化类型 + 6 退化数值（共 16 逗号分隔值）
-                return string.Join(",", baseFields) + ",D," +
-                    WbUtil.B64(h.DegenerateType) + "," +
-                    WbUtil.FR(h.DegenerateProjectedArea) + "," +
-                    WbUtil.FR(h.DegenerateCircularity) + "," +
-                    WbUtil.FR(h.DegenerateAspectRatio) + "," +
-                    WbUtil.FR(h.DegenerateNormalU) + "," +
-                    WbUtil.FR(h.DegenerateNormalV) + "," +
-                    WbUtil.FR(h.DegenerateNormalW);
-            }));
-
-            string profiles = string.Join("|", OuterProfiles.Select(p =>
-                WbUtil.FR(p.Area) + "," + WbUtil.FR(p.Perimeter) + "," +
-                WbUtil.FR(p.NU) + "," + WbUtil.FR(p.NV) + "," + WbUtil.FR(p.NW)));
-
-            string bbox = string.Join(",", BoundingBox.Select(WbUtil.FR));
-
-            return string.Join(";", new[] {
-                Header,
-                WbUtil.B64(Material), WbUtil.B64(Color),
-                WbUtil.B64(bbox),
-                WbUtil.FR(Area), WbUtil.FR(Volume),
-                WbUtil.FR(Inertia[0]), WbUtil.FR(Inertia[1]), WbUtil.FR(Inertia[2]),
-                holes,
-                WbUtil.FR(MirrorScore), WbUtil.FR(HoleMirrorScore),
-                profiles,
-                IsDegenerate ? "1" : "0"
-            });
-        }
-
-        public string ToSummary()
-        {
-            string bbox = string.Join(",", BoundingBox.Select(WbUtil.FD));
-            return string.Format(CultureInfo.InvariantCulture,
-                "材质={0}; 颜色={1}; 包围盒=({2}); 惯量=({3},{4},{5}); 表面积={6}; 体积={7}; 孔数={8}; 孔周长和={9}; 孔面积和={10}",
-                Material, Color, bbox,
-                WbUtil.FD(Inertia[0]), WbUtil.FD(Inertia[1]), WbUtil.FD(Inertia[2]),
-                WbUtil.FD(Area), WbUtil.FD(Volume),
-                Holes.Count,
-                WbUtil.FD(Holes.Sum(h => h.Perimeter)),
-                WbUtil.FD(Holes.Sum(h => h.Area)));
-        }
-
-        /// <summary>从 V9 格式反序列化特征（用于检查点恢复，兼容不含退化孔字段的旧版本 V9 数据）</summary>
-        public static WbFeature Deserialize(string line)
-        {
-            if (string.IsNullOrWhiteSpace(line))
-                throw new ArgumentException("反序列化输入为空。");
-            string[] parts = line.Split(';');
-            if (parts.Length < 13 || !string.Equals(parts[0], Header, StringComparison.Ordinal))
-                throw new ArgumentException("V9 特征格式不正确。");
-
-            var f = new WbFeature
-            {
-                Material = Encoding.UTF8.GetString(Convert.FromBase64String(parts[1])),
-                Color = Encoding.UTF8.GetString(Convert.FromBase64String(parts[2]))
-            };
-
-            // 包围盒
-            string bboxStr = Encoding.UTF8.GetString(Convert.FromBase64String(parts[3]));
-            string[] bboxParts = bboxStr.Split(',');
-            f.BoundingBox = new double[3];
-            for (int i = 0; i < 3; i++)
-                f.BoundingBox[i] = double.Parse(bboxParts[i], CultureInfo.InvariantCulture);
-
-            f.Area = double.Parse(parts[4], CultureInfo.InvariantCulture);
-            f.Volume = double.Parse(parts[5], CultureInfo.InvariantCulture);
-            f.Inertia = new double[]
-            {
-                double.Parse(parts[6], CultureInfo.InvariantCulture),
-                double.Parse(parts[7], CultureInfo.InvariantCulture),
-                double.Parse(parts[8], CultureInfo.InvariantCulture)
-            };
-
-            // 惯量退化标记：新格式字段13 直接恢复，旧格式 parts.Length==13 则拒绝（阈值未知）
-            if (parts.Length > 13)
-            {
-                f.IsDegenerate = parts[13] == "1";
-            }
-            else
-            {
-                throw new InvalidDataException(
-                    "检查点使用旧版 V9 格式（缺少 IsDegenerate 字段），惯量退化阈值可能" +
-                    "与保存时不一致，静默恢复会改变分类结果。建议重新提取特征后重跑迁移。");
-            }
-
-            // 孔
-            string holesPart = parts[9];
-            if (!string.IsNullOrEmpty(holesPart))
-            {
-                string[] holeLines = holesPart.Split('/');
-                foreach (string hl in holeLines)
-                {
-                    string[] hv = hl.Split(',');
-                    if (hv.Length < 8) continue;
-                    double perim = double.Parse(hv[0], CultureInfo.InvariantCulture);
-                    double area = double.Parse(hv[1], CultureInfo.InvariantCulture);
-                    double u = double.Parse(hv[2], CultureInfo.InvariantCulture);
-                    double v = double.Parse(hv[3], CultureInfo.InvariantCulture);
-                    double w = double.Parse(hv[4], CultureInfo.InvariantCulture);
-                    double nu = double.Parse(hv[5], CultureInfo.InvariantCulture);
-                    double nv = double.Parse(hv[6], CultureInfo.InvariantCulture);
-                    double nw = double.Parse(hv[7], CultureInfo.InvariantCulture);
-
-                    // 检测退化孔标记：hv[8] == "D" 且至少 16 个字段（8 基本 + 标记 + 7 退化值）
-                    bool isDegenerate = hv.Length >= 16 && hv[8] == "D";
-                    string degenerateType = string.Empty;
-                    double projArea = 0, circularity = 0, aspectRatio = 0;
-                    double dnu = 0, dnv = 0, dnw = 0;
-                    if (isDegenerate)
-                    {
-                        degenerateType = Encoding.UTF8.GetString(Convert.FromBase64String(hv[9]));
-                        projArea = double.Parse(hv[10], CultureInfo.InvariantCulture);
-                        circularity = double.Parse(hv[11], CultureInfo.InvariantCulture);
-                        aspectRatio = double.Parse(hv[12], CultureInfo.InvariantCulture);
-                        dnu = double.Parse(hv[13], CultureInfo.InvariantCulture);
-                        dnv = double.Parse(hv[14], CultureInfo.InvariantCulture);
-                        dnw = double.Parse(hv[15], CultureInfo.InvariantCulture);
-                    }
-
-                    var hole = new WbHole(perim, area, u, v, w, nu, nv, nw,
-                        isDegenerate: isDegenerate, degenerateType: degenerateType);
-                    if (isDegenerate)
-                    {
-                        hole.DegenerateProjectedArea = projArea;
-                        hole.DegenerateCircularity = circularity;
-                        hole.DegenerateAspectRatio = aspectRatio;
-                        hole.DegenerateNormalU = dnu;
-                        hole.DegenerateNormalV = dnv;
-                        hole.DegenerateNormalW = dnw;
-                    }
-                    f.Holes.Add(hole);
-                }
-            }
-
-            f.MirrorScore = double.Parse(parts[10], CultureInfo.InvariantCulture);
-            f.HoleMirrorScore = double.Parse(parts[11], CultureInfo.InvariantCulture);
-
-            // 外轮廓
-            string profilesPart = parts.Length > 12 ? parts[12] : string.Empty;
-            if (!string.IsNullOrEmpty(profilesPart))
-            {
-                string[] profileLines = profilesPart.Split('|');
-                foreach (string pl in profileLines)
-                {
-                    string[] pv = pl.Split(',');
-                    if (pv.Length >= 5)
-                        f.OuterProfiles.Add(new WbOuterProfile
-                        {
-                            Area = double.Parse(pv[0], CultureInfo.InvariantCulture),
-                            Perimeter = double.Parse(pv[1], CultureInfo.InvariantCulture),
-                            NU = double.Parse(pv[2], CultureInfo.InvariantCulture),
-                            NV = double.Parse(pv[3], CultureInfo.InvariantCulture),
-                            NW = double.Parse(pv[4], CultureInfo.InvariantCulture)
-                        });
-                }
-            }
-
-            return f;
-        }
-
-        public IEnumerable<string> DiagnosticLines(string number, string sourceFile)
-        {
-            yield return "===== 实体诊断：" + number + " =====";
-            yield return "来源文件=" + sourceFile;
-            yield return "质量质心(世界坐标)=" + WbUtil.PointText(Centroid) +
-                "；局部原点(定向包围盒中心)=" + WbUtil.PointText(LocalOrigin);
-            yield return "主轴U=" + WbUtil.VectorText(Axes[0]) +
-                "；主轴V=" + WbUtil.VectorText(Axes[1]) +
-                "；主轴W=" + WbUtil.VectorText(Axes[2]);
-            yield return "惯量=" + string.Join(",", Inertia.Select(WbUtil.FR)) +
-                "；表面积=" + WbUtil.FR(Area) +
-                "；体积=" + WbUtil.FR(Volume) +
-                "；包围盒=" + string.Join(",", BoundingBox.Select(WbUtil.FR));
-            yield return "孔数=" + Holes.Count.ToString(CultureInfo.InvariantCulture) +
-                "；外轮廓数=" + OuterProfiles.Count.ToString(CultureInfo.InvariantCulture) +
-                "；镜像值=" + WbUtil.FR(MirrorScore) +
-                "；孔镜像值=" + WbUtil.FR(HoleMirrorScore);
-            if (UsedFallbackTolerance)
-                yield return "警告：未检测到 Rhino 文档，曲线拼接使用了回退容差。";
-            for (int i = 0; i < Holes.Count; i++)
-            {
-                WbHole h = Holes[i];
-                yield return "孔[" + i.ToString(CultureInfo.InvariantCulture) +
-                    "] 模式=" + h.CenterMode +
-                    (h.IsDegenerate ? " [退化:" + h.DegenerateType + "]" : "") +
-                    "；世界坐标=" + WbUtil.PointText(new Point3d(h.X, h.Y, h.Z)) +
-                    "；局部=(" + WbUtil.FR(h.U) + "," + WbUtil.FR(h.V) + "," + WbUtil.FR(h.W) + ")" +
-                    "；周长=" + WbUtil.FR(h.Perimeter) +
-                    "；面积=" + WbUtil.FR(h.Area) +
-                    "；法向=(" + WbUtil.FR(h.NU) + "," + WbUtil.FR(h.NV) + "," + WbUtil.FR(h.NW) + ")";
-            }
-        }
-
-        // ================================================================
-        // 主轴计算
-        // ================================================================
-        private static bool TryPrincipal(
-            VolumeMassProperties p,
-            out Point3d center, out double[] inertia, out Vector3d[] axes)
-        {
-            center = Point3d.Unset; inertia = null; axes = null;
-            if (p == null) return false;
-            center = p.Centroid;
-            return p.CentroidCoordinatesPrincipalMomentsOfInertia(
-                out double a, out Vector3d av,
-                out double b, out Vector3d bv,
-                out double c, out Vector3d cv) &&
-                Order(new[] { a, b, c }, new[] { av, bv, cv }, out inertia, out axes);
-        }
-
-        private static bool TryPrincipal(
-            AreaMassProperties p,
-            out Point3d center, out double[] inertia, out Vector3d[] axes)
-        {
-            center = Point3d.Unset; inertia = null; axes = null;
-            if (p == null) return false;
-            center = p.Centroid;
-            return p.CentroidCoordinatesPrincipalMomentsOfInertia(
-                out double a, out Vector3d av,
-                out double b, out Vector3d bv,
-                out double c, out Vector3d cv) &&
-                Order(new[] { a, b, c }, new[] { av, bv, cv }, out inertia, out axes);
-        }
-
-        private static bool Order(
-            double[] values, Vector3d[] raw,
-            out double[] inertia, out Vector3d[] axes)
-        {
-            int[] order = Enumerable.Range(0, 3)
-                .OrderByDescending(i => values[i]).ToArray();
-            inertia = order.Select(i => values[i]).ToArray();
-            axes = order.Select(i =>
-            {
-                Vector3d x = raw[i];
-                return x.Unitize() ? x : Vector3d.Unset;
-            }).ToArray();
-            return axes.All(x => x.IsValid);
-        }
-
-        private static void MakeRightHanded(Vector3d[] axes)
-        {
-            if (Vector3d.CrossProduct(axes[0], axes[1]) * axes[2] < 0)
-                axes[2] = -axes[2];
-        }
-
-        // ================================================================
-        // 面质心采样：对每个平面取面积质心，跨文件绝对稳定
-        // ================================================================
-        private static List<Point3d> CollectFaceCentroids(Brep brep)
-        {
-            var points = new List<Point3d>();
-            foreach (BrepFace face in brep.Faces)
-            {
-                AreaMassProperties props = AreaMassProperties.Compute(face);
-                if (props != null && props.Area > RhinoMath.ZeroTolerance)
-                    points.Add(props.Centroid);
-            }
-            // 加上所有顶点作为回退（如果面质心太少）
-            if (points.Count < 6)
-            {
-                foreach (BrepVertex v in brep.Vertices)
-                    points.Add(v.Location);
-            }
-            return points;
-        }
-
-        private static void OrientAxesByMirrorPoints(
-            List<Point3d> points, Point3d center, Vector3d[] axes)
-        {
-            for (int axisIndex = 0; axisIndex < axes.Length; axisIndex++)
-            {
-                double thirdMoment = 0;
-                foreach (Point3d p in points)
-                {
-                    double coord = (p - center) * axes[axisIndex];
-                    thirdMoment += coord * coord * coord;
-                }
-                if (thirdMoment < 0)
-                    axes[axisIndex] = -axes[axisIndex];
-            }
-        }
-
-        private static double ComputeMirrorScore(
-            List<Point3d> points, Point3d center, Vector3d[] axes)
-        {
-            double score = 0, scale = 0;
-            foreach (Point3d p in points)
-            {
-                Vector3d v = p - center;
-                double product = (v * axes[0]) * (v * axes[1]) * (v * axes[2]);
-                score += product;
-                scale += Math.Abs(product);
-            }
-            return scale <= RhinoMath.ZeroTolerance ? 0 : score / scale;
-        }
-
-        private static double ComputeHoleMirrorScore(List<WbHole> holes)
-        {
-            double signedV = 0, signedW = 0, signedUv = 0, signedUw = 0,
-                   scale = 0, maxU = 0;
-            foreach (WbHole h in holes)
-            {
-                double p = h.Perimeter;
-                signedV += p * h.V;
-                signedW += p * h.W;
-                signedUv += p * h.U * h.V;
-                signedUw += p * h.U * h.W;
-                scale += p * Math.Sqrt(h.V * h.V + h.W * h.W);
-                maxU = Math.Max(maxU, Math.Abs(h.U));
-            }
-            if (scale <= RhinoMath.ZeroTolerance) return 0;
-            double[] candidates =
-            {
-                signedV / scale,
-                signedW / scale,
-                maxU <= RhinoMath.ZeroTolerance ? 0 : signedUv / (scale * maxU),
-                maxU <= RhinoMath.ZeroTolerance ? 0 : signedUw / (scale * maxU)
-            };
-            return candidates.OrderByDescending(Math.Abs).First();
-        }
-
-        // ================================================================
-        // 定向包围盒
-        // ================================================================
-        private static WbOrientedBox CalculateOrientedBoundingBox(
-            Brep brep, Point3d center, Vector3d[] axes)
-        {
-            Plane plane = new Plane(center, axes[0], axes[1]);
-            BoundingBox box = brep.GetBoundingBox(plane);
-            if (!box.IsValid)
-                throw new ArgumentException("实体无法计算主轴定向包围盒。");
-
-            double[] sizes =
-            {
-                Math.Max(0, box.Max.X - box.Min.X),
-                Math.Max(0, box.Max.Y - box.Min.Y),
-                Math.Max(0, box.Max.Z - box.Min.Z)
-            };
-            // 降序排序
-            Array.Sort(sizes);
-            Array.Reverse(sizes);
-
-            Point3d localCenter = new Point3d(
-                (box.Min.X + box.Max.X) * 0.5,
-                (box.Min.Y + box.Max.Y) * 0.5,
-                (box.Min.Z + box.Max.Z) * 0.5);
-
-            return new WbOrientedBox
-            {
-                Center = plane.PointAt(localCenter.X, localCenter.Y, localCenter.Z),
-                Sizes = sizes
-            };
-        }
-
-        // ================================================================
-        // 一次遍历提取孔 + 外轮廓
-        //
-        // 孔特征语义约定（最终决策）：
-        // hole_count 定义为 Brep Inner loop（内环）的计数，不是物理孔数。
-        // ───────────────────────────────────────────────────────────────
-        //  贯穿孔 → 实体两面各一个内环，hole_count = 2
-        //  盲  孔 → 一个内环，hole_count = 1
-        // ───────────────────────────────────────────────────────────────
-        // 此约定是故意的：BreP 拓扑无法可靠区分贯穿孔底面的内环和底面附近
-        // 的独立盲孔内环（同轴同径是必要不充分条件）。不对内环做合并，
-        // 保证 hole_count 始终是纯拓扑计数值，不依赖几何启发式。
-        // ================================================================
-        private static void ExtractFeatures(
-            Brep brep, Point3d center, Vector3d[] axes,
-            Dictionary<V5Criterion, int> decimals, int index,
-            double fallbackTolerance,
-            out List<WbHole> holes, out List<WbOuterProfile> profiles,
-            out bool usedFallbackTolerance)
-        {
-            usedFallbackTolerance = false;
-            holes = new List<WbHole>();
-            profiles = new List<WbOuterProfile>();
-
-            foreach (BrepFace face in brep.Faces)
-            foreach (BrepLoop loop in face.Loops)
-            {
-                WbLoopBoundary boundary = ReadLoopBoundary(loop, fallbackTolerance,
-                    out bool loopUsedFallback);
-                if (loopUsedFallback) usedFallbackTolerance = true;
-                if (boundary.Perimeter <= RhinoMath.ZeroTolerance)
-                    continue;
-
-                if (loop.LoopType == BrepLoopType.Inner)
-                {
-                    // 孔
-                    Point3d holeCenter;
-                    double holeArea = 0;
-                    Vector3d normal = Vector3d.Zero;
-                    string centerMode;
-
-                    AreaMassProperties props = boundary.ClosedCurve == null
-                        ? null
-                        : AreaMassProperties.Compute(boundary.ClosedCurve);
-                    Plane plane;
-                    if (props != null && props.Area > RhinoMath.ZeroTolerance &&
-                        boundary.ClosedCurve.TryGetPlane(out plane))
-                    {
-                        holeCenter = props.Centroid;
-                        holeArea = props.Area;
-                        normal = plane.Normal;
-                        normal.Unitize();
-                        centerMode = "平面面积质心";
-                    }
-                    else
-                    {
-                        holeCenter = DeterministicLengthCentroid(
-                            boundary.Curves, boundary.Perimeter);
-                        centerMode = "确定性长度质心";
-                    }
-
-                    bool isDeg = holeArea <= 0 || normal.IsZero;
-                    string degType = isDeg ? "非平面内环-" + centerMode : string.Empty;
-
-                    Vector3d position = holeCenter - center;
-                    holes.Add(new WbHole(
-                        WbUtil.Round(boundary.Perimeter, decimals[V5Criterion.EdgeSum]),
-                        WbUtil.Round(holeArea, decimals[V5Criterion.HoleArea]),
-                        WbUtil.Round(position * axes[0], decimals[V5Criterion.HolePosition]),
-                        WbUtil.Round(position * axes[1], decimals[V5Criterion.HolePosition]),
-                        WbUtil.Round(position * axes[2], decimals[V5Criterion.HolePosition]),
-                        WbUtil.Round(normal * axes[0], 6),
-                        WbUtil.Round(normal * axes[1], 6),
-                        WbUtil.Round(normal * axes[2], 6),
-                        holeCenter.X, holeCenter.Y, holeCenter.Z,
-                        centerMode, isDeg, degType));
-
-                    // 退化孔：计算拟合平面特征用于低置信度匹配
-                    if (isDeg)
-                    {
-                        WbHole lastHole = holes[holes.Count - 1];
-                        ComputeDegenerateFeatures(boundary.Curves, boundary.Perimeter,
-                            out lastHole.DegenerateProjectedArea,
-                            out lastHole.DegenerateCircularity,
-                            out lastHole.DegenerateAspectRatio,
-                            out lastHole.DegenerateNormalU,
-                            out lastHole.DegenerateNormalV,
-                            out lastHole.DegenerateNormalW,
-                            axes);
-                    }
-                }
-                else if (loop.LoopType == BrepLoopType.Outer)
-                {
-                    // 外轮廓 — 仅存描述符（面积、周长、法向），不再存顶点
-                    AreaMassProperties props = boundary.ClosedCurve == null
-                        ? null
-                        : AreaMassProperties.Compute(boundary.ClosedCurve);
-                    Plane ignored;
-                    if (props == null || props.Area <= RhinoMath.ZeroTolerance ||
-                        !boundary.ClosedCurve.TryGetPlane(out ignored))
-                        continue;
-
-                    Vector3d normal = ignored.Normal;
-                    normal.Unitize();
-                    profiles.Add(new WbOuterProfile
-                    {
-                        Area = props.Area,
-                        Perimeter = boundary.Perimeter,
-                        NU = normal * axes[0],
-                        NV = normal * axes[1],
-                        NW = normal * axes[2]
-                    });
-                }
-            }
-
-            // 确定性排序
-            holes = holes.OrderBy(h => h.Area)
-                .ThenBy(h => h.Perimeter)
-                .ThenBy(h => h.U)
-                .ThenBy(h => h.V)
-                .ThenBy(h => h.W).ToList();
-
-            profiles = profiles.OrderBy(p => p.Area)
-                .ThenBy(p => p.Perimeter).ToList();
-        }
-
-        private static WbLoopBoundary ReadLoopBoundary(BrepLoop loop, double fallbackTolerance,
-            out bool usedFallbackTolerance)
-        {
-            usedFallbackTolerance = false;
-            var edges = new List<Curve>();
-            foreach (BrepTrim trim in loop.Trims)
-            {
-                if (trim.Edge == null) continue;
-                Curve edge = trim.Edge.DuplicateCurve();
-                if (trim.IsReversed()) edge.Reverse();
-                edges.Add(edge);
-            }
-            if (edges.Count == 0)
-                throw new ArgumentException("孔轮廓不包含有效边。");
-
-            double tolerance;
-            if (RhinoDoc.ActiveDoc == null)
-            {
-                tolerance = fallbackTolerance;
-                usedFallbackTolerance = true;
-            }
-            else
-            {
-                tolerance = RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
-            }
-            Curve[] joined = Curve.JoinCurves(edges, tolerance);
-            Curve closed = joined != null && joined.Length == 1 && joined[0].IsClosed
-                ? joined[0] : null;
-            return new WbLoopBoundary(edges, closed);
-        }
-
-        /// <summary>
-        /// 确定性长度质心：128 个等弧长采样点平均。
-        /// 固定采样数和固定起始偏移，保证跨文件稳定。
-        /// </summary>
-        private static Point3d DeterministicLengthCentroid(
-            List<Curve> curves, double totalLength)
-        {
-            const int sampleCount = 128;
-            double[] lengths = curves.Select(c => c.GetLength()).ToArray();
-            double sumX = 0, sumY = 0, sumZ = 0;
-            for (int sample = 0; sample < sampleCount; sample++)
-            {
-                double target = totalLength * (sample + 0.5) / sampleCount;
-                double accumulated = 0;
-                int curveIndex = lengths.Length - 1;
-                for (int i = 0; i < lengths.Length; i++)
-                {
-                    if (target <= accumulated + lengths[i])
-                    { curveIndex = i; break; }
-                    accumulated += lengths[i];
-                }
-                double local = lengths[curveIndex] <= RhinoMath.ZeroTolerance
-                    ? 0.5
-                    : (target - accumulated) / lengths[curveIndex];
-                local = Math.Max(0, Math.Min(1, local));
-                Point3d p = curves[curveIndex].PointAtNormalizedLength(local);
-                sumX += p.X; sumY += p.Y; sumZ += p.Z;
-            }
-            return new Point3d(sumX / sampleCount, sumY / sampleCount, sumZ / sampleCount);
-        }
-
-        /// <summary>为非平面内环拟合平面并提取稳定特征（用于低置信度匹配）</summary>
-        private static void ComputeDegenerateFeatures(
-            List<Curve> curves, double totalLength,
-            out double projectedArea, out double circularity, out double aspectRatio,
-            out double normalU, out double normalV, out double normalW,
-            Vector3d[] axes)
-        {
-            projectedArea = 0; circularity = 0; aspectRatio = 0;
-            normalU = 0; normalV = 0; normalW = 0;
-            if (curves == null || curves.Count == 0 || totalLength <= RhinoMath.ZeroTolerance)
-                return;
-
-            // 采样 64 个点
-            const int samples = 64;
-            var points = new List<Point3d>();
-            double[] clen = curves.Select(c => c.GetLength()).ToArray();
-            for (int s = 0; s < samples; s++)
-            {
-                double target = totalLength * (s + 0.5) / samples;
-                double acc = 0;
-                int ci = clen.Length - 1;
-                for (int i = 0; i < clen.Length; i++)
-                { if (target <= acc + clen[i]) { ci = i; break; } acc += clen[i]; }
-                double local = clen[ci] <= RhinoMath.ZeroTolerance ? 0.5
-                    : (target - acc) / clen[ci];
-                local = Math.Max(0, Math.Min(1, local));
-                points.Add(curves[ci].PointAtNormalizedLength(local));
-            }
-
-            // 拟合平面：协方差矩阵最小特征值对应法向
-            double cx = 0, cy = 0, cz = 0;
-            foreach (var p in points) { cx += p.X; cy += p.Y; cz += p.Z; }
-            cx /= points.Count; cy /= points.Count; cz /= points.Count;
-
-            double cxx = 0, cxy = 0, cxz = 0, cyy = 0, cyz = 0, czz = 0;
-            foreach (var p in points)
-            {
-                double dx = p.X - cx, dy = p.Y - cy, dz = p.Z - cz;
-                cxx += dx * dx; cxy += dx * dy; cxz += dx * dz;
-                cyy += dy * dy; cyz += dy * dz; czz += dz * dz;
-            }
-            double trace = cxx + cyy + czz;
-            if (trace <= 1e-20) return;
-
-            // 幂迭代 (trace*I - C) → 最小特征值对应法向
-            double vx = 0, vy = 0, vz = 1;
-            for (int iter = 0; iter < 20; iter++)
-            {
-                double nx = trace * vx - (cxx * vx + cxy * vy + cxz * vz);
-                double ny = trace * vy - (cxy * vx + cyy * vy + cyz * vz);
-                double nz = trace * vz - (cxz * vx + cyz * vy + czz * vz);
-                double len = Math.Sqrt(nx * nx + ny * ny + nz * nz);
-                if (len < 1e-15) break;
-                vx = nx / len; vy = ny / len; vz = nz / len;
-            }
-            Vector3d normal = new Vector3d(vx, vy, vz);
-
-            // 建立平面二维基
-            Vector3d uBasis = Math.Abs(vz) < 0.9
-                ? Vector3d.CrossProduct(normal, Vector3d.ZAxis)
-                : Vector3d.CrossProduct(normal, Vector3d.XAxis);
-            if (!uBasis.Unitize()) return;
-            Vector3d vBasis = Vector3d.CrossProduct(normal, uBasis);
-            if (!vBasis.Unitize()) return;
-
-            // 投影点 → 2D
-            var pts2d = new List<Point2d>();
-            foreach (var p in points)
-            {
-                Vector3d d = p - new Point3d(cx, cy, cz);
-                pts2d.Add(new Point2d(d * uBasis, d * vBasis));
-            }
-
-            // 投影多边形面积（鞋带公式）
-            double area2d = 0;
-            for (int i = 0; i < pts2d.Count; i++)
-            {
-                int j = (i + 1) % pts2d.Count;
-                area2d += pts2d[i].X * pts2d[j].Y - pts2d[j].X * pts2d[i].Y;
-            }
-            projectedArea = Math.Abs(area2d) * 0.5;
-
-            // 圆形度 & 纵横比
-            if (totalLength > RhinoMath.ZeroTolerance)
-                circularity = 4.0 * Math.PI * projectedArea / (totalLength * totalLength);
-
-            double minX = pts2d.Min(p2 => p2.X), maxX = pts2d.Max(p2 => p2.X);
-            double minY = pts2d.Min(p2 => p2.Y), maxY = pts2d.Max(p2 => p2.Y);
-            double w = maxX - minX, h = maxY - minY;
-            aspectRatio = Math.Min(w, h) > 1e-10
-                ? Math.Max(w, h) / Math.Min(w, h) : 1.0;
-
-            // 法向转换到局部坐标
-            normalU = normal * axes[0];
-            normalV = normal * axes[1];
-            normalW = normal * axes[2];
-        }
-
-    }
-
-    // ========================================================================
-    // 迁移记录
-    // ========================================================================
-    internal sealed class WbMigrationRecord
-    {
-        public int Index;
-        public string Number;
-        public WbFeature Feature;
-        public string SourceFile;
-
-        public WbMigrationRecord(int index, string number, WbFeature feature, string sourceFile)
-        {
-            Index = index;
-            Number = number;
-            Feature = feature;
-            SourceFile = sourceFile ?? string.Empty;
-        }
-    }
-
-    // ========================================================================
-    // 校核与聚类
-    // ========================================================================
-    internal sealed class WbMigrationAudit
-    {
-        // 6 种轴排列：惯量退化零件的主轴顺序可能在不同文件间交换
-        // 每个排列是 { U 来自原轴[perm[0]], V 来自原轴[perm[1]], W 来自原轴[perm[2]] }
-        private static readonly int[][] AxisPermutations =
-        {
-            new[] { 0, 1, 2 },  // U,V,W → 不变
-            new[] { 0, 2, 1 },  // U,V,W → U,W,V
-            new[] { 1, 0, 2 },  // U,V,W → V,U,W
-            new[] { 1, 2, 0 },  // U,V,W → V,W,U
-            new[] { 2, 0, 1 },  // U,V,W → W,U,V
-            new[] { 2, 1, 0 }   // U,V,W → W,V,U
-        };
-
-        // 主轴反射符号的 4 种组合：保证主轴方向歧义全覆盖
-        private static readonly double[][] NonReflectionSigns =
-        {
-            new[] {  1.0,  1.0,  1.0 },
-            new[] { -1.0, -1.0,  1.0 },
-            new[] { -1.0,  1.0, -1.0 },
-            new[] {  1.0, -1.0, -1.0 }
-        };
-
-        private static readonly double[][] ReflectionSigns =
-        {
-            new[] { -1.0,  1.0,  1.0 },
-            new[] {  1.0, -1.0,  1.0 },
-            new[] {  1.0,  1.0, -1.0 },
-            new[] { -1.0, -1.0, -1.0 }
-        };
-
-        // 恒等符号：退化路径已将排列+符号烤进重映射坐标，用此数组避免二次乘符号
-        private static readonly double[] IdentitySign = { 1.0, 1.0, 1.0 };
-
-        public List<List<WbMigrationRecord>> Classes = new List<List<WbMigrationRecord>>();
-        public List<List<WbMigrationRecord>> AmbiguityGroups = new List<List<WbMigrationRecord>>();
-        public List<WbMigrationRecord> DegenerateHoleRecords = new List<WbMigrationRecord>();
-        public List<string> SamePartDifferentNumbers = new List<string>();
-        public List<string> DifferentPartsSameNumber = new List<string>();
-        public List<string> MirrorParts = new List<string>();
-        public List<string> ExcludedNumberConflicts = new List<string>();
-
-        private Dictionary<V5Criterion, bool> _enabled;
-        private Dictionary<V5Criterion, double> _tolerances;
-        private Dictionary<V5Criterion, bool> _isRel;
-        private double _mirrorTolerance;
-        private bool _strictMaterialColor;
-        private double _holeNormalTolerance;
-        private double _outerProfileAreaRatio;
-        private double _outerProfilePerimeterMin;
-        private double _degeneratePositionMultiplier;
-        private bool _enableDegenerateMatching;
-
-        public static WbMigrationAudit Create(
-            List<WbMigrationRecord> records,
-            Dictionary<V5Criterion, bool> enabled,
-            Dictionary<V5Criterion, double> tolerances,
-            Dictionary<V5Criterion, bool> isRel,
-            double mirrorTolerance,
-            bool strictMaterialColor,
-            double holeNormalTolerance,
-            double outerProfileAreaRatio = 0.0001,
-            double outerProfilePerimeterMin = 0.01,
-            double degeneratePositionMultiplier = 2.0,
-            bool enableDegenerateMatching = false)
-        {
-            var audit = new WbMigrationAudit
-            {
-                _enabled = enabled,
-                _tolerances = tolerances,
-                _isRel = isRel,
-                _mirrorTolerance = mirrorTolerance,
-                _strictMaterialColor = strictMaterialColor,
-                _holeNormalTolerance = holeNormalTolerance,
-                _outerProfileAreaRatio = outerProfileAreaRatio,
-                _outerProfilePerimeterMin = outerProfilePerimeterMin,
-                _degeneratePositionMultiplier = degeneratePositionMultiplier,
-                _enableDegenerateMatching = enableDegenerateMatching
-            };
-
-            // 按来源文件+编号+索引排序，确保可复现性
-            records = records.OrderBy(r => r.SourceFile ?? string.Empty)
-                             .ThenBy(r => r.Number ?? string.Empty)
-                             .ThenBy(r => r.Index).ToList();
-
-            // 分离含退化孔记录——各自独立归类，不参与自动聚类
-            var normalRecords = new List<WbMigrationRecord>();
-            foreach (var r in records)
-            {
-                if (r.Feature.HasDegenerateHoles)
-                    audit.DegenerateHoleRecords.Add(r);
-                else
-                    normalRecords.Add(r);
-            }
-
-            // 构建候选桶：严格模式下按材质+颜色+孔数分组，宽松模式下仅按孔数分组
-            // 桶间无需匹配（材质/颜色不同或孔数不同 → GlobalMatches/GeometryMatches 必返回 false）
-            int n = normalRecords.Count;
-            bool[,] matchMatrix = new bool[n, n];
-            for (int i = 0; i < n; i++) matchMatrix[i, i] = true;
-
-            var buckets = new Dictionary<string, List<int>>();
-            for (int i = 0; i < n; i++)
-            {
-                WbFeature f = normalRecords[i].Feature;
-                // 桶键：孔数（必需相同）+ 材质/颜色（严格模式下才作为桶键）
-                string bucketKey = f.Holes.Count.ToString(CultureInfo.InvariantCulture);
-                if (strictMaterialColor)
-                    bucketKey += "|" + (f.Material ?? string.Empty) + "|" + (f.Color ?? string.Empty);
-
-                if (!buckets.TryGetValue(bucketKey, out var list))
-                {
-                    list = new List<int>();
-                    buckets[bucketKey] = list;
-                }
-                list.Add(i);
-            }
-
-            // 仅在桶内构建匹配矩阵
-            foreach (var kvp in buckets)
-            {
-                var indices = kvp.Value;
-                for (int a = 0; a < indices.Count; a++)
-                for (int b = a + 1; b < indices.Count; b++)
-                {
-                    int i = indices[a], j = indices[b];
-                    bool m = Matches(normalRecords[i].Feature, normalRecords[j].Feature,
-                        enabled, tolerances, isRel, mirrorTolerance, strictMaterialColor, holeNormalTolerance,
-                        outerProfileAreaRatio, outerProfilePerimeterMin);
-                    matchMatrix[i, j] = matchMatrix[j, i] = m;
-                }
-            }
-
-            // BFS 提取连通分量
-            bool[] visited = new bool[n];
-            var components = new List<List<int>>();
-            for (int i = 0; i < n; i++)
-            {
-                if (visited[i]) continue;
-                var comp = new List<int>();
-                var queue = new Queue<int>();
-                queue.Enqueue(i);
-                visited[i] = true;
-                while (queue.Count > 0)
-                {
-                    int v = queue.Dequeue();
-                    comp.Add(v);
-                    for (int w = 0; w < n; w++)
-                    {
-                        if (!visited[w] && matchMatrix[v, w])
-                        {
-                            visited[w] = true;
-                            queue.Enqueue(w);
-                        }
-                    }
-                }
-                components.Add(comp);
-            }
-
-            // 检测每个连通分量是否为团（全连接），非团标记为歧义
-            foreach (var comp in components)
-            {
-                bool isClique = true;
-                for (int i = 0; i < comp.Count && isClique; i++)
-                for (int j = i + 1; j < comp.Count && isClique; j++)
-                    if (!matchMatrix[comp[i], comp[j]])
-                        isClique = false;
-
-                var group = comp.Select(i => normalRecords[i]).ToList();
-                if (isClique)
-                    audit.Classes.Add(group);
-                else
-                    audit.AmbiguityGroups.Add(group);
-            }
-
-            // 退化孔记录：关闭时各自独立成类（隔离），开启时内部低置信度匹配
-            if (audit._enableDegenerateMatching && audit.DegenerateHoleRecords.Count > 1)
-            {
-                int dn = audit.DegenerateHoleRecords.Count;
-                bool[,] degenMatrix = new bool[dn, dn];
-                for (int i = 0; i < dn; i++) degenMatrix[i, i] = true;
-
-                var degenBuckets = new Dictionary<string, List<int>>();
-                for (int i = 0; i < dn; i++)
-                {
-                    string key = audit.DegenerateHoleRecords[i].Feature.Holes.Count
-                        .ToString(CultureInfo.InvariantCulture);
-                    if (!degenBuckets.TryGetValue(key, out var list))
-                    {
-                        list = new List<int>();
-                        degenBuckets[key] = list;
-                    }
-                    list.Add(i);
-                }
-
-                foreach (var kvp in degenBuckets)
-                {
-                    var indices = kvp.Value;
-                    for (int a = 0; a < indices.Count; a++)
-                    for (int b = a + 1; b < indices.Count; b++)
-                    {
-                        int i = indices[a], j = indices[b];
-                        bool m = Matches(
-                            audit.DegenerateHoleRecords[i].Feature,
-                            audit.DegenerateHoleRecords[j].Feature,
-                            enabled, tolerances, isRel, mirrorTolerance,
-                            strictMaterialColor, holeNormalTolerance,
-                            outerProfileAreaRatio, outerProfilePerimeterMin,
-                            degeneratePositionMultiplier, true);
-                        degenMatrix[i, j] = degenMatrix[j, i] = m;
-                    }
-                }
-
-                bool[] degenVisited = new bool[dn];
-                for (int i = 0; i < dn; i++)
-                {
-                    if (degenVisited[i]) continue;
-                    var compIndices = new List<int>();
-                    var queue = new Queue<int>();
-                    queue.Enqueue(i);
-                    degenVisited[i] = true;
-                    while (queue.Count > 0)
-                    {
-                        int v = queue.Dequeue();
-                        compIndices.Add(v);
-                        for (int w = 0; w < dn; w++)
-                        {
-                            if (!degenVisited[w] && degenMatrix[v, w])
-                            {
-                                degenVisited[w] = true;
-                                queue.Enqueue(w);
-                            }
-                        }
-                    }
-
-                    // 检测连通分量是否为团（全连接），非团标记为歧义
-                    bool isClique = true;
-                    for (int a = 0; a < compIndices.Count && isClique; a++)
-                    for (int b = a + 1; b < compIndices.Count && isClique; b++)
-                        if (!degenMatrix[compIndices[a], compIndices[b]])
-                            isClique = false;
-
-                    var group = compIndices.Select(idx => audit.DegenerateHoleRecords[idx]).ToList();
-                    if (isClique)
-                        audit.Classes.Add(group);
-                    else
-                        audit.AmbiguityGroups.Add(group);
-                }
-            }
-            else
-            {
-                // 关闭：退化孔记录各自作为单元素类加入 Classes，确保入库且参与编号冲突隔离
-                foreach (var dr in audit.DegenerateHoleRecords)
-                    audit.Classes.Add(new List<WbMigrationRecord> { dr });
-            }
-
-            // 检测同件异号
-            foreach (var group in audit.Classes)
-            {
-                var numbers = group.Select(r => r.Number)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(num => num).ToList();
-                if (numbers.Count > 1)
-                    audit.SamePartDifferentNumbers.Add(
-                        "实际相同、编号不同：" + string.Join("、", numbers) +
-                        "；输入序号：" + string.Join("、",
-                            group.Select(r => (r.Index + 1).ToString(CultureInfo.InvariantCulture))));
-            }
-
-            // 检测异件同号
-            foreach (var group in records.GroupBy(
-                r => r.Number, StringComparer.OrdinalIgnoreCase))
-            {
-                int classCount = audit.Classes.Count(
-                    c => c.Any(r => string.Equals(r.Number, group.Key,
-                        StringComparison.OrdinalIgnoreCase)));
-                if (classCount > 1)
-                    audit.DifferentPartsSameNumber.Add(
-                        "实际不同、编号相同：" + group.Key +
-                        "；分为 " + classCount.ToString(CultureInfo.InvariantCulture) + " 类" +
-                        "；输入序号：" + string.Join("、",
-                            group.Select(r => (r.Index + 1).ToString(CultureInfo.InvariantCulture))));
-            }
-
-            // 检测镜像零件
-            for (int left = 0; left < audit.Classes.Count; left++)
-            for (int right = left + 1; right < audit.Classes.Count; right++)
-            {
-                WbMigrationRecord a = audit.Classes[left].OrderBy(r => r.Index).First();
-                WbMigrationRecord b = audit.Classes[right].OrderBy(r => r.Index).First();
-                if (MirrorMatches(a.Feature, b.Feature, enabled, tolerances, isRel, mirrorTolerance, strictMaterialColor, holeNormalTolerance,
-                    outerProfileAreaRatio, outerProfilePerimeterMin))
-                    audit.MirrorParts.Add(
-                        "镜像零件：" + a.Number +
-                        "（序号 " + (a.Index + 1).ToString(CultureInfo.InvariantCulture) + "）与 " +
-                        b.Number +
-                        "（序号 " + (b.Index + 1).ToString(CultureInfo.InvariantCulture) + "）。");
-            }
-
-            // 检测歧义聚类：容差不传递导致连通分量非团
-            foreach (var group in audit.AmbiguityGroups)
-            {
-                var numbers = group.Select(r => r.Number)
-                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                audit.ExcludedNumberConflicts.Add(
-                    "聚类歧义：容差不传递，以下记录相互连通但非全匹配，"
-                    + "未自动归类——" + string.Join("、", numbers)
-                    + "；输入序号：" + string.Join("、",
-                        group.Select(r => (r.Index + 1).ToString(CultureInfo.InvariantCulture))));
-            }
-
-            return audit;
-        }
-
-        /// <summary>入库去重：异件同号时保留首次遇到、隔离后续。</summary>
-        public List<WbMigrationRecord> RecordsToInsert()
-        {
-            var result = new List<WbMigrationRecord>();
-            foreach (WbMigrationRecord r in Classes
-                .Select(c => c.OrderBy(x => x.Index).First())
-                .OrderBy(x => x.Index))
-            {
-                WbMigrationRecord kept = result.FirstOrDefault(x =>
-                    string.Equals(x.Number, r.Number, StringComparison.OrdinalIgnoreCase));
-                if (kept == null)
-                    result.Add(r);
-                else
-                    ExcludedNumberConflicts.Add(
-                        "实际不同、编号相同，未写入正式库：" + r.Number +
-                        "；保留来源=" + kept.SourceFile +
-                        "；隔离来源=" + r.SourceFile);
-            }
-            return result;
-        }
-
-        public IEnumerable<string> ToLogs()
-        {
-            if (!_strictMaterialColor)
-                yield return "注意：材质/颜色宽松模式——任一方为空即视为匹配，未参与严格确认。";
-            if (_enableDegenerateMatching)
-                yield return "注意：退化孔低置信度匹配已开启——使用拟合平面特征参与匹配，可能增加误匹配风险。";
-            yield return "共识别 " + Classes.Count.ToString(CultureInfo.InvariantCulture) +
-                " 个实际零件类。";
-            if (DegenerateHoleRecords.Count > 0)
-            {
-                string degenSuffix = _enableDegenerateMatching
-                    ? " 个含退化孔记录（退化匹配已开启，已参与低置信度聚类）——"
-                    : " 个含退化孔（非平面内环）记录，各作为独立类别入库、未参与自动聚类——";
-                yield return "发现 " + DegenerateHoleRecords.Count.ToString(CultureInfo.InvariantCulture) +
-                    degenSuffix +
-                    string.Join("、", DegenerateHoleRecords.Select(r =>
-                        (r.Number ?? "?") + "（序号 " + (r.Index + 1).ToString(CultureInfo.InvariantCulture) + "）"));
-            }
-            if (AmbiguityGroups.Count > 0)
-                yield return "发现 " + AmbiguityGroups.Count.ToString(CultureInfo.InvariantCulture) +
-                    " 个聚类歧义组（容差不传递，未自动归类）。";
-            if (SamePartDifferentNumbers.Count == 0)
-                yield return "未发现实际相同但编号不同。";
-            else foreach (string x in SamePartDifferentNumbers) yield return x;
-            if (DifferentPartsSameNumber.Count == 0)
-                yield return "未发现实际不同但编号相同。";
-            else foreach (string x in DifferentPartsSameNumber) yield return x;
-            foreach (string x in MirrorParts) yield return x;
-            foreach (string x in ExcludedNumberConflicts) yield return x;
-        }
-
-        public IEnumerable<KeyValuePair<string, string>> AuditRows()
-        {
-            if (!_strictMaterialColor)
-                yield return new KeyValuePair<string, string>(
-                    "宽松模式", "材质/颜色任一方为空即视为匹配，未参与严格确认。");
-            foreach (string x in SamePartDifferentNumbers)
-                yield return new KeyValuePair<string, string>("同件异号", x);
-            foreach (string x in DifferentPartsSameNumber)
-                yield return new KeyValuePair<string, string>("异件同号", x);
-            foreach (string x in MirrorParts)
-                yield return new KeyValuePair<string, string>("镜像零件", x);
-            foreach (string x in ExcludedNumberConflicts)
-                yield return new KeyValuePair<string, string>("隔离异件同号", x);
-        }
-
-        /// <summary>导出聚类摘要为结构化 JSON（供外部复核和后续升级）</summary>
-        public string ToClassificationJson()
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine("{");
-            sb.AppendLine("  \"class_count\": " + Classes.Count.ToString(CultureInfo.InvariantCulture) + ",");
-            sb.AppendLine("  \"ambiguity_group_count\": " + AmbiguityGroups.Count.ToString(CultureInfo.InvariantCulture) + ",");
-            sb.AppendLine("  \"degenerate_count\": " + DegenerateHoleRecords.Count.ToString(CultureInfo.InvariantCulture) + ",");
-            sb.AppendLine("  \"strict_material_color\": " + _strictMaterialColor.ToString().ToLowerInvariant() + ",");
-            sb.AppendLine("  \"classes\": [");
-            for (int i = 0; i < Classes.Count; i++)
-            {
-                var cls = Classes[i];
-                sb.Append("    { \"size\": " + cls.Count.ToString(CultureInfo.InvariantCulture) +
-                    ", \"numbers\": [" +
-                    string.Join(",", cls.Select(r => "\"" + (r.Number ?? "?") + "\"")) +
-                    "], \"files\": [" +
-                    string.Join(",", cls.Select(r => "\"" + (r.SourceFile ?? "").Replace("\\", "\\\\") + "\"")) +
-                    "] }" + (i < Classes.Count - 1 ? "," : "") + "\n");
-            }
-            sb.AppendLine("  ],");
-            sb.AppendLine("  \"ambiguity_groups\": [");
-            for (int i = 0; i < AmbiguityGroups.Count; i++)
-            {
-                var grp = AmbiguityGroups[i];
-                sb.Append("    { \"size\": " + grp.Count.ToString(CultureInfo.InvariantCulture) +
-                    ", \"numbers\": [" +
-                    string.Join(",", grp.Select(r => "\"" + (r.Number ?? "?") + "\"")) +
-                    "] }" + (i < AmbiguityGroups.Count - 1 ? "," : "") + "\n");
-            }
-            sb.AppendLine("  ],");
-            sb.AppendLine("  \"degenerate_records\": [");
-            for (int i = 0; i < DegenerateHoleRecords.Count; i++)
-            {
-                var dr = DegenerateHoleRecords[i];
-                sb.Append("    { \"number\": \"" + (dr.Number ?? "?") +
-                    "\", \"source_file\": \"" + (dr.SourceFile ?? "").Replace("\\", "\\\\") +
-                    "\", \"index\": " + (dr.Index + 1).ToString(CultureInfo.InvariantCulture) +
-                    " }" + (i < DegenerateHoleRecords.Count - 1 ? "," : "") + "\n");
-            }
-            sb.AppendLine("  ]");
-            sb.AppendLine("}");
-            return sb.ToString();
-        }
-
-        public IEnumerable<string> DiagnosticLines()
-        {
-            if (_enabled == null || _tolerances == null) yield break;
-            // 导出歧义组诊断
-            if (AmbiguityGroups.Count > 0)
-            {
-                yield return "===== 歧义组诊断（共 " +
-                    AmbiguityGroups.Count.ToString(CultureInfo.InvariantCulture) + " 组） =====";
-                foreach (var group in AmbiguityGroups)
-                {
-                    yield return "歧义组：" + string.Join(", ",
-                        group.Select(r => r.Number + "(#" + (r.Index + 1).ToString(CultureInfo.InvariantCulture) + ")")) +
-                        "；来源文件：" + string.Join(", ", group.Select(r => r.SourceFile).Distinct());
-                }
-            }
-            int clsIdx = 0;
-            foreach (List<WbMigrationRecord> group in Classes.Where(c => c.Count > 1))
-            {
-                for (int left = 0; left < group.Count; left++)
-                for (int right = left + 1; right < group.Count; right++)
-                {
-                    WbMigrationRecord a = group[left], b = group[right];
-                    yield return "===== 同件判定诊断 [类" +
-                        (clsIdx + 1).ToString(CultureInfo.InvariantCulture) + "]：" +
-                        a.Number + " \u2194 " + b.Number + " =====";
-                    yield return "质心A=" + WbUtil.PointText(a.Feature.Centroid) +
-                        "；质心B=" + WbUtil.PointText(b.Feature.Centroid) +
-                        "；世界距离=" + WbUtil.FD(
-                            a.Feature.Centroid.DistanceTo(b.Feature.Centroid));
-                    yield return "孔数A/B=" +
-                        a.Feature.Holes.Count.ToString(CultureInfo.InvariantCulture) +
-                        "/" + b.Feature.Holes.Count.ToString(CultureInfo.InvariantCulture);
-
-                    double[] bestSign = NonReflectionSigns[0];
-                    double bestMax = double.PositiveInfinity, bestAvg = double.PositiveInfinity;
-                    foreach (double[] sign in NonReflectionSigns)
-                    {
-                        var minima = a.Feature.Holes.Select(h =>
-                            b.Feature.Holes.Count == 0
-                                ? double.PositiveInfinity
-                                : b.Feature.Holes.Min(x => Distance(h, x, sign))).ToList();
-                        double maximum = minima.Count == 0 ? 0 : minima.Max();
-                        double average = minima.Count == 0 ? 0 : minima.Average();
-                        bool assignment = PerfectAssignment(
-                            a.Feature.Holes, b.Feature.Holes, sign, _enabled, _tolerances, _isRel, _holeNormalTolerance);
-                        yield return "变换(" + string.Join(",", sign.Select(WbUtil.FD)) +
-                            ")：逐孔最近距离 最大=" + WbUtil.FD(maximum) +
-                            "，平均=" + WbUtil.FD(average) +
-                            "，完整匹配=" + assignment.ToString();
-                        if (maximum < bestMax ||
-                            (Math.Abs(maximum - bestMax) <= 1e-12 && average < bestAvg))
-                        { bestMax = maximum; bestAvg = average; bestSign = sign; }
-                    }
-                    yield return "最佳变换=(" + string.Join(",", bestSign.Select(WbUtil.FD)) + ")";
-                    for (int h = 0; h < a.Feature.Holes.Count; h++)
-                    {
-                        if (b.Feature.Holes.Count == 0)
-                        { yield return "A孔[" + h.ToString(CultureInfo.InvariantCulture) + "]：B 中无孔。"; continue; }
-                        int target = Enumerable.Range(0, b.Feature.Holes.Count)
-                            .OrderBy(x => Distance(a.Feature.Holes[h], b.Feature.Holes[x], bestSign))
-                            .First();
-                        yield return "A孔[" + h.ToString(CultureInfo.InvariantCulture) +
-                            "] \u2192 B孔[" + target.ToString(CultureInfo.InvariantCulture) +
-                            "]：合成距离=" + WbUtil.FD(Distance(
-                                a.Feature.Holes[h], b.Feature.Holes[target], bestSign)) +
-                            "；A局部=" + HolePoint(a.Feature.Holes[h], new[] { 1.0, 1.0, 1.0 }) +
-                            "；B变换后=" + HolePoint(b.Feature.Holes[target], bestSign);
-                    }
-                }
-                clsIdx++;
-            }
-        }
-
-        // ================================================================
-        // 匹配逻辑
-        // ================================================================
-        private static bool Matches(
-            WbFeature a, WbFeature b,
-            Dictionary<V5Criterion, bool> e, Dictionary<V5Criterion, double> t,
-            Dictionary<V5Criterion, bool> isRel, double mirrorTolerance, bool strictMaterialColor, double normalTol,
-            double outerAreaRatio, double outerPerimMin,
-            double degenMult = 2.0, bool enableDegenMatch = false)
-        {
-            return GlobalMatches(a, b, e, t, isRel, strictMaterialColor) &&
-                   SameMirrorCode(a, b, mirrorTolerance) &&
-                   GeometryMatches(a, b, e, t, isRel, false, normalTol, outerAreaRatio, outerPerimMin, degenMult, enableDegenMatch);
-        }
-
-        private static bool MirrorMatches(
-            WbFeature a, WbFeature b,
-            Dictionary<V5Criterion, bool> e, Dictionary<V5Criterion, double> t,
-            Dictionary<V5Criterion, bool> isRel, double mirrorTolerance, bool strictMaterialColor, double normalTol,
-            double outerAreaRatio, double outerPerimMin,
-            double degenMult = 2.0, bool enableDegenMatch = false)
-        {
-            return GlobalMatches(a, b, e, t, isRel, strictMaterialColor) &&
-                   !SameMirrorCode(a, b, mirrorTolerance) &&
-                   GeometryMatches(a, b, e, t, isRel, true, normalTol, outerAreaRatio, outerPerimMin, degenMult, enableDegenMatch);
-        }
-
-        private static bool GlobalMatches(
-            WbFeature a, WbFeature b,
-            Dictionary<V5Criterion, bool> e, Dictionary<V5Criterion, double> t,
-            Dictionary<V5Criterion, bool> isRel, bool strictMaterialColor)
-        {
-            if (!WbUtil.SameOptionalText(a.Material, b.Material, strictMaterialColor) ||
-                !WbUtil.SameOptionalText(a.Color, b.Color, strictMaterialColor))
-                return false;
-            if (!BoundingBoxMatches(a.BoundingBox, b.BoundingBox, t[V5Criterion.Length], isRel[V5Criterion.Length]))
-                return false;
-            if (e[V5Criterion.Inertia] &&
-                !a.Inertia.Zip(b.Inertia, (x, y) => WbUtil.WithinTolerance(x, y, t[V5Criterion.Inertia], isRel[V5Criterion.Inertia])).All(x => x))
-                return false;
-            return (!e[V5Criterion.Volume] || WbUtil.WithinTolerance(a.Volume, b.Volume, t[V5Criterion.Volume], isRel[V5Criterion.Volume]));
-        }
-
-        /// <summary>直接比较 double[3]，不再解析 CSV。</summary>
-        private static bool BoundingBoxMatches(double[] a, double[] b, double tolerance, bool isRelative)
-        {
-            if (a == null || b == null) return true;
-            if (a.Length != 3 || b.Length != 3) return false;
-            if (!WbUtil.WithinTolerance(a[0], b[0], tolerance, isRelative)) return false;
-            return WbUtil.WithinTolerance(a[1], b[1], tolerance, isRelative) &&
-                   WbUtil.WithinTolerance(a[2], b[2], tolerance, isRelative);
-        }
-
-        private static string MirrorCode(WbFeature f, double tolerance)
-        {
-            double value = Math.Abs(f.HoleMirrorScore) > tolerance
-                ? f.HoleMirrorScore : f.MirrorScore;
-            return Math.Abs(value) <= tolerance ? string.Empty : (value >= 0 ? "A" : "B");
-        }
-
-        private static bool SameMirrorCode(WbFeature a, WbFeature b, double tolerance) =>
-            string.Equals(MirrorCode(a, tolerance), MirrorCode(b, tolerance), StringComparison.Ordinal);
-
-        /// <summary>将 b 侧孔坐标按轴排列+符号重新映射（退化路径用）。</summary>
-        private static List<WbHole> RemapHoles(
-            List<WbHole> holes, int[] perm, double[] sign)
-        {
-            return holes.Select(h =>
-            {
-                double[] coords = { h.U, h.V, h.W };
-                double[] norms = { h.NU, h.NV, h.NW };
-                return new WbHole(
-                    h.Perimeter, h.Area,
-                    coords[perm[0]] * sign[0],
-                    coords[perm[1]] * sign[1],
-                    coords[perm[2]] * sign[2],
-                    norms[perm[0]] * sign[0],
-                    norms[perm[1]] * sign[1],
-                    norms[perm[2]] * sign[2]);
-            }).ToList();
-        }
-
-        /// <summary>将 b 侧外轮廓法向按轴排列+符号重新映射（退化路径用）。</summary>
-        private static List<WbOuterProfile> RemapProfiles(
-            List<WbOuterProfile> profiles, int[] perm, double[] sign)
-        {
-            return profiles.Select(p =>
-            {
-                double[] norms = { p.NU, p.NV, p.NW };
-                return new WbOuterProfile
-                {
-                    Area = p.Area,
-                    Perimeter = p.Perimeter,
-                    NU = norms[perm[0]] * sign[0],
-                    NV = norms[perm[1]] * sign[1],
-                    NW = norms[perm[2]] * sign[2]
-                };
-            }).ToList();
-        }
-
-        internal static bool GeometryMatches(
-            WbFeature a, WbFeature b,
-            Dictionary<V5Criterion, bool> e, Dictionary<V5Criterion, double> t,
-            Dictionary<V5Criterion, bool> isRel, bool reflection, double normalTol,
-            double outerAreaRatio, double outerPerimMin,
-            double degenMult = 2.0, bool enableDegenMatch = false)
-        {
-            if (a.Holes.Count != b.Holes.Count) return false;
-            double[][] signs = reflection ? ReflectionSigns : NonReflectionSigns;
-            double holeTol = t[V5Criterion.HolePosition];
-
-            // 退化路径：遍历全部 6 种轴排列 × N 种符号
-            if (a.IsDegenerate || b.IsDegenerate)
-            {
-                foreach (int[] perm in AxisPermutations)
-                foreach (double[] sign in signs)
-                {
-                    var bHolesRemapped = RemapHoles(b.Holes, perm, sign);
-                    var bProfilesRemapped = RemapProfiles(b.OuterProfiles, perm, sign);
-
-                    if (!PerfectAssignment(a.Holes, bHolesRemapped, IdentitySign, e, t, isRel, normalTol, degenMult, enableDegenMatch))
-                        continue;
-                    if (OuterProfilesMatch(a.OuterProfiles, bProfilesRemapped, IdentitySign, holeTol, normalTol, outerAreaRatio, outerPerimMin))
-                        return true;
-                }
-                return false;
-            }
-
-            // 正常路径：非退化零件只遍历符号
-            foreach (double[] sign in signs)
-            {
-                if (!PerfectAssignment(a.Holes, b.Holes, sign, e, t, isRel, normalTol, degenMult, enableDegenMatch))
-                    continue;
-                if (OuterProfilesMatch(a.OuterProfiles, b.OuterProfiles, sign, holeTol, normalTol, outerAreaRatio, outerPerimMin))
-                    return true;
-            }
-            return false;
-        }
-
-        private static bool PerfectAssignment(
-            List<WbHole> a, List<WbHole> b, double[] s,
-            Dictionary<V5Criterion, bool> e, Dictionary<V5Criterion, double> t,
-            Dictionary<V5Criterion, bool> isRel, double normalTol,
-            double degenMult = 2.0, bool enableDegenMatch = false)
-        {
-            if (a.Count != b.Count) return false;
-            return WbUtil.TryBipartiteMatch(a, b,
-                (left, right) => HoleCompatible(left, right, s, e, t, isRel, normalTol, degenMult, enableDegenMatch));
-        }
-
-        private static bool OuterProfilesMatch(
-            List<WbOuterProfile> a, List<WbOuterProfile> b,
-            double[] sign, double tolerance, double normalTol,
-            double outerAreaRatio, double outerPerimMin)
-        {
-            if (a.Count == 0 && b.Count == 0) return true;
-            if (a.Count != b.Count) return false;
-            return WbUtil.TryBipartiteMatch(a, b,
-                (left, right) => OuterProfileCompatible(left, right, sign, tolerance, normalTol, outerAreaRatio, outerPerimMin));
-        }
-
-        private static bool OuterProfileCompatible(
-            WbOuterProfile a, WbOuterProfile b, double[] sign, double tolerance, double normalTol,
-            double outerAreaRatio, double outerPerimMin)
-        {
-            if (!a.IsAvailable || !b.IsAvailable) return false;
-            // 面积 + 周长 + 法向一致性判别
-            if (Math.Abs(a.Area - b.Area) >
-                Math.Max(Math.Max(a.Area, b.Area), 1) * outerAreaRatio ||
-                Math.Abs(a.Perimeter - b.Perimeter) > Math.Max(tolerance, outerPerimMin))
-                return false;
-            return Math.Abs(a.NU * b.NU * sign[0] + a.NV * b.NV * sign[1] + a.NW * b.NW * sign[2]) >= normalTol;
-        }
-
-        private static bool HoleCompatible(
-            WbHole a, WbHole b, double[] s,
-            Dictionary<V5Criterion, bool> e, Dictionary<V5Criterion, double> t,
-            Dictionary<V5Criterion, bool> isRel, double normalTol,
-            double degenMult = 2.0, bool enableDegenMatch = false)
-        {
-            // 退化孔匹配时使用拟合平面特征
-            bool bothDegenerate = enableDegenMatch && a.IsDegenerate && b.IsDegenerate;
-
-            if (e[V5Criterion.EdgeSum])
-            {
-                double edgeTol = bothDegenerate
-                    ? t[V5Criterion.EdgeSum] * degenMult  // 退化孔放宽周长容差
-                    : t[V5Criterion.EdgeSum];
-                if (!WbUtil.WithinTolerance(a.Perimeter, b.Perimeter, edgeTol,
-                    isRel[V5Criterion.EdgeSum]))
-                    return false;
-            }
-            if (e[V5Criterion.HoleArea])
-            {
-                double areaA = bothDegenerate ? a.DegenerateProjectedArea : a.Area;
-                double areaB = bothDegenerate ? b.DegenerateProjectedArea : b.Area;
-                double areaTol = bothDegenerate
-                    ? Math.Max(t[V5Criterion.HoleArea] * degenMult, 5.0)  // 退化孔最低面积容差 5%
-                    : t[V5Criterion.HoleArea];
-                if (!WbUtil.WithinTolerance(areaA, areaB, areaTol,
-                    isRel[V5Criterion.HoleArea]))
-                    return false;
-            }
-
-            if (e[V5Criterion.HolePosition])
-            {
-                double tol = t[V5Criterion.HolePosition];
-                if (a.IsDegenerate || b.IsDegenerate) tol *= degenMult;
-                double du = a.U - b.U * s[0];
-                double dv = a.V - b.V * s[1];
-                double dw = a.W - b.W * s[2];
-                if (Math.Sqrt(du * du + dv * dv + dw * dw) >= tol)
-                    return false;
-            }
-
-            // 退化孔匹配：使用拟合平面法向
-            if (bothDegenerate)
-            {
-                double aLen = Math.Sqrt(a.DegenerateNormalU * a.DegenerateNormalU +
-                    a.DegenerateNormalV * a.DegenerateNormalV +
-                    a.DegenerateNormalW * a.DegenerateNormalW);
-                double bLen = Math.Sqrt(b.DegenerateNormalU * b.DegenerateNormalU +
-                    b.DegenerateNormalV * b.DegenerateNormalV +
-                    b.DegenerateNormalW * b.DegenerateNormalW);
-                if (aLen <= RhinoMath.ZeroTolerance || bLen <= RhinoMath.ZeroTolerance)
-                    return true;
-                double dot = Math.Abs(
-                    a.DegenerateNormalU * b.DegenerateNormalU * s[0] +
-                    a.DegenerateNormalV * b.DegenerateNormalV * s[1] +
-                    a.DegenerateNormalW * b.DegenerateNormalW * s[2]);
-                // 退化孔法向容差放宽
-                return dot >= normalTol * 0.95;
-            }
-
-            double aLen2 = Math.Sqrt(a.NU * a.NU + a.NV * a.NV + a.NW * a.NW);
-            double bLen2 = Math.Sqrt(b.NU * b.NU + b.NV * b.NV + b.NW * b.NW);
-            if (aLen2 <= RhinoMath.ZeroTolerance || bLen2 <= RhinoMath.ZeroTolerance)
-                return true; // 退化孔无法比较法向，跳过
-
-            double dot2 = Math.Abs(a.NU * b.NU * s[0] + a.NV * b.NV * s[1] + a.NW * b.NW * s[2]);
-            return dot2 >= normalTol;
-        }
-
-        private static double Distance(WbHole a, WbHole b, double[] sign)
-        {
-            double du = a.U - b.U * sign[0];
-            double dv = a.V - b.V * sign[1];
-            double dw = a.W - b.W * sign[2];
-            return Math.Sqrt(du * du + dv * dv + dw * dw);
-        }
-
-        private static string HolePoint(WbHole h, double[] sign) =>
-            "(" + WbUtil.FD(h.U * sign[0]) + "," +
-            WbUtil.FD(h.V * sign[1]) + "," +
-            WbUtil.FD(h.W * sign[2]) + ")";
-
-        /// <summary>孔面积/周长谱快速比较：排序后逐项最大相对差异不超过 ratio。</summary>
-        private static bool FastHoleSpectrumMatches(List<WbHole> a, List<WbHole> b, double ratio)
-        {
-            if (a.Count == 0 && b.Count == 0) return true;
-            if (a.Count == 0 || b.Count == 0) return false;
-
-            var aAreas = a.Select(h => h.Area).OrderBy(x => x).ToList();
-            var bAreas = b.Select(h => h.Area).OrderBy(x => x).ToList();
-            var aPerims = a.Select(h => h.Perimeter).OrderBy(x => x).ToList();
-            var bPerims = b.Select(h => h.Perimeter).OrderBy(x => x).ToList();
-
-            for (int i = 0; i < a.Count; i++)
-            {
-                double maxA = Math.Max(Math.Max(aAreas[i], bAreas[i]), 1e-10);
-                if (Math.Abs(aAreas[i] - bAreas[i]) / maxA > ratio) return false;
-                double maxP = Math.Max(Math.Max(aPerims[i], bPerims[i]), 1e-10);
-                if (Math.Abs(aPerims[i] - bPerims[i]) / maxP > ratio) return false;
-            }
-            return true;
-        }
-
-        /// <summary>外轮廓面积谱快速比较：排序后逐项最大相对差异不超过 ratio。</summary>
-        private static bool FastProfileSpectrumMatches(List<WbOuterProfile> a, List<WbOuterProfile> b, double ratio)
-        {
-            if (a.Count == 0 && b.Count == 0) return true;
-            if (a.Count == 0 || b.Count == 0) return false;
-
-            var aAreas = a.Select(p => p.Area).OrderBy(x => x).ToList();
-            var bAreas = b.Select(p => p.Area).OrderBy(x => x).ToList();
-
-            for (int i = 0; i < a.Count; i++)
-            {
-                double maxA = Math.Max(Math.Max(aAreas[i], bAreas[i]), 1e-10);
-                if (Math.Abs(aAreas[i] - bAreas[i]) / maxA > ratio) return false;
-            }
-            return true;
-        }
-    }
-
-    // ========================================================================
-    // 检查点：断点续跑支持
-    // ========================================================================
     internal sealed class WbMigrationCheckpoint
     {
         public string DatabasePath;
@@ -1746,6 +29,7 @@ namespace NS_Parrot
         public List<string> Diagnostics = new List<string>();
         public List<string> FailedFiles = new List<string>();
         public int TotalErrorCount;
+        public WbMigrationPhase Phase = WbMigrationPhase.Extracting;
 
         internal sealed class CheckpointRecord
         {
@@ -1774,7 +58,19 @@ namespace NS_Parrot
         public void Save(string checkpointPath)
         {
             string data = Serialize();
-            File.WriteAllText(checkpointPath, data, Encoding.UTF8);
+            string tmpPath = checkpointPath + ".tmp";
+            try
+            {
+                File.WriteAllText(tmpPath, data, Encoding.UTF8);
+                if (File.Exists(checkpointPath))
+                    File.Replace(tmpPath, checkpointPath, null);
+                else
+                    File.Move(tmpPath, checkpointPath);
+            }
+            finally
+            {
+                try { if (File.Exists(tmpPath)) File.Delete(tmpPath); } catch { }
+            }
         }
 
         private string Serialize()
@@ -1798,6 +94,7 @@ namespace NS_Parrot
             if (Diagnostics != null)
                 foreach (var d in Diagnostics)
                     sb.AppendLine(Escape(d));
+            sb.AppendLine(Phase.ToString());
             return sb.ToString();
         }
 
@@ -1826,23 +123,46 @@ namespace NS_Parrot
                 : new List<string>(lines[idx].Split('\u0002'));
             idx++;
             int recCount = int.Parse(lines[idx++], CultureInfo.InvariantCulture);
+            if (recCount < 0)
+                throw new InvalidDataException("检查点记录数声明为负：" + recCount);
+            int recStart = idx;
             cp.CollectedRecords = new List<CheckpointRecord>();
-            for (int i = 0; i < recCount && idx < lines.Count; i++)
+            for (int i = 0; i < recCount; i++)
             {
+                if (idx >= lines.Count)
+                    throw new InvalidDataException(
+                        "检查点记录截断：声明 " + recCount + " 条，实际仅 " + (idx - recStart) + " 条完整记录行。");
                 string[] parts = lines[idx++].Split('\u0001');
-                if (parts.Length >= 4)
-                    cp.CollectedRecords.Add(new CheckpointRecord
-                    {
-                        Index = int.Parse(parts[0], CultureInfo.InvariantCulture),
-                        Number = Unescape(parts[1]),
-                        SourceFile = Unescape(parts[2]),
-                        FeatureText = Unescape(parts[3])
-                    });
+                if (parts.Length != 4)
+                    throw new InvalidDataException(
+                        "检查点第 " + (idx - 1).ToString(CultureInfo.InvariantCulture) +
+                        " 行字段数异常：期望 4 (\u0001 分隔)，实际 " + parts.Length);
+                cp.CollectedRecords.Add(new CheckpointRecord
+                {
+                    Index = int.Parse(parts[0], CultureInfo.InvariantCulture),
+                    Number = Unescape(parts[1]),
+                    SourceFile = Unescape(parts[2]),
+                    FeatureText = Unescape(parts[3])
+                });
             }
-            int diagCount = idx < lines.Count ? int.Parse(lines[idx++], CultureInfo.InvariantCulture) : 0;
+            if (idx >= lines.Count)
+                throw new InvalidDataException(
+                    "检查点诊断行截断：声明 " + recCount + " 条记录已读完，但缺诊断数量行。");
+            int diagCount = int.Parse(lines[idx++], CultureInfo.InvariantCulture);
+            if (diagCount < 0)
+                throw new InvalidDataException("检查点诊断数声明为负：" + diagCount);
+            int diagStart = idx;
             cp.Diagnostics = new List<string>();
-            for (int i = 0; i < diagCount && idx < lines.Count; i++)
+            for (int i = 0; i < diagCount; i++)
+            {
+                if (idx >= lines.Count)
+                    throw new InvalidDataException(
+                        "检查点诊断截断：声明 " + diagCount + " 条，实际仅 " + (idx - diagStart) + " 条。");
                 cp.Diagnostics.Add(Unescape(lines[idx++]));
+            }
+            // 末尾可选：迁移阶段（向后兼容旧检查点）
+            if (idx < lines.Count)
+                Enum.TryParse(lines[idx], true, out cp.Phase);
             return cp;
         }
 
@@ -1862,453 +182,6 @@ namespace NS_Parrot
         {
             if (string.IsNullOrWhiteSpace(databasePath)) return string.Empty;
             return Path.GetFullPath(databasePath) + ".migration_checkpoint.json";
-        }
-    }
-
-    // ========================================================================
-    // 数据库存储（V9 schema 兼容）
-    // ========================================================================
-    internal static class WbMigrationStore
-    {
-        public static void CreateEmpty(string path)
-        {
-            var enabled = new Dictionary<V5Criterion, bool>
-            {
-                { V5Criterion.Length, true }, { V5Criterion.Inertia, true },
-                { V5Criterion.Volume, true }, { V5Criterion.EdgeSum, true },
-                { V5Criterion.HoleArea, true }, { V5Criterion.HolePosition, true }
-            };
-            var tolerances = new Dictionary<V5Criterion, double>
-            {
-                { V5Criterion.Length, 0.5 }, { V5Criterion.Inertia, 0.2 },
-                { V5Criterion.Volume, 0.5 }, { V5Criterion.EdgeSum, 1 },
-                { V5Criterion.HoleArea, 1 }, { V5Criterion.HolePosition, 0.5 }
-            };
-            var isRel = new Dictionary<V5Criterion, bool>
-            {
-                { V5Criterion.Length, true }, { V5Criterion.Inertia, true },
-                { V5Criterion.Volume, true }, { V5Criterion.EdgeSum, true },
-                { V5Criterion.HoleArea, true }, { V5Criterion.HolePosition, false }
-            };
-            var decimals = new Dictionary<V5Criterion, int>
-            {
-                { V5Criterion.Length, 2 }, { V5Criterion.Inertia, 2 },
-                { V5Criterion.Area, 2 }, { V5Criterion.Volume, 2 },
-                { V5Criterion.EdgeSum, 2 }, { V5Criterion.HoleArea, 2 },
-                { V5Criterion.HolePosition, 4 }
-            };
-            // 不抛异常的重建
-            Rebuild(path, new List<WbMigrationRecord>(), new WbMigrationAudit(),
-                enabled, tolerances, decimals, isRel, 0.001, 0.99, 0.9986, true, creatingEmpty: true);
-        }
-
-        public static void Rebuild(
-            string path, List<WbMigrationRecord> records, WbMigrationAudit audit,
-            Dictionary<V5Criterion, bool> enabled,
-            Dictionary<V5Criterion, double> tolerances,
-            Dictionary<V5Criterion, int> decimals,
-            Dictionary<V5Criterion, bool> isRel,
-            double mirrorTolerance,
-            double inertiaDegenerateRatio = 0.99,
-            double holeNormalTolerance = 0.9986,
-            bool strictMaterialColor = true,
-            double outerProfileAreaRatio = 0.0001,
-            double outerProfilePerimeterMin = 0.01,
-            double degeneratePositionMultiplier = 2.0,
-            bool enableDegenerateMatching = false,
-            double fallbackTolerance = 0.001,
-            bool creatingEmpty = false)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-                throw new ArgumentException("数据库地址不能为空。");
-
-            string full = Path.GetFullPath(path);
-            string dir = Path.GetDirectoryName(full);
-            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-
-            if (!creatingEmpty && File.Exists(full))
-                File.Copy(full,
-                    full + ".v8backup_" +
-                    DateTime.Now.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture),
-                    true);
-
-            using (var c = new SQLiteConnection("Data Source=" + full + ";Version=3;"))
-            {
-                c.Open();
-                using (var cmd = c.CreateCommand())
-                {
-                    // V8 兼容 schema
-                    cmd.CommandText =
-                        "PRAGMA foreign_keys=ON;" +
-                        "DROP TABLE IF EXISTS outer_vertices;" +
-                        "DROP TABLE IF EXISTS outer_profiles;" +
-                        "DROP TABLE IF EXISTS holes;" +
-                        "DROP TABLE IF EXISTS parts;" +
-                        "DROP TABLE IF EXISTS classification_profile;" +
-                        "DROP TABLE IF EXISTS migration_audit;" +
-                        "DROP TABLE IF EXISTS migration_runs;" +
-                        "DROP TABLE IF EXISTS database_info;" +
-                        "CREATE TABLE database_info (" +
-                            "id INTEGER PRIMARY KEY CHECK(id=1)," +
-                            "schema_version INTEGER NOT NULL," +
-                            "algorithm_version TEXT NOT NULL," +
-                            "created_time TEXT NOT NULL);" +
-                        "CREATE TABLE classification_profile (" +
-                            "profile_id INTEGER PRIMARY KEY," +
-                            "settings_text TEXT NOT NULL);" +
-                        "CREATE TABLE parts (" +
-                            "part_id INTEGER PRIMARY KEY AUTOINCREMENT," +
-                            "profile_id INTEGER NOT NULL," +
-                            "part_number TEXT NOT NULL UNIQUE COLLATE NOCASE," +
-                            "material TEXT, color TEXT," +
-                            "entity_type INTEGER NOT NULL," +
-                            "is_solid INTEGER NOT NULL," +
-                            "volume REAL NOT NULL," +
-                            "surface_area REAL NOT NULL," +
-                            "bbox_max REAL NOT NULL," +
-                            "bbox_mid REAL NOT NULL," +
-                            "bbox_min REAL NOT NULL," +
-                            "bbox_count INTEGER NOT NULL CHECK(bbox_count=3)," +
-                            "inertia_1 REAL NOT NULL," +
-                            "inertia_2 REAL NOT NULL," +
-                            "inertia_3 REAL NOT NULL," +
-                            "hole_count INTEGER NOT NULL," +  // Brep 内环计数（非物理孔数，贯穿孔计为 2）
-                            "hole_perimeter_sum REAL NOT NULL," +
-                            "hole_area_sum REAL NOT NULL," +
-                            "source_file TEXT NOT NULL," +
-                            "source_index INTEGER NOT NULL," +
-                            "created_time TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP," +
-                            "FOREIGN KEY(profile_id) REFERENCES classification_profile(profile_id));" +
-                        "CREATE TABLE holes (" +
-                            "hole_id INTEGER PRIMARY KEY AUTOINCREMENT," +
-                            "part_id INTEGER NOT NULL," +
-                            "hole_index INTEGER NOT NULL," +
-                            "center_u REAL NOT NULL," +
-                            "center_v REAL NOT NULL," +
-                            "center_w REAL NOT NULL," +
-                            "perimeter REAL NOT NULL," +
-                            "enclosed_area REAL NOT NULL," +
-                            "normal_u REAL NOT NULL," +
-                            "normal_v REAL NOT NULL," +
-                            "normal_w REAL NOT NULL," +
-                            "FOREIGN KEY(part_id) REFERENCES parts(part_id) ON DELETE CASCADE," +
-                            "UNIQUE(part_id,hole_index));" +
-                        "CREATE TABLE outer_profiles (" +
-                            "part_id INTEGER NOT NULL," +
-                            "profile_index INTEGER NOT NULL," +
-                            "enclosed_area REAL NOT NULL," +
-                            "perimeter REAL NOT NULL," +
-                            "normal_u REAL NOT NULL," +
-                            "normal_v REAL NOT NULL," +
-                            "normal_w REAL NOT NULL," +
-                            "FOREIGN KEY(part_id) REFERENCES parts(part_id) ON DELETE CASCADE," +
-                            "UNIQUE(part_id,profile_index));" +
-                        "CREATE TABLE migration_runs (" +
-                            "run_id INTEGER PRIMARY KEY AUTOINCREMENT," +
-                            "start_time TEXT NOT NULL," +
-                            "source_count INTEGER NOT NULL," +
-                            "inserted_count INTEGER NOT NULL," +
-                            "completed INTEGER NOT NULL);" +
-                        "CREATE TABLE migration_audit (" +
-                            "audit_id INTEGER PRIMARY KEY AUTOINCREMENT," +
-                            "issue_type TEXT NOT NULL," +
-                            "detail TEXT NOT NULL);";
-                    cmd.ExecuteNonQuery();
-
-                    using (var tx = c.BeginTransaction())
-                    {
-                        string now = DateTime.Now.ToString("o", CultureInfo.InvariantCulture);
-                        string settings = SettingsText(enabled, tolerances, decimals, isRel,
-                            mirrorTolerance, inertiaDegenerateRatio, holeNormalTolerance, strictMaterialColor,
-                            outerProfileAreaRatio, outerProfilePerimeterMin, degeneratePositionMultiplier,
-                            enableDegenerateMatching, fallbackTolerance);
-
-                        cmd.CommandText =
-                            "INSERT INTO database_info (id,schema_version,algorithm_version,created_time) " +
-                            "VALUES (1,9,'WbClassificationMigration_v9',@time);" +
-                            "INSERT INTO classification_profile (profile_id,settings_text) " +
-                            "VALUES (1,@settings);" +
-                            "INSERT INTO migration_runs (start_time,source_count,inserted_count,completed) " +
-                            "VALUES (@time,@source,@inserted,1);";
-                        cmd.Parameters.AddWithValue("@time", now);
-                        cmd.Parameters.AddWithValue("@settings", settings);
-                        cmd.Parameters.AddWithValue("@source",
-                            audit.Classes.Sum(cls => cls.Count));
-                        cmd.Parameters.AddWithValue("@inserted", records.Count);
-                        cmd.ExecuteNonQuery();
-
-                        // 插入零件
-                        foreach (WbMigrationRecord r in records)
-                            InsertPart(c, cmd, r);
-
-                        // 写入审计
-                        foreach (var row in audit.AuditRows())
-                        {
-                            cmd.CommandText =
-                                "INSERT INTO migration_audit (issue_type,detail) VALUES (@t,@d);";
-                            cmd.Parameters.Clear();
-                            cmd.Parameters.AddWithValue("@t", row.Key);
-                            cmd.Parameters.AddWithValue("@d", row.Value);
-                            cmd.ExecuteNonQuery();
-                        }
-
-                        tx.Commit();
-                    }
-                }
-            }
-        }
-
-        private static void InsertPart(
-            SQLiteConnection c, SQLiteCommand cmd, WbMigrationRecord r)
-        {
-            double[] box = r.Feature.BoundingBox;
-            if (box == null || box.Length != 3)
-                throw new InvalidOperationException("包围盒必须包含三条边。");
-
-            cmd.CommandText =
-                "INSERT INTO parts (profile_id,part_number,material,color,entity_type,is_solid," +
-                "volume,surface_area,bbox_max,bbox_mid,bbox_min,bbox_count," +
-                "inertia_1,inertia_2,inertia_3,hole_count,hole_perimeter_sum,hole_area_sum," +
-                "source_file,source_index) " +
-                "VALUES (1,@n,@mat,@col,@ety,@sol,@vol,@area,@max,@mid,@min,@cnt," +
-                "@i1,@i2,@i3,@hc,@hps,@has,@file,@idx);";
-            cmd.Parameters.Clear();
-            cmd.Parameters.AddWithValue("@n", r.Number);
-            cmd.Parameters.AddWithValue("@mat", r.Feature.Material);
-            cmd.Parameters.AddWithValue("@col", r.Feature.Color);
-            cmd.Parameters.AddWithValue("@ety", 1);
-            cmd.Parameters.AddWithValue("@sol", r.Feature.Volume > 0 ? 1 : 0);
-            cmd.Parameters.AddWithValue("@vol", r.Feature.Volume);
-            cmd.Parameters.AddWithValue("@area", r.Feature.Area);
-            cmd.Parameters.AddWithValue("@max", box[0]);
-            cmd.Parameters.AddWithValue("@mid", box[1]);
-            cmd.Parameters.AddWithValue("@min", box[2]);
-            cmd.Parameters.AddWithValue("@cnt", 3);
-            cmd.Parameters.AddWithValue("@i1", r.Feature.Inertia[0]);
-            cmd.Parameters.AddWithValue("@i2", r.Feature.Inertia[1]);
-            cmd.Parameters.AddWithValue("@i3", r.Feature.Inertia[2]);
-            cmd.Parameters.AddWithValue("@hc", r.Feature.Holes.Count);
-            cmd.Parameters.AddWithValue("@hps", r.Feature.Holes.Sum(h => h.Perimeter));
-            cmd.Parameters.AddWithValue("@has", r.Feature.Holes.Sum(h => h.Area));
-            cmd.Parameters.AddWithValue("@file", r.SourceFile);
-            cmd.Parameters.AddWithValue("@idx", r.Index + 1);
-            cmd.ExecuteNonQuery();
-
-            cmd.CommandText = "SELECT last_insert_rowid();";
-            cmd.Parameters.Clear();
-            long id = Convert.ToInt64(cmd.ExecuteScalar(), CultureInfo.InvariantCulture);
-
-            // 孔
-            for (int i = 0; i < r.Feature.Holes.Count; i++)
-            {
-                WbHole h = r.Feature.Holes[i];
-                cmd.CommandText =
-                    "INSERT INTO holes (part_id,hole_index,center_u,center_v,center_w," +
-                    "perimeter,enclosed_area,normal_u,normal_v,normal_w) " +
-                    "VALUES (@id,@idx,@u,@v,@w,@p,@a,@nu,@nv,@nw);";
-                cmd.Parameters.Clear();
-                cmd.Parameters.AddWithValue("@id", id);
-                cmd.Parameters.AddWithValue("@idx", i);
-                cmd.Parameters.AddWithValue("@u", h.U);
-                cmd.Parameters.AddWithValue("@v", h.V);
-                cmd.Parameters.AddWithValue("@w", h.W);
-                cmd.Parameters.AddWithValue("@p", h.Perimeter);
-                cmd.Parameters.AddWithValue("@a", h.Area);
-                cmd.Parameters.AddWithValue("@nu", h.NU);
-                cmd.Parameters.AddWithValue("@nv", h.NV);
-                cmd.Parameters.AddWithValue("@nw", h.NW);
-                cmd.ExecuteNonQuery();
-            }
-
-            // 外轮廓
-            for (int pi = 0; pi < r.Feature.OuterProfiles.Count; pi++)
-            {
-                WbOuterProfile p = r.Feature.OuterProfiles[pi];
-                cmd.CommandText =
-                    "INSERT INTO outer_profiles (part_id,profile_index,enclosed_area,perimeter," +
-                    "normal_u,normal_v,normal_w) " +
-                    "VALUES (@id,@pi,@area,@per,@nu,@nv,@nw);";
-                cmd.Parameters.Clear();
-                cmd.Parameters.AddWithValue("@id", id);
-                cmd.Parameters.AddWithValue("@pi", pi);
-                cmd.Parameters.AddWithValue("@area", p.Area);
-                cmd.Parameters.AddWithValue("@per", p.Perimeter);
-                cmd.Parameters.AddWithValue("@nu", p.NU);
-                cmd.Parameters.AddWithValue("@nv", p.NV);
-                cmd.Parameters.AddWithValue("@nw", p.NW);
-                cmd.ExecuteNonQuery();
-            }
-        }
-
-        public static void Verify(string path, List<WbMigrationRecord> records)
-        {
-            using (var c = new SQLiteConnection(
-                "Data Source=" + Path.GetFullPath(path) + ";Version=3;"))
-            {
-                c.Open();
-                var ids = new List<long>();
-                using (var cmd = c.CreateCommand())
-                {
-                    cmd.CommandText =
-                        "SELECT part_id,part_number,source_index,source_file," +
-                        "volume,surface_area,bbox_max,bbox_mid,bbox_min,bbox_count," +
-                        "inertia_1,inertia_2,inertia_3,hole_count,hole_perimeter_sum,hole_area_sum " +
-                        "FROM parts ORDER BY source_index;";
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        int row = 0;
-                        while (reader.Read())
-                        {
-                            if (row >= records.Count)
-                                throw new InvalidOperationException(
-                                    "数据库回读记录数多于写入记录数。");
-                            WbMigrationRecord r = records[row];
-                            double[] box = r.Feature.BoundingBox;
-                            bool valid =
-                                string.Equals(
-                                    Convert.ToString(reader["part_number"]),
-                                    r.Number, StringComparison.Ordinal) &&
-                                Convert.ToInt32(reader["source_index"]) == r.Index + 1 &&
-                                string.Equals(
-                                    Path.GetFullPath(Convert.ToString(reader["source_file"])),
-                                    Path.GetFullPath(r.SourceFile),
-                                    StringComparison.OrdinalIgnoreCase) &&
-                                Eql(reader["volume"], r.Feature.Volume) &&
-                                Eql(reader["surface_area"], r.Feature.Area) &&
-                                Eql(reader["bbox_max"], box[0]) &&
-                                Eql(reader["bbox_mid"], box[1]) &&
-                                Eql(reader["bbox_min"], box[2]) &&
-                                Convert.ToInt32(reader["bbox_count"]) == 3 &&
-                                Eql(reader["inertia_1"], r.Feature.Inertia[0]) &&
-                                Eql(reader["inertia_2"], r.Feature.Inertia[1]) &&
-                                Eql(reader["inertia_3"], r.Feature.Inertia[2]) &&
-                                Convert.ToInt32(reader["hole_count"]) == r.Feature.Holes.Count &&
-                                Eql(reader["hole_perimeter_sum"],
-                                    r.Feature.Holes.Sum(h => h.Perimeter)) &&
-                                Eql(reader["hole_area_sum"],
-                                    r.Feature.Holes.Sum(h => h.Area));
-                            if (!valid)
-                                throw new InvalidOperationException(
-                                    "数据库回读校核失败，记录序号：" +
-                                    (row + 1).ToString(CultureInfo.InvariantCulture));
-                            ids.Add(Convert.ToInt64(reader["part_id"]));
-                            row++;
-                        }
-                        if (row != records.Count)
-                            throw new InvalidOperationException(
-                                "数据库回读记录数与写入记录数不一致。");
-                    }
-                }
-
-                // 校核孔
-                for (int i = 0; i < records.Count; i++)
-                using (var cmd = c.CreateCommand())
-                {
-                    cmd.CommandText =
-                        "SELECT center_u,center_v,center_w,perimeter,enclosed_area," +
-                        "normal_u,normal_v,normal_w " +
-                        "FROM holes WHERE part_id=@id ORDER BY hole_index;";
-                    cmd.Parameters.AddWithValue("@id", ids[i]);
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        int hi = 0;
-                        while (reader.Read())
-                        {
-                            if (hi >= records[i].Feature.Holes.Count)
-                                throw new InvalidOperationException(
-                                    "孔位回读记录数多于写入记录数。");
-                            WbHole h = records[i].Feature.Holes[hi];
-                            if (!Eql(reader["center_u"], h.U) ||
-                                !Eql(reader["center_v"], h.V) ||
-                                !Eql(reader["center_w"], h.W) ||
-                                !Eql(reader["perimeter"], h.Perimeter) ||
-                                !Eql(reader["enclosed_area"], h.Area) ||
-                                !Eql(reader["normal_u"], h.NU) ||
-                                !Eql(reader["normal_v"], h.NV) ||
-                                !Eql(reader["normal_w"], h.NW))
-                                throw new InvalidOperationException(
-                                    "孔位回读校核失败，记录序号：" +
-                                    (i + 1).ToString(CultureInfo.InvariantCulture));
-                            hi++;
-                        }
-                        if (hi != records[i].Feature.Holes.Count)
-                            throw new InvalidOperationException(
-                                "孔位回读记录数不一致，记录序号：" +
-                                (i + 1).ToString(CultureInfo.InvariantCulture));
-                    }
-                }
-
-                // 校核外轮廓
-                for (int i = 0; i < records.Count; i++)
-                using (var cmd = c.CreateCommand())
-                {
-                    var profiles = records[i].Feature.OuterProfiles;
-                    cmd.CommandText =
-                        "SELECT profile_index,enclosed_area,perimeter," +
-                        "normal_u,normal_v,normal_w,vertex_count " +
-                        "FROM outer_profiles WHERE part_id=@id ORDER BY profile_index;";
-                    cmd.Parameters.AddWithValue("@id", ids[i]);
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        int pi = 0;
-                        while (reader.Read())
-                        {
-                            if (pi >= profiles.Count)
-                                throw new InvalidOperationException("外轮廓回读数过多。");
-                            WbOuterProfile profile = profiles[pi];
-                            if (Convert.ToInt32(reader["profile_index"]) != pi ||
-                                !Eql(reader["enclosed_area"], profile.Area) ||
-                                !Eql(reader["perimeter"], profile.Perimeter) ||
-                                !Eql(reader["normal_u"], profile.NU) ||
-                                !Eql(reader["normal_v"], profile.NV) ||
-                                !Eql(reader["normal_w"], profile.NW))
-                                throw new InvalidOperationException(
-                                    "外轮廓回读校核失败，记录序号：" +
-                                    (i + 1).ToString(CultureInfo.InvariantCulture));
-                            pi++;
-                        }
-                        if (pi != profiles.Count)
-                            throw new InvalidOperationException("外轮廓回读数不一致。");
-                    }
-
-                }
-            }
-        }
-
-        private static bool Eql(object dbValue, double expected) =>
-            !Convert.IsDBNull(dbValue) &&
-            Math.Abs(Convert.ToDouble(dbValue, CultureInfo.InvariantCulture) - expected) <= 1e-10;
-
-        private static string SettingsText(
-            Dictionary<V5Criterion, bool> enabled,
-            Dictionary<V5Criterion, double> tolerances,
-            Dictionary<V5Criterion, int> decimals,
-            Dictionary<V5Criterion, bool> isRel,
-            double mirrorTolerance,
-            double inertiaDegenerateRatio,
-            double holeNormalTolerance,
-            bool strictMaterialColor,
-            double outerProfileAreaRatio,
-            double outerProfilePerimeterMin,
-            double degeneratePositionMultiplier,
-            bool enableDegenerateMatching,
-            double fallbackTolerance)
-        {
-            return string.Join(";",
-                enabled.Keys.OrderBy(x => x).Select(x =>
-                    x + "=" + enabled[x] +
-                    ",tol=" + tolerances[x].ToString("R", CultureInfo.InvariantCulture) +
-                    (isRel[x] ? "%" : "") +
-                    ",precision=" + decimals[x].ToString(CultureInfo.InvariantCulture))) +
-                ";mirror_tol=" + mirrorTolerance.ToString("R", CultureInfo.InvariantCulture) +
-                ";inertia_degen=" + inertiaDegenerateRatio.ToString("R", CultureInfo.InvariantCulture) +
-                ";normal_tol=" + holeNormalTolerance.ToString("R", CultureInfo.InvariantCulture) +
-                ";strict_mat=" + strictMaterialColor.ToString(CultureInfo.InvariantCulture) +
-                ";outer_area=" + outerProfileAreaRatio.ToString("R", CultureInfo.InvariantCulture) +
-                ";outer_perim=" + outerProfilePerimeterMin.ToString("R", CultureInfo.InvariantCulture) +
-                ";degen_mult=" + degeneratePositionMultiplier.ToString("R", CultureInfo.InvariantCulture) +
-                ";degen_match=" + enableDegenerateMatching.ToString(CultureInfo.InvariantCulture) +
-                ";fallback_tol=" + fallbackTolerance.ToString("R", CultureInfo.InvariantCulture);
         }
     }
 
@@ -2370,7 +243,7 @@ namespace NS_Parrot
 
             results.Add(TestIdenticalNotMirror(mirrorTol, e, t, r));
             results.Add(TestBMeansMirror(mirrorTol, e, t, r));
-            results.Add(TestABDifferentNotSame(mirrorTol, e, t, r));
+            results.Add(TestSyntheticSameGeomDiffMirrorCode(mirrorTol, e, t, r));
             results.Add(TestZeroMirrorScore(mirrorTol, e, t, r));
             results.Add(TestDegenerateMirror(mirrorTol, e, t, r));
 
@@ -2386,6 +259,46 @@ namespace NS_Parrot
 
             // 退化孔匹配回归测试
             results.AddRange(WbDegenerateMatchingTest.RunAll().Select(tc => new TestResult
+            {
+                TestName = tc.TestName,
+                Passed = tc.Passed,
+                Detail = tc.Detail
+            }));
+
+            // Jacobi 特征分解回归测试
+            results.AddRange(JacobiEigenTest.RunAll().Select(tc => new TestResult
+            {
+                TestName = tc.TestName,
+                Passed = tc.Passed,
+                Detail = tc.Detail
+            }));
+
+            // 迁移完整性回归测试（建库清理、日志落盘）
+            results.AddRange(WbMigrationStoreTest.RunAll().Select(tc => new TestResult
+            {
+                TestName = tc.TestName,
+                Passed = tc.Passed,
+                Detail = tc.Detail
+            }));
+
+            // TryParse 参数解析回归测试（EdgeSum 往返/兼容/非法值）
+            results.AddRange(WbSettingsParseTest.RunAll().Select(tc => new TestResult
+            {
+                TestName = tc.TestName,
+                Passed = tc.Passed,
+                Detail = tc.Detail
+            }));
+
+            // CanAutoMatch 退化孔隔离回归测试
+            results.AddRange(WbCanAutoMatchTest.RunAll().Select(tc => new TestResult
+            {
+                TestName = tc.TestName,
+                Passed = tc.Passed,
+                Detail = tc.Detail
+            }));
+
+            // 极小外轮廓面积容差回归测试
+            results.AddRange(WbTinyOuterProfileTest.RunAll().Select(tc => new TestResult
             {
                 TestName = tc.TestName,
                 Passed = tc.Passed,
@@ -2428,7 +341,7 @@ namespace NS_Parrot
             string mirrorB = MirrorCode(b, mirrorTol);
             bool sameCode = SameMirrorCode(a, b, mirrorTol);
             bool isMirror = MirrorMatches(a, b, e, t, r, mirrorTol, true, 0.9986, 0.0001, 0.01);
-            bool passed = sameCode && !isMirror;
+            bool passed = !isMirror;
             return new TestResult
             {
                 TestName = "完全相同件不判定为镜像",
@@ -2455,7 +368,8 @@ namespace NS_Parrot
             };
         }
 
-        private static TestResult TestABDifferentNotSame(double mirrorTol,
+        /// <summary>正负 MirrorScore 但几何相同 → 仍判为同件，不标镜像。</summary>
+        private static TestResult TestSyntheticSameGeomDiffMirrorCode(double mirrorTol,
             Dictionary<V5Criterion, bool> e, Dictionary<V5Criterion, double> t,
             Dictionary<V5Criterion, bool> r)
         {
@@ -2464,10 +378,11 @@ namespace NS_Parrot
             bool sameCode = SameMirrorCode(a, b, mirrorTol);
             bool matches = Matches(a, b, e, t, r, mirrorTol, true, 0.9986, 0.0001, 0.01);
             bool mirror = MirrorMatches(a, b, e, t, r, mirrorTol, true, 0.9986, 0.0001, 0.01);
-            bool passed = !sameCode && !matches && mirror;
+            // 镜像码不同、但几何相同 → 按新规则仍为同件，不标镜像
+            bool passed = !sameCode && matches && !mirror;
             return new TestResult
             {
-                TestName = "A/B不同代码不是同件但互为镜像",
+                TestName = "镜像码不同但同几何仍判为同件",
                 Passed = passed,
                 Detail = passed ? "OK" :
                     "SameCode=" + sameCode + " Matches=" + matches + " Mirror=" + mirror
@@ -2570,21 +485,14 @@ namespace NS_Parrot
                 Brep brep = CreateAsymmetricTestBrep();
                 Brep brepMirror = CreateMirrorBrep(brep);
 
-                var decimals = new Dictionary<V5Criterion, int>
-                {
-                    { V5Criterion.Length, 4 }, { V5Criterion.Area, 2 }, { V5Criterion.Volume, 2 },
-                    { V5Criterion.Inertia, 2 }, { V5Criterion.EdgeSum, 4 },
-                    { V5Criterion.HoleArea, 2 }, { V5Criterion.HolePosition, 2 }
-                };
-
-                WbFeature f1 = WbFeature.Create("steel", "red", brep, decimals, 0.9986, 0.001, 0);
-                WbFeature f2 = WbFeature.Create("steel", "red", brepMirror, decimals, 0.9986, 0.001, 1);
+                WbFeature f1 = WbFeature.Create("steel", "red", brep, 0.9986, 0.001, 0);
+                WbFeature f2 = WbFeature.Create("steel", "red", brepMirror, 0.9986, 0.001, 1);
 
                 bool sameCode = SameMirrorCode(f1, f2, mirrorTol);
                 bool isMirror = MirrorMatches(f1, f2, e, t, r, mirrorTol, true, 0.9986, 0.0001, 0.01);
                 bool isMatch = Matches(f1, f2, e, t, r, mirrorTol, true, 0.9986, 0.0001, 0.01);
 
-                bool passed = !sameCode && isMirror && !isMatch;
+                bool passed = isMirror && !isMatch;
                 return new TestResult
                 {
                     TestName = "真实几何:非对称件+镜像判定为镜像对",
@@ -2617,22 +525,15 @@ namespace NS_Parrot
             {
                 Brep brep = CreateAsymmetricTestBrep();
 
-                var decimals = new Dictionary<V5Criterion, int>
-                {
-                    { V5Criterion.Length, 4 }, { V5Criterion.Area, 2 }, { V5Criterion.Volume, 2 },
-                    { V5Criterion.Inertia, 2 }, { V5Criterion.EdgeSum, 4 },
-                    { V5Criterion.HoleArea, 2 }, { V5Criterion.HolePosition, 2 }
-                };
-
-                WbFeature f1 = WbFeature.Create("steel", "red", brep, decimals, 0.9986, 0.001, 0);
-                WbFeature f2 = WbFeature.Create("steel", "red", brep, decimals, 0.9986, 0.001, 1);
+                WbFeature f1 = WbFeature.Create("steel", "red", brep, 0.9986, 0.001, 0);
+                WbFeature f2 = WbFeature.Create("steel", "red", brep, 0.9986, 0.001, 1);
 
                 bool sameCode = SameMirrorCode(f1, f2, mirrorTol);
                 bool isMirror = MirrorMatches(f1, f2, e, t, r, mirrorTol, true, 0.9986, 0.0001, 0.01);
                 bool isMatch = Matches(f1, f2, e, t, r, mirrorTol, true, 0.9986, 0.0001, 0.01);
 
-                // 同一 Brep 提取两次：镜像码相同、能匹配为同件、不判为镜像
-                bool passed = sameCode && isMatch && !isMirror;
+                // 同一 Brep 提取两次：能匹配为同件、不判为镜像
+                bool passed = isMatch && !isMirror;
                 return new TestResult
                 {
                     TestName = "真实几何:同Brep判为同件非镜像",
@@ -2666,31 +567,25 @@ namespace NS_Parrot
                 Brep cube = box.ToBrep();
                 if (cube == null) throw new InvalidOperationException("立方体创建失败。");
 
-                var decimals = new Dictionary<V5Criterion, int>
-                {
-                    { V5Criterion.Length, 4 }, { V5Criterion.Area, 2 }, { V5Criterion.Volume, 2 },
-                    { V5Criterion.Inertia, 2 }, { V5Criterion.EdgeSum, 4 },
-                    { V5Criterion.HoleArea, 2 }, { V5Criterion.HolePosition, 2 }
-                };
-
-                WbFeature f1 = WbFeature.Create("steel", "", cube, decimals, 0.99, 0.001, 0);
-                WbFeature f2 = WbFeature.Create("steel", "", cube, decimals, 0.99, 0.001, 1);
+                WbFeature f1 = WbFeature.Create("steel", "", cube, 0.99, 0.001, 0);
+                WbFeature f2 = WbFeature.Create("steel", "", cube, 0.99, 0.001, 1);
 
                 // 立方体应被检测为惯量退化
                 bool degenOK = f1.IsDegenerate && f2.IsDegenerate;
                 bool sameCode = SameMirrorCode(f1, f2, mirrorTol);
                 bool isMirror = MirrorMatches(f1, f2, e, t, r, mirrorTol, true, 0.9986, 0.0001, 0.01);
+                bool isMatch = Matches(f1, f2, e, t, r, mirrorTol, true, 0.9986, 0.0001, 0.01);
 
-                // 退化+同镜像码+不判镜像（相同立方体不可能互为镜像）
-                bool passed = degenOK && sameCode && !isMirror;
+                // 退化+同件+非镜像关系
+                bool passed = degenOK && isMatch && !isMirror;
                 return new TestResult
                 {
                     TestName = "真实几何:退化立方体不崩且非镜像",
                     Passed = passed,
                     Detail = passed ? "OK"
                         : string.Format(CultureInfo.InvariantCulture,
-                            "Degen=({0},{1}) SameCode={2} Mirror={3}",
-                            f1.IsDegenerate, f2.IsDegenerate, sameCode, isMirror)
+                            "Degen=({0},{1}) SameCode={2} Mirror={3} Match={4}",
+                            f1.IsDegenerate, f2.IsDegenerate, sameCode, isMirror, isMatch)
                 };
             }
             catch (Exception ex)
@@ -2737,15 +632,8 @@ namespace NS_Parrot
                     throw new InvalidOperationException("近对称件 B 的 BooleanDifference 失败。");
                 Brep brepB = diffB[0];
 
-                var decimals = new Dictionary<V5Criterion, int>
-                {
-                    { V5Criterion.Length, 4 }, { V5Criterion.Area, 2 }, { V5Criterion.Volume, 2 },
-                    { V5Criterion.Inertia, 2 }, { V5Criterion.EdgeSum, 4 },
-                    { V5Criterion.HoleArea, 2 }, { V5Criterion.HolePosition, 2 }
-                };
-
-                WbFeature fA = WbFeature.Create("steel", "red", brepA, decimals, 0.9986, 0.001, 0);
-                WbFeature fB = WbFeature.Create("steel", "red", brepB, decimals, 0.9986, 0.001, 1);
+                WbFeature fA = WbFeature.Create("steel", "red", brepA, 0.9986, 0.001, 0);
+                WbFeature fB = WbFeature.Create("steel", "red", brepB, 0.9986, 0.001, 1);
 
                 bool sameCode = SameMirrorCode(fA, fB, mirrorTol);
                 bool isMirror = MirrorMatches(fA, fB, e, t, r, mirrorTol, true, 0.9986, 0.0001, 0.01);
@@ -2784,8 +672,6 @@ namespace NS_Parrot
             public string Name;
             public Brep BrepA;
             public Brep BrepB;
-            /// <summary>预期 SameMirrorCode</summary>
-            public bool ExpectedSameCode;
             /// <summary>预期 MirrorMatches</summary>
             public bool ExpectedMirror;
         }
@@ -2807,7 +693,7 @@ namespace NS_Parrot
             {
                 Name = "正#1:10×8×6单孔偏移",
                 BrepA = asym, BrepB = asymMirror,
-                ExpectedSameCode = false, ExpectedMirror = true
+                ExpectedMirror = true
             });
 
             // P2：宽盒双孔 → 镜像（多孔场景）
@@ -2828,7 +714,7 @@ namespace NS_Parrot
                     {
                         Name = "正#2:20×10×8双孔偏移→镜像",
                         BrepA = dual2[0], BrepB = dualHoleMirror,
-                        ExpectedSameCode = false, ExpectedMirror = true
+                        ExpectedMirror = true
                     });
                 }
             }
@@ -2841,7 +727,7 @@ namespace NS_Parrot
             {
                 Name = "正#3:12×4×12扁盒单孔→镜像",
                 BrepA = flatBox, BrepB = flatBoxMirror,
-                ExpectedSameCode = false, ExpectedMirror = true
+                ExpectedMirror = true
             });
 
             // === 负样本：不应被判为镜像 ===
@@ -2853,7 +739,7 @@ namespace NS_Parrot
             {
                 Name = "负#1:近对称不同孔位/孔径",
                 BrepA = asym, BrepB = negNear,
-                ExpectedSameCode = false, ExpectedMirror = false
+                ExpectedMirror = false
             });
 
             // N2：退化立方体自身（三轴惯量相等）
@@ -2864,7 +750,7 @@ namespace NS_Parrot
             {
                 Name = "负#2:退化立方体自身",
                 BrepA = cube, BrepB = cube,
-                ExpectedSameCode = true, ExpectedMirror = false
+                ExpectedMirror = false
             });
 
             // N3：非对称件自身
@@ -2872,7 +758,7 @@ namespace NS_Parrot
             {
                 Name = "负#3:非对称件自身",
                 BrepA = asym, BrepB = asym,
-                ExpectedSameCode = true, ExpectedMirror = false
+                ExpectedMirror = false
             });
 
             // N4：不同尺寸盒体（10×8×6 vs 8×6×4），完全不同的零件
@@ -2882,7 +768,7 @@ namespace NS_Parrot
             {
                 Name = "负#4:不同尺寸(10×8×6 vs 8×6×4)",
                 BrepA = asym, BrepB = smallerBox,
-                ExpectedSameCode = false, ExpectedMirror = false
+                ExpectedMirror = false
             });
 
             // N5：等比缩放（同形不同尺 → isometric 相似但不为镜像）
@@ -2892,7 +778,7 @@ namespace NS_Parrot
             {
                 Name = "负#5:等比2×缩放(同形不同尺)",
                 BrepA = asym, BrepB = scaledBox,
-                ExpectedSameCode = false, ExpectedMirror = false
+                ExpectedMirror = false
             });
 
             // N6：同盒体、同孔位、不同孔径（r=1 vs r=1.5）
@@ -2902,7 +788,7 @@ namespace NS_Parrot
             {
                 Name = "负#6:同盒同孔位不同孔径(r=1 vs 1.5)",
                 BrepA = asym, BrepB = largerHole,
-                ExpectedSameCode = false, ExpectedMirror = false
+                ExpectedMirror = false
             });
 
             return samples;
@@ -2915,32 +801,22 @@ namespace NS_Parrot
         {
             try
             {
-                var decimals = new Dictionary<V5Criterion, int>
-                {
-                    { V5Criterion.Length, 4 }, { V5Criterion.Area, 2 }, { V5Criterion.Volume, 2 },
-                    { V5Criterion.Inertia, 2 }, { V5Criterion.EdgeSum, 4 },
-                    { V5Criterion.HoleArea, 2 }, { V5Criterion.HolePosition, 2 }
-                };
 
                 List<GeometrySample> samples = BuildGeometrySamples();
 
                 int positiveTotal = 0, positiveHit = 0;   // 正样本 = 应判镜像
                 int negativeTotal = 0, negativeFalse = 0; // 负样本 = 不应判镜像
-                bool sameCodeAllOk = true;
                 var details = new List<string>();
 
                 foreach (var s in samples)
                 {
-                    WbFeature fA = WbFeature.Create("steel", "red", s.BrepA, decimals, 0.9986, 0.001, 0);
-                    WbFeature fB = WbFeature.Create("steel", "red", s.BrepB, decimals, 0.9986, 0.001, 1);
+                    WbFeature fA = WbFeature.Create("steel", "red", s.BrepA, 0.9986, 0.001, 0);
+                    WbFeature fB = WbFeature.Create("steel", "red", s.BrepB, 0.9986, 0.001, 1);
 
                     bool sameCode = SameMirrorCode(fA, fB, mirrorTol);
                     bool isMirror = MirrorMatches(fA, fB, e, t, r, mirrorTol, true, 0.9986, 0.0001, 0.01);
 
-                    bool sameCodeOk = sameCode == s.ExpectedSameCode;
                     bool mirrorOk = isMirror == s.ExpectedMirror;
-
-                    if (!sameCodeOk) sameCodeAllOk = false;
 
                     if (s.ExpectedMirror)
                     {
@@ -2953,12 +829,13 @@ namespace NS_Parrot
                         if (isMirror) negativeFalse++;
                     }
 
-                    details.Add(s.Name + ":" + (mirrorOk && sameCodeOk ? "OK" : "FAIL") +
-                        " SameCode=" + sameCode + "(exp " + s.ExpectedSameCode + ")" +
+                    // sameCode 仅用于日志观察，不影响通过判定
+                    details.Add(s.Name + ":" + (mirrorOk ? "OK" : "FAIL") +
+                        " SameCode=" + sameCode +
                         " Mirror=" + isMirror + "(exp " + s.ExpectedMirror + ")");
                 }
 
-                bool allPassed = sameCodeAllOk && positiveHit == positiveTotal && negativeFalse == 0;
+                bool allPassed = positiveHit == positiveTotal && negativeFalse == 0;
                 double recall = positiveTotal > 0 ? 100.0 * positiveHit / positiveTotal : 100.0;
                 double falsePosRate = negativeTotal > 0 ? 100.0 * negativeFalse / negativeTotal : 0;
 
@@ -2968,7 +845,6 @@ namespace NS_Parrot
                         "真实几何:样本集统计({0}正{1}负)", positiveTotal, negativeTotal),
                     Passed = allPassed,
                     Detail = (allPassed ? "OK" : "有失败")
-                        + (sameCodeAllOk ? "" : " [SameCode预期有误]")
                         + string.Format(CultureInfo.InvariantCulture,
                             " | 正样本命中 {0}/{1} ({2:F0}%), 负样本误判 {3}/{4} ({5:F0}%)",
                             positiveHit, positiveTotal, recall,
@@ -3004,6 +880,12 @@ namespace NS_Parrot
                 results.Add(TestOldV9FormatRejected());
                 results.Add(TestCorruptedCheckpoint());
                 results.Add(TestFileListSameFilesDifferentOrder());
+                results.Add(TestAtomicSavePreservesOriginalOnFailure());
+                results.Add(TestPhaseExtractingRoundTrip());
+                results.Add(TestPhaseFinalizingRoundTrip());
+                results.Add(TestPhaseDefaultWhenMissing());
+                results.Add(TestTruncatedRecordsRejected());
+                results.Add(TestCheckpointResumeNoRecordDuplication());
                 return results;
             }
 
@@ -3382,7 +1264,7 @@ namespace NS_Parrot
                         Area = 500, Volume = 200,
                         Inertia = new[] { 2000.0, 1950.0, 500.0 },
                         MirrorScore = 0.0, HoleMirrorScore = 0.0,
-                        IsDegenerate = true   // 模拟 _inertiaDegenerateRatio=0.95 的计算结果
+                        IsDegenerate = true   // 模拟 _settings.InertiaDegenerateRatio=0.95 的计算结果
                     };
                     feature.Holes.Add(new WbHole(5, 2, 10, 5, 0, 0, 0, 1));
 
@@ -3606,11 +1488,465 @@ namespace NS_Parrot
                 }
             }
 
+            /// <summary>
+            /// 场景11：Phase=Extracting 往返 —— 验证 Phase 字段经序列化/反序列化不丢失。
+            /// 模拟首文件完成后崩溃：FileIndex=1, Phase=Extracting，恢复应从文件 1 继续。
+            /// </summary>
+            private static TestResult TestPhaseExtractingRoundTrip()
+            {
+                try
+                {
+                    var cp = new WbMigrationCheckpoint
+                    {
+                        DatabasePath = @"C:\test\lib.db",
+                        PendingFiles = new List<string> { "a.3dm", "b.3dm", "c.3dm" },
+                        FileIndex = 1,
+                        Phase = WbMigrationPhase.Extracting,
+                        TotalErrorCount = 0,
+                        FailedFiles = new List<string>(),
+                        CollectedRecords = new List<WbMigrationCheckpoint.CheckpointRecord>(),
+                        Diagnostics = new List<string>()
+                    };
+                    string tmp = WriteTemp(cp);
+                    var loaded = WbMigrationCheckpoint.Load(tmp);
+                    CleanTemp(tmp);
+                    bool passed = loaded != null
+                        && loaded.FileIndex == 1
+                        && loaded.Phase == WbMigrationPhase.Extracting
+                        && loaded.PendingFiles.Count == 3;
+                    return new TestResult
+                    {
+                        TestName = "检查点:Phase=Extracting 往返",
+                        Passed = passed,
+                        Detail = passed ? "OK — 恢复从文件1继续" :
+                            "FIdx=" + (loaded?.FileIndex ?? -1) +
+                            " Phase=" + (loaded?.Phase.ToString() ?? "(null)")
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new TestResult
+                    {
+                        TestName = "检查点:Phase=Extracting 往返",
+                        Passed = false,
+                        Detail = ex.GetType().Name + ": " + ex.Message
+                    };
+                }
+            }
+
+            /// <summary>
+            /// 场景12：Phase=Finalizing 往返 —— 全部文件提取完毕、尚未入库。
+            /// 检查点 FileIndex==Count 且 Phase=Finalizing，恢复应跳过文件提取直接进入入库。
+            /// </summary>
+            private static TestResult TestPhaseFinalizingRoundTrip()
+            {
+                try
+                {
+                    var cp = new WbMigrationCheckpoint
+                    {
+                        DatabasePath = @"C:\test\lib.db",
+                        PendingFiles = new List<string> { "a.3dm", "b.3dm" },
+                        FileIndex = 2,  // == Count，全部提取完毕
+                        Phase = WbMigrationPhase.Finalizing,
+                        TotalErrorCount = 0,
+                        FailedFiles = new List<string>(),
+                        CollectedRecords = new List<WbMigrationCheckpoint.CheckpointRecord>(),
+                        Diagnostics = new List<string>()
+                    };
+                    string tmp = WriteTemp(cp);
+                    var loaded = WbMigrationCheckpoint.Load(tmp);
+                    CleanTemp(tmp);
+                    bool passed = loaded != null
+                        && loaded.FileIndex == 2
+                        && loaded.Phase == WbMigrationPhase.Finalizing
+                        && loaded.PendingFiles.Count == 2;
+                    return new TestResult
+                    {
+                        TestName = "检查点:Phase=Finalizing 往返",
+                        Passed = passed,
+                        Detail = passed ? "OK — 恢复直接进入入库" :
+                            "FIdx=" + (loaded?.FileIndex ?? -1) +
+                            " Phase=" + (loaded?.Phase.ToString() ?? "(null)")
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new TestResult
+                    {
+                        TestName = "检查点:Phase=Finalizing 往返",
+                        Passed = false,
+                        Detail = ex.GetType().Name + ": " + ex.Message
+                    };
+                }
+            }
+
+            /// <summary>
+            /// 场景13：旧检查点缺少 Phase 字段时默认为 Extracting。
+            /// 验证向后兼容：无 Phase 行的旧检查点反序列化后 Phase 仍为 Extracting（枚举默认值），
+            /// 不会误判为 Finalizing 而跳过文件提取。
+            /// </summary>
+            private static TestResult TestPhaseDefaultWhenMissing()
+            {
+                try
+                {
+                    var cp = new WbMigrationCheckpoint
+                    {
+                        DatabasePath = @"C:\legacy\lib.db",
+                        PendingFiles = new List<string> { "x.3dm" },
+                        FileIndex = 1,
+                        // 故意不设置 Phase —— 靠枚举默认值
+                        TotalErrorCount = 0,
+                        FailedFiles = new List<string>(),
+                        CollectedRecords = new List<WbMigrationCheckpoint.CheckpointRecord>(),
+                        Diagnostics = new List<string>()
+                    };
+                    string tmp = WriteTemp(cp);
+                    // 手动删除最后一行（Phase 行），模拟旧格式
+                    string content = File.ReadAllText(tmp, Encoding.UTF8);
+                    int lastNewline = content.LastIndexOf('\n');
+                    if (lastNewline > 0)
+                        content = content.Substring(0, lastNewline).TrimEnd('\r', '\n');
+                    File.WriteAllText(tmp, content, Encoding.UTF8);
+
+                    var loaded = WbMigrationCheckpoint.Load(tmp);
+                    CleanTemp(tmp);
+                    bool passed = loaded != null
+                        && loaded.FileIndex == 1
+                        && loaded.Phase == WbMigrationPhase.Extracting;  // 默认值
+                    return new TestResult
+                    {
+                        TestName = "检查点:旧格式缺 Phase 默认 Extracting",
+                        Passed = passed,
+                        Detail = passed ? "OK — 旧检查点 Phase 默认为 Extracting" :
+                            "Phase=" + (loaded?.Phase.ToString() ?? "(null)") +
+                            "（期望 Extracting）"
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new TestResult
+                    {
+                        TestName = "检查点:旧格式缺 Phase 默认 Extracting",
+                        Passed = false,
+                        Detail = ex.GetType().Name + ": " + ex.Message
+                    };
+                }
+            }
+
+            /// <summary>验证检查点记录数声明与实际行数不匹配时抛出 InvalidDataException，
+            /// 防止截断文件导致部分已提取零件静默丢失。</summary>
+            private static TestResult TestTruncatedRecordsRejected()
+            {
+                string testName = "检查点:截断记录拒绝加载";
+                try
+                {
+                    // 构造声明 10 条记录的检查点，再手动截断为仅 3 条
+                    var cp = new WbMigrationCheckpoint
+                    {
+                        DatabasePath = @"C:\test\lib.db",
+                        PendingFiles = new List<string>(),
+                        FileIndex = 3,
+                        Phase = WbMigrationPhase.Extracting,
+                        TotalErrorCount = 0,
+                        FailedFiles = new List<string>(),
+                        Diagnostics = new List<string> { "diag1" }
+                    };
+                    for (int i = 1; i <= 10; i++)
+                        cp.CollectedRecords.Add(new WbMigrationCheckpoint.CheckpointRecord
+                        {
+                            Index = i,
+                            Number = "PN" + i.ToString(CultureInfo.InvariantCulture),
+                            SourceFile = "file" + i.ToString(CultureInfo.InvariantCulture) + ".3dm",
+                            FeatureText = "feature" + i.ToString(CultureInfo.InvariantCulture)
+                        });
+
+                    string tmp = WriteTemp(cp);
+                    // 截断：只保留到第 3 条记录行（共 7 + 3 = 10 行：7 头 + 3 记录），
+                    // 切除后面的 7 条记录 + 诊断 + Phase
+                    string content = File.ReadAllText(tmp, Encoding.UTF8);
+                    string[] allLines = content.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None);
+                    // 格式: 行0=DB,1=files,2=idx,3=errCount,4=failed,5=recCount,6..15=10条记录,16=diagCount,17=diag,18=Phase
+                    // 保留行0-9（头+前3条记录），切除后面的
+                    var kept = new List<string>();
+                    for (int li = 0; li < Math.Min(10, allLines.Length); li++)
+                        kept.Add(allLines[li]);
+                    File.WriteAllText(tmp, string.Join("\r\n", kept), Encoding.UTF8);
+
+                    try
+                    {
+                        WbMigrationCheckpoint.Load(tmp);
+                        CleanTemp(tmp);
+                        return new TestResult
+                        {
+                            TestName = testName,
+                            Passed = false,
+                            Detail = "未抛出异常 —— 静默接受了截断的检查点。"
+                        };
+                    }
+                    catch (InvalidDataException)
+                    {
+                        CleanTemp(tmp);
+                        // 子测试2：字段数异常（3 字段替代 4 字段）
+                        string tmp2 = Path.GetTempFileName();
+                        try
+                        {
+                            var sb2 = new StringBuilder();
+                            // 序列化一个最小检查点，1 条记录但字段数故意写 3
+                            sb2.AppendLine(@"C:\test\lib2.db");
+                            sb2.AppendLine("");  // PendingFiles 空
+                            sb2.AppendLine("0"); // FileIndex
+                            sb2.AppendLine("0"); // TotalErrorCount
+                            sb2.AppendLine("");  // FailedFiles 空
+                            sb2.AppendLine("1"); // recCount=1
+                            sb2.AppendLine("1\u0001PN\u0001file.3dm"); // 仅 3 字段（缺 FeatureText）
+                            sb2.AppendLine("0"); // diagCount=0
+                            sb2.AppendLine(WbMigrationPhase.Extracting.ToString());
+                            File.WriteAllText(tmp2, sb2.ToString(), Encoding.UTF8);
+                            WbMigrationCheckpoint.Load(tmp2);
+                            return new TestResult
+                            {
+                                TestName = testName,
+                                Passed = false,
+                                Detail = "子测试2失败：3 字段记录未触发 InvalidDataException。"
+                            };
+                        }
+                        catch (InvalidDataException)
+                        {
+                            return new TestResult
+                            {
+                                TestName = testName,
+                                Passed = true,
+                                Detail = "OK — 截断记录和字段数异常均正确抛出 InvalidDataException。"
+                            };
+                        }
+                        finally
+                        {
+                            try { if (File.Exists(tmp2)) File.Delete(tmp2); } catch { }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    return new TestResult
+                    {
+                        TestName = testName,
+                        Passed = false,
+                        Detail = ex.GetType().Name + ": " + ex.Message
+                    };
+                }
+            }
+
+            /// <summary>
+            /// 场景12：TryResumeCheckpoint 从 Finalizing 检查点恢复时不产生重复记录
+            /// 模拟前面文件成功提取、最后文件打开失败、自动进入最终入库的完整流程：
+            /// _collectedRecords 已有旧记录 → 恢复检查点 → 应清空后重新加载（不重复）
+            /// </summary>
+            private static TestResult TestCheckpointResumeNoRecordDuplication()
+            {
+                try
+                {
+                    // 构造一个有效的序列化特征文本
+                    var feature = new WbFeature
+                    {
+                        Material = "TestMaterial",
+                        Color = "FF0000",
+                        BoundingBox = new double[] { 10, 5, 3 },
+                        Area = 100,
+                        Volume = 50,
+                        Inertia = new double[] { 1, 2, 3 },
+                        MirrorScore = 0.1,
+                        HoleMirrorScore = 0.2,
+                        Holes = new List<WbHole>(),
+                        OuterProfiles = new List<WbOuterProfile>(),
+                        IsDegenerate = false
+                    };
+                    string validFeatureText = feature.Serialize();
+
+                    // 构造 Finalizing 检查点：3 条记录 + 2 条诊断
+                    var cp = new WbMigrationCheckpoint
+                    {
+                        DatabasePath = @"C:\test\dup.db",
+                        PendingFiles = new List<string> { "a.3dm", "b.3dm", "c.3dm" },
+                        FileIndex = 3,
+                        TotalErrorCount = 0,
+                        FailedFiles = new List<string>(),
+                        CollectedRecords = new List<WbMigrationCheckpoint.CheckpointRecord>
+                        {
+                            new WbMigrationCheckpoint.CheckpointRecord { Index = 0, Number = "P1", SourceFile = "a.3dm", FeatureText = validFeatureText },
+                            new WbMigrationCheckpoint.CheckpointRecord { Index = 1, Number = "P2", SourceFile = "b.3dm", FeatureText = validFeatureText },
+                            new WbMigrationCheckpoint.CheckpointRecord { Index = 2, Number = "P3", SourceFile = "c.3dm", FeatureText = validFeatureText }
+                        },
+                        Diagnostics = new List<string> { "diag_line_1", "diag_line_2" },
+                        Phase = WbMigrationPhase.Finalizing
+                    };
+
+                    // 模拟 TryResumeCheckpoint 被调用前内存中已有旧状态
+                    // （前面文件提取成功留存的记录）
+                    var collectedRecords = new List<WbMigrationRecord>
+                    {
+                        new WbMigrationRecord(0, "OLD_1", feature, "old1.3dm"),
+                        new WbMigrationRecord(1, "OLD_2", feature, "old2.3dm")
+                    };
+                    var diagnostics = new List<string> { "old_diag_from_extraction" };
+
+                    // 执行 TryResumeCheckpoint 的 Clear+Add 模式
+                    diagnostics.Clear();
+                    if (cp.Diagnostics != null)
+                        diagnostics.AddRange(cp.Diagnostics);
+
+                    collectedRecords.Clear();
+                    if (cp.CollectedRecords != null)
+                    {
+                        foreach (var cr in cp.CollectedRecords)
+                        {
+                            WbFeature deserialized = WbFeature.Deserialize(cr.FeatureText);
+                            collectedRecords.Add(new WbMigrationRecord(
+                                cr.Index, cr.Number, deserialized, cr.SourceFile ?? string.Empty));
+                        }
+                    }
+
+                    bool recordCountOk = collectedRecords.Count == 3;
+                    bool diagCountOk = diagnostics.Count == 2;
+
+                    return new TestResult
+                    {
+                        TestName = "检查点:Finalizing恢复不重复记录",
+                        Passed = recordCountOk && diagCountOk,
+                        Detail = (recordCountOk && diagCountOk)
+                            ? "OK — 恢复后 collectedRecords=3 (非 5)、diagnostics=2 (非 3)"
+                            : "collectedRecords=" + collectedRecords.Count.ToString(CultureInfo.InvariantCulture) +
+                                " (期望 3), diagnostics=" + diagnostics.Count.ToString(CultureInfo.InvariantCulture) +
+                                " (期望 2)"
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new TestResult
+                    {
+                        TestName = "检查点:Finalizing恢复不重复记录",
+                        Passed = false,
+                        Detail = ex.GetType().Name + ": " + ex.Message
+                    };
+                }
+            }
+
             private static string WriteTemp(WbMigrationCheckpoint cp)
             {
                 string path = Path.GetTempFileName();
                 cp.Save(path);
                 return path;
+            }
+
+            /// <summary>
+            /// 场景10：File.Replace 失败时旧检查点仍可读取
+            /// 通过设置文件为只读模拟 File.Replace 失败，验证旧内容完整保留
+            /// </summary>
+            private static TestResult TestAtomicSavePreservesOriginalOnFailure()
+            {
+                string checkpointPath = null;
+                try
+                {
+                    var cp1 = new WbMigrationCheckpoint
+                    {
+                        DatabasePath = @"C:\original\lib.db",
+                        PendingFiles = new List<string> { "a.3dm", "b.3dm" },
+                        FileIndex = 5,
+                        TotalErrorCount = 0,
+                        FailedFiles = new List<string>(),
+                        CollectedRecords = new List<WbMigrationCheckpoint.CheckpointRecord>(),
+                        Diagnostics = new List<string>()
+                    };
+                    checkpointPath = Path.GetTempFileName();
+                    cp1.Save(checkpointPath);
+
+                    // 加载并验证原始内容
+                    var loaded1 = WbMigrationCheckpoint.Load(checkpointPath);
+                    if (loaded1 == null || loaded1.FileIndex != 5)
+                        return new TestResult
+                        {
+                            TestName = "原子替换:旧文件可读",
+                            Passed = false,
+                            Detail = "原始检查点保存后无法正确加载: FileIndex=" +
+                                (loaded1?.FileIndex ?? -1)
+                        };
+
+                    // 设为只读，模拟 File.Replace 失败场景
+                    File.SetAttributes(checkpointPath, FileAttributes.ReadOnly);
+
+                    var cp2 = new WbMigrationCheckpoint
+                    {
+                        DatabasePath = @"C:\different\lib.db",
+                        PendingFiles = new List<string> { "x.3dm" },
+                        FileIndex = 99,
+                        TotalErrorCount = 2,
+                        FailedFiles = new List<string>(),
+                        CollectedRecords = new List<WbMigrationCheckpoint.CheckpointRecord>(),
+                        Diagnostics = new List<string>()
+                    };
+
+                    bool replaceThrew = false;
+                    try { cp2.Save(checkpointPath); }
+                    catch (UnauthorizedAccessException) { replaceThrew = true; }
+                    catch (IOException) { replaceThrew = true; }
+
+                    // 恢复可写
+                    File.SetAttributes(checkpointPath, FileAttributes.Normal);
+
+                    // 旧检查点应保持原样
+                    var loaded2 = WbMigrationCheckpoint.Load(checkpointPath);
+                    if (loaded2 == null)
+                        return new TestResult
+                        {
+                            TestName = "原子替换:旧文件可读",
+                            Passed = false,
+                            Detail = "File.Replace 失败后旧检查点不可加载（已损坏或丢失）"
+                        };
+
+                    bool contentPreserved = loaded2.FileIndex == 5
+                        && loaded2.PendingFiles.Count == 2
+                        && string.Equals(loaded2.DatabasePath, @"C:\original\lib.db",
+                            StringComparison.Ordinal);
+                    bool replaceDetected = replaceThrew;
+
+                    string detail = replaceDetected
+                        ? (contentPreserved
+                            ? "OK — File.Replace 已抛异常，旧检查点内容完整保留"
+                            : "失败 — 异常已抛但旧内容被破坏")
+                        : (contentPreserved
+                            ? "警告 — File.Replace 未抛异常（系统可能在只读文件上允许替换），但内容保留"
+                            : "失败 — File.Replace 静默成功且覆盖了旧内容");
+
+                    return new TestResult
+                    {
+                        TestName = "原子替换:旧文件可读",
+                        Passed = contentPreserved,
+                        Detail = detail
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new TestResult
+                    {
+                        TestName = "原子替换:旧文件可读",
+                        Passed = false,
+                        Detail = ex.GetType().Name + ": " + ex.Message
+                    };
+                }
+                finally
+                {
+                    if (checkpointPath != null)
+                    {
+                        try
+                        {
+                            if (File.Exists(checkpointPath))
+                            {
+                                File.SetAttributes(checkpointPath, FileAttributes.Normal);
+                                File.Delete(checkpointPath);
+                            }
+                        }
+                        catch { }
+                    }
+                }
             }
 
             private static void CleanTemp(string path)
@@ -3635,9 +1971,14 @@ namespace NS_Parrot
             public static List<TestResult> RunAll()
             {
                 var results = new List<TestResult>();
-                results.Add(TestOffIsolation());
+                results.Add(TestOffClustersWithNormalTolerance());
                 results.Add(TestOnMatching());
                 results.Add(TestChainNotClique());
+                results.Add(TestAxisPermutedDegenerateMatch());
+                results.Add(TestBoundaryPosition());
+                results.Add(TestBoundaryNormal());
+                results.Add(TestBoundaryPerimeter());
+                results.Add(TestBoundaryArea());
                 return results;
             }
 
@@ -3656,16 +1997,17 @@ namespace NS_Parrot
             }
 
             /// <summary>
-            /// 场景 D1：关闭退化匹配 → 退化孔记录各自隔离成单类
+            /// 场景 D1（新语义）：关闭容差放宽 → 退化孔记录仍参与聚类，
+            /// 使用常规容差；完全相同的退化记录应匹配为 1 类（不再隔离）。
             /// </summary>
-            private static TestResult TestOffIsolation()
+            private static TestResult TestOffClustersWithNormalTolerance()
             {
-                // 构造两个相似的退化特征
+                // 构造两个完全相同的退化特征（同色以通过 GlobalMatches）
                 var holesA = new List<WbHole> { CreateDegenerateHole(10, 1, 1, 0, 0) };
                 var holesB = new List<WbHole> { CreateDegenerateHole(10, 1, 1, 0, 0) };
 
-                var fA = CreateDegenerateFeature("A", holesA);
-                var fB = CreateDegenerateFeature("B", holesB);
+                var fA = CreateDegenerateFeature("Test", holesA);
+                var fB = CreateDegenerateFeature("Test", holesB);
 
                 var records = new List<WbMigrationRecord>
                 {
@@ -3678,21 +2020,20 @@ namespace NS_Parrot
                 var isRel = DefaultIsRel();
 
                 var audit = WbMigrationAudit.Create(records, enabled, tolerances, isRel,
-                    mirrorTolerance: 1e-8, strictMaterialColor: false, holeNormalTolerance: 0.99,
+                    strictMaterialColor: false, holeNormalTolerance: 0.99,
                     enableDegenerateMatching: false);
 
-                // 关闭：每个退化记录各成一类 → Classes 应有 2 个
-                bool isolated = audit.Classes.Count == 2;
+                // 关闭容差放宽：完全一致的退化记录仍聚为 1 类
+                bool clustered = audit.Classes.Count == 1;
                 return new TestResult
                 {
-                    TestName = "退化匹配:关闭→隔离",
-                    Passed = isolated,
-                    Detail = isolated
-                        ? "OK — 2 退化记录各成一类（Classes=" +
-                          audit.Classes.Count.ToString(CultureInfo.InvariantCulture) + "）"
-                        : "期望 2 类但实际为 " +
+                    TestName = "退化匹配:关闭→仍聚类(常规容差)",
+                    Passed = clustered,
+                    Detail = clustered
+                        ? "OK — 2 条退化记录在关闭容差放宽时仍匹配为 1 类"
+                        : "期望 1 类但实际为 " +
                           audit.Classes.Count.ToString(CultureInfo.InvariantCulture) +
-                          "（部分记录被合并）"
+                          "（退化记录未成功匹配）"
                 };
             }
 
@@ -3705,8 +2046,8 @@ namespace NS_Parrot
                 var holesA = new List<WbHole> { CreateDegenerateHole(10, 1, 1, 0, 0) };
                 var holesB = new List<WbHole> { CreateDegenerateHole(10, 1, 1, 0, 0) };
 
-                var fA = CreateDegenerateFeature("A", holesA);
-                var fB = CreateDegenerateFeature("B", holesB);
+                var fA = CreateDegenerateFeature("Test", holesA);
+                var fB = CreateDegenerateFeature("Test", holesB);
 
                 var records = new List<WbMigrationRecord>
                 {
@@ -3719,7 +2060,7 @@ namespace NS_Parrot
                 var isRel = DefaultIsRel();
 
                 var audit = WbMigrationAudit.Create(records, enabled, tolerances, isRel,
-                    mirrorTolerance: 1e-8, strictMaterialColor: false, holeNormalTolerance: 0.99,
+                    strictMaterialColor: false, holeNormalTolerance: 0.99,
                     enableDegenerateMatching: true, degeneratePositionMultiplier: 2.0);
 
                 // 开启：两条完全一致的退化记录应匹配成同组 → Classes 应有 1 个
@@ -3753,9 +2094,9 @@ namespace NS_Parrot
                 var holesB = new List<WbHole> { CreateDegenerateHole(10,  4, 1, 1, 0.5) };
                 var holesC = new List<WbHole> { CreateDegenerateHole(10,  0, 1, 1, 0.5) };
 
-                var fA = CreateDegenerateFeature("A", holesA);
-                var fB = CreateDegenerateFeature("B", holesB);
-                var fC = CreateDegenerateFeature("C", holesC);
+                var fA = CreateDegenerateFeature("Test", holesA);
+                var fB = CreateDegenerateFeature("Test", holesB);
+                var fC = CreateDegenerateFeature("Test", holesC);
 
                 var records = new List<WbMigrationRecord>
                 {
@@ -3769,7 +2110,7 @@ namespace NS_Parrot
                 var isRel = DefaultIsRel();
 
                 var audit = WbMigrationAudit.Create(records, enabled, tolerances, isRel,
-                    mirrorTolerance: 1e-8, strictMaterialColor: false, holeNormalTolerance: 0.99,
+                    strictMaterialColor: false, holeNormalTolerance: 0.99,
                     enableDegenerateMatching: true, degeneratePositionMultiplier: 2.0);
 
                 // 正确行为：3 条记录不应被合并为 1 类
@@ -3794,7 +2135,90 @@ namespace NS_Parrot
                 };
             }
 
-            private static WbHole CreateDegenerateHole(
+            /// <summary>
+            /// 场景 D4：轴置换退化匹配 —— 两个退化孔仅在非恒等轴排列下匹配，
+            /// 验证 RemapHoles 的 perm + 退化字段重映射（DegenerateProjectedArea、
+            /// DegenerateNormalU/V/W）正确生效。
+            /// A: 孔(10,0,0) 退化法向(1,0,0) 投影面积 5.0
+            /// B: 孔(0,10,0) 退化法向(0,1,0) 投影面积 5.0
+            /// 恒等轴排列下距离 sqrt(200)≈14.14&gt;tol*degen=10.0→失败；
+            /// 仅 perm=[1,0,2]（U↔V交换）可匹配，其余 5 种轴排列均失败。
+            /// </summary>
+            private static TestResult TestAxisPermutedDegenerateMatch()
+            {
+                // A: hole at (10, 0, 0), DegenerateNormal (1, 0, 0)
+                var holeA = new WbHole(perimeter: 100, area: 0,
+                    u: 10, v: 0, w: 0,
+                    nu: 0, nv: 0, nw: 0,
+                    isDegenerate: true, degenerateType: "Test")
+                {
+                    DegenerateProjectedArea = 5.0,
+                    DegenerateCircularity = 0.8,
+                    DegenerateAspectRatio = 1.5,
+                    DegenerateNormalU = 1, DegenerateNormalV = 0, DegenerateNormalW = 0
+                };
+
+                // B: hole at (0, 10, 0), DegenerateNormal (0, 1, 0)
+                //    仅 perm={1,0,2} 时坐标→(10,0,0)、法向→(1,0,0) 与 A 一致
+                var holeB = new WbHole(perimeter: 100, area: 0,
+                    u: 0, v: 10, w: 0,
+                    nu: 0, nv: 0, nw: 0,
+                    isDegenerate: true, degenerateType: "Test")
+                {
+                    DegenerateProjectedArea = 5.0,
+                    DegenerateCircularity = 0.8,
+                    DegenerateAspectRatio = 1.5,
+                    DegenerateNormalU = 0, DegenerateNormalV = 1, DegenerateNormalW = 0
+                };
+
+                var featA = new WbFeature
+                {
+                    Material = "Steel",
+                    Color = "A",
+                    BoundingBox = new[] { 100.0, 80.0, 60.0 },
+                    Area = 5000,
+                    Volume = 1000,
+                    Inertia = new[] { 2000.0, 1990.0, 500.0 },
+                    IsDegenerate = true,
+                    Holes = new List<WbHole> { holeA },
+                    MirrorScore = 0.1,
+                    HoleMirrorScore = 0.1
+                };
+
+                var featB = new WbFeature
+                {
+                    Material = "Steel",
+                    Color = "B",
+                    BoundingBox = new[] { 100.0, 80.0, 60.0 },
+                    Area = 5000,
+                    Volume = 1000,
+                    Inertia = new[] { 2000.0, 1990.0, 500.0 },
+                    IsDegenerate = true,
+                    Holes = new List<WbHole> { holeB },
+                    MirrorScore = 0.1,
+                    HoleMirrorScore = 0.1
+                };
+
+                var enabled = AllEnabled();
+                var tolerances = DefaultTolerances();
+                var isRel = DefaultIsRel();
+
+                bool match = WbMigrationAudit.GeometryMatches(featA, featB, enabled, tolerances, isRel,
+                    reflection: false, normalTol: 0.99,
+                    outerAreaRatio: 1e-8, outerPerimMin: 1e-8,
+                    degenMult: 2.0, enableDegenMatch: true);
+
+                return new TestResult
+                {
+                    TestName = "退化匹配:轴置换→非恒等perm匹配",
+                    Passed = match,
+                    Detail = match
+                        ? "OK — 非恒等轴排列下退化孔匹配成功，RemapHoles 退化字段重映射正确"
+                        : "期望退化孔经轴置换后匹配，但实际不匹配（RemapHoles 可能未正确重映射退化字段）"
+                };
+            }
+
+            internal static WbHole CreateDegenerateHole(
                 double perimeter, double u, double v, double w,
                 double degenerateArea = 0.5)
             {
@@ -3808,7 +2232,7 @@ namespace NS_Parrot
                 };
             }
 
-            private static WbFeature CreateDegenerateFeature(
+            internal static WbFeature CreateDegenerateFeature(
                 string color, List<WbHole> holes)
             {
                 return new WbFeature
@@ -3826,37 +2250,915 @@ namespace NS_Parrot
                 };
             }
 
-            private static Dictionary<V5Criterion, bool> AllEnabled()
+            /// <summary>
+            /// 场景 D5（位置边界）：两退化孔完全一致，仅位置差 6.0。
+            /// 正常 HolePosition 容差 5.0（绝对），degenMult=2.0。
+            /// 关闭时距离 6.0 ≥ 5.0 → 不匹配；开启时 6.0 &lt; 10.0 → 匹配。
+            /// 验证开关确实改变了容差边界，而非仅控制是否参与。
+            /// </summary>
+            private static TestResult TestBoundaryPosition()
+            {
+                var holeA = CreateDegenerateHole(perimeter: 10, u: 9, v: 0, w: 0, degenerateArea: 5.0);
+                var holeB = CreateDegenerateHole(perimeter: 10, u: 3, v: 0, w: 0, degenerateArea: 5.0);
+
+                WbFeature MakeFeat(WbHole h) => new WbFeature
+                {
+                    Material = "Steel", Color = "Test",
+                    BoundingBox = new[] { 100.0, 80.0, 60.0 },
+                    Area = 5000, Volume = 1000,
+                    Inertia = new[] { 2000.0, 1990.0, 500.0 },
+                    Holes = new List<WbHole> { h }
+                };
+
+                var enabled = AllEnabled();
+                var tolerances = DefaultTolerances();
+                var isRel = DefaultIsRel();
+
+                bool matchOff = WbMigrationAudit.Matches(
+                    MakeFeat(holeA), MakeFeat(holeB),
+                    enabled, tolerances, isRel,
+                    strictMaterialColor: false, normalTol: 0.9986,
+                    outerAreaRatio: 0.3, outerPerimMin: 0.1,
+                    degenMult: 2.0, enableDegenMatch: false);
+
+                bool matchOn = WbMigrationAudit.Matches(
+                    MakeFeat(holeA), MakeFeat(holeB),
+                    enabled, tolerances, isRel,
+                    strictMaterialColor: false, normalTol: 0.9986,
+                    outerAreaRatio: 0.3, outerPerimMin: 0.1,
+                    degenMult: 2.0, enableDegenMatch: true);
+
+                bool passed = !matchOff && matchOn;
+                return new TestResult
+                {
+                    TestName = "边界:位置差6.0→关闭不匹配开启匹配",
+                    Passed = passed,
+                    Detail = passed
+                        ? "OK — 关闭=" + matchOff + "（期望false），开启=" + matchOn + "（期望true）"
+                        : "关闭=" + matchOff + "，开启=" + matchOn +
+                          "（期望 关闭=false, 开启=true）"
+                };
+            }
+
+            /// <summary>
+            /// 场景 D6（法向边界）：两退化孔完全一致，仅拟合法向有微小差异。
+            /// dot=0.99 在 normalTol=0.9986 之下但在 normalTol×0.95≈0.9487 之上。
+            /// 关闭时不匹配（0.99 &lt; 0.9986），开启时匹配（0.99 ≥ 0.9487）。
+            /// </summary>
+            private static TestResult TestBoundaryNormal()
+            {
+                // 手动构造退化孔：A 拟合法向 (0.141, 0, 0.990)，B 拟合法向 (0, 0, 1)
+                // dot = 0.990
+                var holeA = new WbHole(10, 0, 1, 0, 0, 0, 0, 0,
+                    isDegenerate: true, degenerateType: "Test")
+                {
+                    DegenerateProjectedArea = 5.0,
+                    DegenerateCircularity = 0.8,
+                    DegenerateAspectRatio = 1.5,
+                    DegenerateNormalU = 0.141, DegenerateNormalV = 0, DegenerateNormalW = 0.990
+                };
+                var holeB = new WbHole(10, 0, 1, 0, 0, 0, 0, 0,
+                    isDegenerate: true, degenerateType: "Test")
+                {
+                    DegenerateProjectedArea = 5.0,
+                    DegenerateCircularity = 0.8,
+                    DegenerateAspectRatio = 1.5,
+                    DegenerateNormalU = 0, DegenerateNormalV = 0, DegenerateNormalW = 1
+                };
+
+                WbFeature MakeFeat(WbHole h) => new WbFeature
+                {
+                    Material = "Steel", Color = "Test",
+                    BoundingBox = new[] { 100.0, 80.0, 60.0 },
+                    Area = 5000, Volume = 1000,
+                    Inertia = new[] { 2000.0, 1990.0, 500.0 },
+                    Holes = new List<WbHole> { h }
+                };
+
+                var enabled = AllEnabled();
+                var tolerances = DefaultTolerances();
+                var isRel = DefaultIsRel();
+
+                bool matchOff = WbMigrationAudit.Matches(
+                    MakeFeat(holeA), MakeFeat(holeB),
+                    enabled, tolerances, isRel,
+                    strictMaterialColor: false, normalTol: 0.9986,
+                    outerAreaRatio: 0.3, outerPerimMin: 0.1,
+                    degenMult: 2.0, enableDegenMatch: false);
+
+                bool matchOn = WbMigrationAudit.Matches(
+                    MakeFeat(holeA), MakeFeat(holeB),
+                    enabled, tolerances, isRel,
+                    strictMaterialColor: false, normalTol: 0.9986,
+                    outerAreaRatio: 0.3, outerPerimMin: 0.1,
+                    degenMult: 2.0, enableDegenMatch: true);
+
+                bool passed = !matchOff && matchOn;
+                return new TestResult
+                {
+                    TestName = "边界:法向dot=0.99→关闭不匹配开启匹配",
+                    Passed = passed,
+                    Detail = passed
+                        ? "OK — 关闭=" + matchOff + "（期望false），开启=" + matchOn + "（期望true）"
+                        : "关闭=" + matchOff + "，开启=" + matchOn +
+                          "（期望 关闭=false, 开启=true）"
+                };
+            }
+
+            /// <summary>
+            /// 场景 D7（周长边界）：两退化孔除周长外完全一致。
+            /// 周长 100 vs 100.15，差异 0.1498%。
+            /// EdgeSum 正常容差 0.10%，degenMult=2.0。
+            /// 关闭时 0.1498% &gt; 0.10% → 不匹配；开启时 0.1498% &lt; 0.20% → 匹配。
+            /// </summary>
+            private static TestResult TestBoundaryPerimeter()
+            {
+                var holeA = CreateDegenerateHole(perimeter: 100, u: 1, v: 0, w: 0, degenerateArea: 5.0);
+                var holeB = CreateDegenerateHole(perimeter: 100.15, u: 1, v: 0, w: 0, degenerateArea: 5.0);
+
+                WbFeature MakeFeat(WbHole h) => new WbFeature
+                {
+                    Material = "Steel", Color = "Test",
+                    BoundingBox = new[] { 100.0, 80.0, 60.0 },
+                    Area = 5000, Volume = 1000,
+                    Inertia = new[] { 2000.0, 1990.0, 500.0 },
+                    Holes = new List<WbHole> { h }
+                };
+
+                var enabled = AllEnabled();
+                var tolerances = DefaultTolerances();
+                var isRel = DefaultIsRel();
+
+                bool matchOff = WbMigrationAudit.Matches(
+                    MakeFeat(holeA), MakeFeat(holeB),
+                    enabled, tolerances, isRel,
+                    strictMaterialColor: false, normalTol: 0.9986,
+                    outerAreaRatio: 0.3, outerPerimMin: 0.1,
+                    degenMult: 2.0, enableDegenMatch: false);
+
+                bool matchOn = WbMigrationAudit.Matches(
+                    MakeFeat(holeA), MakeFeat(holeB),
+                    enabled, tolerances, isRel,
+                    strictMaterialColor: false, normalTol: 0.9986,
+                    outerAreaRatio: 0.3, outerPerimMin: 0.1,
+                    degenMult: 2.0, enableDegenMatch: true);
+
+                bool passed = !matchOff && matchOn;
+                return new TestResult
+                {
+                    TestName = "边界:周长差0.15%→关闭不匹配开启匹配",
+                    Passed = passed,
+                    Detail = passed
+                        ? "OK — 关闭=" + matchOff + "（期望false），开启=" + matchOn + "（期望true）"
+                        : "关闭=" + matchOff + "，开启=" + matchOn +
+                          "（期望 关闭=false, 开启=true）"
+                };
+            }
+
+            /// <summary>
+            /// 场景 D8（投影面积边界）：两退化孔除投影面积外完全一致。
+            /// 投影面积 100 vs 103，差异 2.91%。
+            /// HoleArea 正常容差 0.10%，放松时 max(0.10%×2.0, 5.0%)=5.0% 最低容差。
+            /// 关闭时 2.91% &gt; 0.10% → 不匹配；开启时 2.91% &lt; 5.0% → 匹配。
+            /// </summary>
+            private static TestResult TestBoundaryArea()
+            {
+                var holeA = CreateDegenerateHole(perimeter: 10, u: 1, v: 0, w: 0, degenerateArea: 100);
+                var holeB = CreateDegenerateHole(perimeter: 10, u: 1, v: 0, w: 0, degenerateArea: 103);
+
+                WbFeature MakeFeat(WbHole h) => new WbFeature
+                {
+                    Material = "Steel", Color = "Test",
+                    BoundingBox = new[] { 100.0, 80.0, 60.0 },
+                    Area = 5000, Volume = 1000,
+                    Inertia = new[] { 2000.0, 1990.0, 500.0 },
+                    Holes = new List<WbHole> { h }
+                };
+
+                var enabled = AllEnabled();
+                var tolerances = DefaultTolerances();
+                var isRel = DefaultIsRel();
+
+                bool matchOff = WbMigrationAudit.Matches(
+                    MakeFeat(holeA), MakeFeat(holeB),
+                    enabled, tolerances, isRel,
+                    strictMaterialColor: false, normalTol: 0.9986,
+                    outerAreaRatio: 0.3, outerPerimMin: 0.1,
+                    degenMult: 2.0, enableDegenMatch: false);
+
+                bool matchOn = WbMigrationAudit.Matches(
+                    MakeFeat(holeA), MakeFeat(holeB),
+                    enabled, tolerances, isRel,
+                    strictMaterialColor: false, normalTol: 0.9986,
+                    outerAreaRatio: 0.3, outerPerimMin: 0.1,
+                    degenMult: 2.0, enableDegenMatch: true);
+
+                bool passed = !matchOff && matchOn;
+                return new TestResult
+                {
+                    TestName = "边界:投影面积差2.91%→关闭不匹配开启匹配",
+                    Passed = passed,
+                    Detail = passed
+                        ? "OK — 关闭=" + matchOff + "（期望false），开启=" + matchOn + "（期望true）"
+                        : "关闭=" + matchOff + "，开启=" + matchOn +
+                          "（期望 关闭=false, 开启=true）"
+                };
+            }
+
+            internal static Dictionary<V5Criterion, bool> AllEnabled()
             {
                 return new Dictionary<V5Criterion, bool>
                 {
                     { V5Criterion.Length, true },
-                    { V5Criterion.Area, true }, { V5Criterion.Volume, true },
+                    { V5Criterion.Volume, true },
                     { V5Criterion.Inertia, true }, { V5Criterion.EdgeSum, true },
                     { V5Criterion.HoleArea, true }, { V5Criterion.HolePosition, true }
                 };
             }
 
-            private static Dictionary<V5Criterion, double> DefaultTolerances()
+            internal static Dictionary<V5Criterion, double> DefaultTolerances()
             {
                 return new Dictionary<V5Criterion, double>
                 {
                     { V5Criterion.Length, 0.10 },
-                    { V5Criterion.Area, 0.05 }, { V5Criterion.Volume, 0.05 },
+                    { V5Criterion.Volume, 0.05 },
                     { V5Criterion.Inertia, 0.05 }, { V5Criterion.EdgeSum, 0.10 },
                     { V5Criterion.HoleArea, 0.10 }, { V5Criterion.HolePosition, 5.0 }
                 };
             }
 
-            private static Dictionary<V5Criterion, bool> DefaultIsRel()
+            internal static Dictionary<V5Criterion, bool> DefaultIsRel()
             {
                 return new Dictionary<V5Criterion, bool>
                 {
                     { V5Criterion.Length, true },
-                    { V5Criterion.Area, true }, { V5Criterion.Volume, true },
+                    { V5Criterion.Volume, true },
                     { V5Criterion.Inertia, true }, { V5Criterion.EdgeSum, true },
                     { V5Criterion.HoleArea, true }, { V5Criterion.HolePosition, false }
                 };
+            }
+        }
+
+        // ====================================================================
+        // 自动匹配退化孔隔离回归测试
+        // ====================================================================
+        internal static class WbCanAutoMatchTest
+        {
+            public class TestResult
+            {
+                public string TestName;
+                public bool Passed;
+                public string Detail;
+            }
+
+            public static List<TestResult> RunAll()
+            {
+                var results = new List<TestResult>();
+                results.Add(TestDegenVsNormalBlocked());
+                results.Add(TestMixedHolesIsomorphicMatch());
+                results.Add(TestMixedHolesCrossPairBlocked());
+                results.Add(TestDegenVsDegenSwitchOff());
+                results.Add(TestDegenVsDegenSwitchOn());
+                return results;
+            }
+
+            /// <summary>
+            /// 一方退化孔、一方正常孔 → Matches 必须为 false
+            /// </summary>
+            private static TestResult TestDegenVsNormalBlocked()
+            {
+                var degenHoles = new List<WbHole>
+                    { WbDegenerateMatchingTest.CreateDegenerateHole(10, 1, 1, 0, 0) };
+                var normalHoles = new List<WbHole>
+                    { new WbHole(40, 100, 1, 1, 0, 0, 0, 1) };
+
+                var degenFeat = WbDegenerateMatchingTest.CreateDegenerateFeature("Degen", degenHoles);
+                var normalFeat = new WbFeature
+                {
+                    Material = "Steel", Color = "Degen",
+                    BoundingBox = new[] { 100.0, 50.0, 30.0 },
+                    Area = 1000, Volume = 500,
+                    Inertia = new[] { 2000.0, 1000.0, 500.0 },
+                    Holes = normalHoles
+                };
+
+                var enabled = WbDegenerateMatchingTest.AllEnabled();
+                var tolerances = WbDegenerateMatchingTest.DefaultTolerances();
+                var isRel = WbDegenerateMatchingTest.DefaultIsRel();
+
+                // 开关开启时退化对正常也必须隔离
+                bool matchesOn = WbMigrationAudit.Matches(degenFeat, normalFeat,
+                    enabled, tolerances, isRel, false, 0.99, 0.3, 0.1, 2.0, enableDegenMatch: true);
+                // 开关关闭时当然也隔离
+                bool matchesOff = WbMigrationAudit.Matches(degenFeat, normalFeat,
+                    enabled, tolerances, isRel, false, 0.99, 0.3, 0.1, 2.0, enableDegenMatch: false);
+
+                bool passed = !matchesOn && !matchesOff;
+                return new TestResult
+                {
+                    TestName = "退化对正常禁止匹配",
+                    Passed = passed,
+                    Detail = passed ? "已正确隔离（开关开/关均隔离）"
+                        : $"开关开={matchesOn}, 开关关={matchesOff}"
+                };
+            }
+
+            /// <summary>
+            /// 同构混合孔：双方各含 1 个退化孔 + 1 个正常孔，值完全相同
+            /// 退化→退化 + 正常→正常 均匹配 → 开启退化匹配时 Matches 为 true
+            /// </summary>
+            private static TestResult TestMixedHolesIsomorphicMatch()
+            {
+                var holesA = new List<WbHole>
+                {
+                    WbDegenerateMatchingTest.CreateDegenerateHole(10, 1, 1, 0, 0),
+                    new WbHole(40, 100, 2, 2, 0, 0, 0, 1)
+                };
+                // B 与 A 完全同构
+                var holesB = new List<WbHole>
+                {
+                    WbDegenerateMatchingTest.CreateDegenerateHole(10, 1, 1, 0, 0),
+                    new WbHole(40, 100, 2, 2, 0, 0, 0, 1)
+                };
+
+                WbFeature MakeFeat(string color, List<WbHole> holes) => new WbFeature
+                {
+                    Material = "Steel", Color = color,
+                    BoundingBox = new[] { 100.0, 50.0, 30.0 },
+                    Area = 1000, Volume = 500,
+                    Inertia = new[] { 2000.0, 1000.0, 500.0 },
+                    Holes = holes
+                };
+                var fA = MakeFeat("Test", holesA);
+                var fB = MakeFeat("Test", holesB);
+
+                var enabled = WbDegenerateMatchingTest.AllEnabled();
+                var tolerances = WbDegenerateMatchingTest.DefaultTolerances();
+                var isRel = WbDegenerateMatchingTest.DefaultIsRel();
+
+                bool matchesOn = WbMigrationAudit.Matches(fA, fB,
+                    enabled, tolerances, isRel, false, 0.99, 0.3, 0.1, 2.0, enableDegenMatch: true);
+                bool matchesOff = WbMigrationAudit.Matches(fA, fB,
+                    enabled, tolerances, isRel, false, 0.99, 0.3, 0.1, 2.0, enableDegenMatch: false);
+
+                // 新语义：开关开/关均允许匹配（开关仅控制容差放宽）
+                bool passed = matchesOn && matchesOff;
+                return new TestResult
+                {
+                    TestName = "同构混合孔开关开/关均允许匹配",
+                    Passed = passed,
+                    Detail = passed ? "开关开/关均允许（开关仅控制容差放宽）"
+                        : $"开关开={matchesOn}, 开关关={matchesOff}"
+                };
+            }
+
+            /// <summary>
+            /// 交叉配对反例：A/B 退化孔与正常孔交换值，同类无法匹配、
+            /// 但退化↔正常的交叉值完全相同。
+            /// 若 HoleCompatible 无 IsDegenerate 拦截，交叉配对可能成功；
+            /// 有拦截时应返回 false。
+            /// </summary>
+            private static TestResult TestMixedHolesCrossPairBlocked()
+            {
+                // A: degen(10,1,1,0,0) + normal(40,100,2,2,0)
+                var holesA = new List<WbHole>
+                {
+                    WbDegenerateMatchingTest.CreateDegenerateHole(10, 1, 1, 0, 0),
+                    new WbHole(40, 100, 2, 2, 0, 0, 0, 1)
+                };
+                // B: degen(40,100,2,2,0) + normal(10,1,1,0,0) — 值与 A 交换
+                var holesB = new List<WbHole>
+                {
+                    WbDegenerateMatchingTest.CreateDegenerateHole(40, 100, 2, 2, 0),
+                    new WbHole(10, 1, 1, 0, 0, 0, 0, 1)
+                };
+
+                WbFeature MakeFeat(string color, List<WbHole> holes) => new WbFeature
+                {
+                    Material = "Steel", Color = color,
+                    BoundingBox = new[] { 100.0, 50.0, 30.0 },
+                    Area = 1000, Volume = 500,
+                    Inertia = new[] { 2000.0, 1000.0, 500.0 },
+                    Holes = holes
+                };
+                var fA = MakeFeat("Test", holesA);
+                var fB = MakeFeat("Test", holesB);
+
+                var enabled = WbDegenerateMatchingTest.AllEnabled();
+                var tolerances = WbDegenerateMatchingTest.DefaultTolerances();
+                var isRel = WbDegenerateMatchingTest.DefaultIsRel();
+
+                // 同类无法匹配（degen:10vs40, normal:40vs10），
+                // 退化↔正常交叉值完全相同但被 HoleCompatible 拦截
+                bool matchesOn = WbMigrationAudit.Matches(fA, fB,
+                    enabled, tolerances, isRel, false, 0.99, 0.3, 0.1, 2.0, enableDegenMatch: true);
+                bool matchesOff = WbMigrationAudit.Matches(fA, fB,
+                    enabled, tolerances, isRel, false, 0.99, 0.3, 0.1, 2.0, enableDegenMatch: false);
+
+                bool passed = !matchesOn && !matchesOff;
+                return new TestResult
+                {
+                    TestName = "交叉配对（退化↔正常）被 HoleCompatible 拦截",
+                    Passed = passed,
+                    Detail = passed ? "交叉已正确拦截"
+                        : $"开关开={matchesOn}, 开关关={matchesOff}"
+                };
+            }
+
+            /// <summary>
+            /// 双方退化 + 开关关闭 → 仍允许匹配（使用常规容差，不放大）
+            /// </summary>
+            private static TestResult TestDegenVsDegenSwitchOff()
+            {
+                var holesA = new List<WbHole>
+                    { WbDegenerateMatchingTest.CreateDegenerateHole(10, 1, 1, 0, 0) };
+                var fA = new WbFeature
+                {
+                    Material = "Steel", Color = "Degen",
+                    BoundingBox = new[] { 100.0, 50.0, 30.0 },
+                    Area = 1000, Volume = 500,
+                    Inertia = new[] { 2000.0, 1000.0, 500.0 },
+                    Holes = holesA
+                };
+                // fB 与 fA 完全相同的特征
+                var holesB = new List<WbHole>
+                    { WbDegenerateMatchingTest.CreateDegenerateHole(10, 1, 1, 0, 0) };
+                var fB = new WbFeature
+                {
+                    Material = "Steel", Color = "Degen",
+                    BoundingBox = new[] { 100.0, 50.0, 30.0 },
+                    Area = 1000, Volume = 500,
+                    Inertia = new[] { 2000.0, 1000.0, 500.0 },
+                    Holes = holesB
+                };
+
+                var enabled = WbDegenerateMatchingTest.AllEnabled();
+                var tolerances = WbDegenerateMatchingTest.DefaultTolerances();
+                var isRel = WbDegenerateMatchingTest.DefaultIsRel();
+
+                bool matches = WbMigrationAudit.Matches(fA, fB,
+                    enabled, tolerances, isRel, false, 0.99, 0.3, 0.1, 2.0, enableDegenMatch: false);
+
+                return new TestResult
+                {
+                    TestName = "双方退化+开关关闭仍允许匹配",
+                    Passed = matches,
+                    Detail = matches ? "已正确允许（使用常规容差）"
+                        : "关闭时应允许相同退化孔用常规容差匹配"
+                };
+            }
+
+            /// <summary>
+            /// 双方退化 + 开关开启 → 相同退化孔可匹配
+            /// </summary>
+            private static TestResult TestDegenVsDegenSwitchOn()
+            {
+                var holes = new List<WbHole>
+                    { WbDegenerateMatchingTest.CreateDegenerateHole(10, 1, 1, 0, 0) };
+                var fA = new WbFeature
+                {
+                    Material = "Steel", Color = "Degen",
+                    BoundingBox = new[] { 100.0, 50.0, 30.0 },
+                    Area = 1000, Volume = 500,
+                    Inertia = new[] { 2000.0, 1000.0, 500.0 },
+                    Holes = holes
+                };
+                var holesB = new List<WbHole>
+                    { WbDegenerateMatchingTest.CreateDegenerateHole(10, 1, 1, 0, 0) };
+                var fB = new WbFeature
+                {
+                    Material = "Steel", Color = "Degen",
+                    BoundingBox = new[] { 100.0, 50.0, 30.0 },
+                    Area = 1000, Volume = 500,
+                    Inertia = new[] { 2000.0, 1000.0, 500.0 },
+                    Holes = holesB
+                };
+
+                var enabled = WbDegenerateMatchingTest.AllEnabled();
+                var tolerances = WbDegenerateMatchingTest.DefaultTolerances();
+                var isRel = WbDegenerateMatchingTest.DefaultIsRel();
+
+                bool matches = WbMigrationAudit.Matches(fA, fB,
+                    enabled, tolerances, isRel, false, 0.99, 0.3, 0.1, 2.0, enableDegenMatch: true);
+
+                return new TestResult
+                {
+                    TestName = "双方退化+开关开启允许匹配",
+                    Passed = matches,
+                    Detail = matches ? "已正确允许（容差放宽）"
+                        : "开启时应允许相同退化孔匹配"
+                };
+            }
+        }
+
+        // ====================================================================
+        // Jacobi 特征分解回归测试
+        // ====================================================================
+        internal static class JacobiEigenTest
+        {
+            public class TestResult
+            {
+                public string TestName;
+                public bool Passed;
+                public string Detail;
+            }
+
+            public static List<TestResult> RunAll()
+            {
+                var results = new List<TestResult>();
+                results.Add(TestEqualDiagonalRotation());
+                results.Add(TestSmallScale());
+                results.Add(TestUltraSmallScale());
+                results.Add(TestLargeScale());
+                results.Add(TestOrthogonality());
+                return results;
+            }
+
+            public static void RunAllAndLog()
+            {
+                var results = RunAll();
+                int passed = results.Count(r => r.Passed);
+                RhinoApp.WriteLine("=== Jacobi 特征分解回归测试 " + passed + "/" + results.Count + " 通过 ===");
+                foreach (var r in results)
+                    RhinoApp.WriteLine((r.Passed ? "[PASS] " : "[FAIL] ") + r.TestName + " — " + r.Detail);
+            }
+
+            // 场景1：等对角非零耦合矩阵 [[a,b],[b,a]] — 验证 Math.Sign(0) 不再导致旋转失效
+            private static TestResult TestEqualDiagonalRotation()
+            {
+                try
+                {
+                    double[,] mat = new double[3, 3]
+                    {
+                        { 2.0, 1.0, 0.0 },
+                        { 1.0, 2.0, 0.0 },
+                        { 0.0, 0.0, 1.0 }
+                    };
+                    JacobiEigenSolver.SolveSymmetric(mat, out double[] eval, out Vector3d[] evec);
+                    // 理论特征值：3, 1, 1（看 2×2 子块 [[2,1],[1,2]] → λ=3,1）
+                    Array.Sort(eval);
+                    bool eigenOk = Math.Abs(eval[0] - 1.0) < 1e-10 &&
+                                   Math.Abs(eval[1] - 1.0) < 1e-10 &&
+                                   Math.Abs(eval[2] - 3.0) < 1e-10;
+                    // 特征向量应接近 (±1/√2, ±1/√2, 0)、(0,0,1) 方向
+                    double r2 = Math.Sqrt(0.5);
+                    bool vecOk = false;
+                    foreach (var ev in evec)
+                    {
+                        if (Math.Abs(Math.Abs(ev.Z) - 1.0) < 1e-10) continue; // (0,0,±1)
+                        if (Math.Abs(Math.Abs(ev.X) - r2) < 1e-10 &&
+                            Math.Abs(Math.Abs(ev.Y) - r2) < 1e-10 &&
+                            Math.Abs(ev.Z) < 1e-10)
+                        { vecOk = true; break; }
+                    }
+                    bool passed = eigenOk && vecOk;
+                    return new TestResult
+                    {
+                        TestName = "等对角非零耦合矩阵",
+                        Passed = passed,
+                        Detail = passed
+                            ? "OK λ=" + string.Join(",", eval.Select(v => v.ToString("F6", CultureInfo.InvariantCulture)))
+                            : "特征值期望 1,1,3 实际 " + string.Join(",", eval.Select(v => v.ToString("F6", CultureInfo.InvariantCulture)))
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new TestResult { TestName = "等对角非零耦合矩阵", Passed = false, Detail = ex.GetType().Name + ": " + ex.Message };
+                }
+            }
+
+            // 场景2：极小尺度矩阵 — 验证相对阈值不因绝对值而提前退出
+            private static TestResult TestSmallScale()
+            {
+                try
+                {
+                    double s = 1e-6;
+                    double[,] mat = new double[3, 3]
+                    {
+                        { 3.0 * s, 0.5 * s, 0.0 },
+                        { 0.5 * s, 2.0 * s, 0.0 },
+                        { 0.0, 0.0, 1.0 * s }
+                    };
+                    JacobiEigenSolver.SolveSymmetric(mat, out double[] eval, out Vector3d[] evec);
+                    // 验证特征值按相对误差正确（非绝对误差）
+                    Array.Sort(eval);
+                    // 理论：子块 [[3,0.5],[0.5,2]] → λ ≈ 3.207, 1.793（按 1e-6 缩放）
+                    double e1T = 1.0e-6, e2T = 1.792893e-6, e3T = 3.207107e-6;
+                    bool eigenOk = Math.Abs(eval[0] - e1T) / Math.Abs(e1T) < 1e-10 &&
+                                   Math.Abs(eval[1] - e2T) / Math.Abs(e2T) < 1e-10 &&
+                                   Math.Abs(eval[2] - e3T) / Math.Abs(e3T) < 1e-10;
+                    return new TestResult
+                    {
+                        TestName = "极小尺度矩阵(" + s.ToString("E0", CultureInfo.InvariantCulture) + ")",
+                        Passed = eigenOk,
+                        Detail = eigenOk
+                            ? "OK"
+                            : "特征值 " + string.Join(",", eval.Select(v => v.ToString("E6", CultureInfo.InvariantCulture)))
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new TestResult { TestName = "极小尺度矩阵", Passed = false, Detail = ex.GetType().Name + ": " + ex.Message };
+                }
+            }
+
+            // 场景2b：超小尺度矩阵 s=1e-13 — 旧代码因 max<1e-12*Math.Max(scale,1.0) 直接退出，
+            // 非对角元 5e-14 < 1e-12 导致未对角化。新代码用 Frobenius 范数后阈值 ≈3.8e-27，正常迭代。
+            private static TestResult TestUltraSmallScale()
+            {
+                try
+                {
+                    double s = 1e-13;
+                    double[,] mat = new double[3, 3]
+                    {
+                        { 3.0 * s, 0.5 * s, 0.0 },
+                        { 0.5 * s, 2.0 * s, 0.0 },
+                        { 0.0, 0.0, 1.0 * s }
+                    };
+                    // 非对角元 = 5e-14，旧阈值 1e-12*max(3e-13,1)=1e-12 → 5e-14<1e-12 → 提前退出
+                    // 新阈值 1e-14*frobNorm，frobNorm≈3.8e-13 → 阈值≈3.8e-27 → 5e-14>>3.8e-27 → 正常迭代
+                    JacobiEigenSolver.SolveSymmetric(mat, out double[] eval, out Vector3d[] evec);
+                    Array.Sort(eval);
+                    // 理论特征值（同场景2结构，按 1e-13 缩放）
+                    double e1T = 1.0e-13, e2T = 1.792893e-13, e3T = 3.207107e-13;
+                    // 必须用相对误差验证：绝对误差 1e-12 对 1e-13 级特征值毫无意义
+                    bool eigenOk = Math.Abs(eval[0] - e1T) / Math.Abs(e1T) < 1e-10 &&
+                                   Math.Abs(eval[1] - e2T) / Math.Abs(e2T) < 1e-10 &&
+                                   Math.Abs(eval[2] - e3T) / Math.Abs(e3T) < 1e-10;
+                    // 验证残差也按相对范数通过（而非因绝对值 < 1e-8 而误判通过）
+                    // SolveSymmetric 内部已校验残差 < 1e-8*frobNorm，此处不抛异常即通过
+                    return new TestResult
+                    {
+                        TestName = "超小尺度矩阵(" + s.ToString("E0", CultureInfo.InvariantCulture) + ")",
+                        Passed = eigenOk,
+                        Detail = eigenOk
+                            ? "OK λ=" + string.Join(",", eval.Select(v => v.ToString("E3", CultureInfo.InvariantCulture)))
+                            : "特征值 " + string.Join(",", eval.Select(v => v.ToString("E6", CultureInfo.InvariantCulture))) +
+                              "（旧代码会返回未对角化对角元 " + (3.0 * s).ToString("E3", CultureInfo.InvariantCulture) + "," +
+                              (2.0 * s).ToString("E3", CultureInfo.InvariantCulture) + "," +
+                              (1.0 * s).ToString("E3", CultureInfo.InvariantCulture) + "）"
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new TestResult { TestName = "超小尺度矩阵", Passed = false, Detail = ex.GetType().Name + ": " + ex.Message };
+                }
+            }
+
+            // 场景3：极大尺度矩阵 — 验证相对阈值正常收敛
+            private static TestResult TestLargeScale()
+            {
+                try
+                {
+                    double s = 1e8;
+                    double[,] mat = new double[3, 3]
+                    {
+                        { 300.0 * s, 50.0 * s, 0.0 },
+                        { 50.0 * s, 200.0 * s, 0.0 },
+                        { 0.0, 0.0, 100.0 * s }
+                    };
+                    JacobiEigenSolver.SolveSymmetric(mat, out double[] eval, out Vector3d[] evec);
+                    Array.Sort(eval);
+                    // 理论：子块 [[300,50],[50,200]] → λ ≈ 320.71, 179.29（按 1e8 缩放）
+                    double e1T = 100.0e8, e2T = 179.2893e8, e3T = 320.7107e8;
+                    bool eigenOk = Math.Abs(eval[0] - e1T) < 1e-2 &&
+                                   Math.Abs(eval[1] - e2T) < 1.0 &&
+                                   Math.Abs(eval[2] - e3T) < 1.0;
+                    bool passed = eigenOk;
+                    return new TestResult
+                    {
+                        TestName = "极大尺度矩阵(" + s.ToString("E0", CultureInfo.InvariantCulture) + ")",
+                        Passed = passed,
+                        Detail = passed
+                            ? "OK"
+                            : "特征值 " + string.Join(",", eval.Select(v => v.ToString("E6", CultureInfo.InvariantCulture)))
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new TestResult { TestName = "极大尺度矩阵", Passed = false, Detail = ex.GetType().Name + ": " + ex.Message };
+                }
+            }
+
+            // 场景4：验证特征向量正交性
+            private static TestResult TestOrthogonality()
+            {
+                try
+                {
+                    double[,] mat = new double[3, 3]
+                    {
+                        { 5.0, 2.0, 1.0 },
+                        { 2.0, 4.0, 3.0 },
+                        { 1.0, 3.0, 6.0 }
+                    };
+                    JacobiEigenSolver.SolveSymmetric(mat, out _, out Vector3d[] evec);
+                    // 检查两两正交
+                    double d01 = Math.Abs(evec[0] * evec[1]);
+                    double d02 = Math.Abs(evec[0] * evec[2]);
+                    double d12 = Math.Abs(evec[1] * evec[2]);
+                    bool passed = d01 < 1e-12 && d02 < 1e-12 && d12 < 1e-12;
+                    return new TestResult
+                    {
+                        TestName = "特征向量正交性",
+                        Passed = passed,
+                        Detail = passed
+                            ? "OK |v0·v1|=" + d01.ToString("E2", CultureInfo.InvariantCulture) +
+                              " |v0·v2|=" + d02.ToString("E2", CultureInfo.InvariantCulture) +
+                              " |v1·v2|=" + d12.ToString("E2", CultureInfo.InvariantCulture)
+                            : "正交性失败"
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new TestResult { TestName = "特征向量正交性", Passed = false, Detail = ex.GetType().Name + ": " + ex.Message };
+                }
+            }
+        }
+
+        // ====================================================================
+        // 极小外轮廓面积容差回归测试
+        // ====================================================================
+        internal static class WbTinyOuterProfileTest
+        {
+            public sealed class TestResult
+            {
+                public string TestName;
+                public bool Passed;
+                public string Detail;
+            }
+
+            public static List<TestResult> RunAll()
+            {
+                var results = new List<TestResult>();
+                results.Add(TestTinyAreaRejected());
+                results.Add(TestEndToEndFallbackTolerance());
+                return results;
+            }
+
+            public static void Run()
+            {
+                var results = RunAll();
+                int passed = results.Count(r => r.Passed);
+                RhinoApp.WriteLine("=== 极小外轮廓面积容差回归测试 " + passed + "/" + results.Count + " 通过 ===");
+                foreach (var r in results)
+                    RhinoApp.WriteLine((r.Passed ? "[PASS] " : "[FAIL] ") + r.TestName + " — " + r.Detail);
+            }
+
+            // 修改后的语义：外轮廓已不参与匹配（硬否决移除），仅靠其余判据。
+            // 本例两个零件除外轮廓外完全相同且所有判据关闭、0 孔 → Matches 应为 true。
+            private static TestResult TestTinyAreaRejected()
+            {
+                try
+                {
+                    double fallbackTol = 0.001;
+                    double outerAreaRatio = 0.0001;
+
+                    var profileA = new WbOuterProfile { Area = 0.0001, Perimeter = 100, NU = 1, NV = 0, NW = 0 };
+                    var profileB = new WbOuterProfile { Area = 0.00015, Perimeter = 100, NU = 1, NV = 0, NW = 0 };
+
+                    var featureA = new WbFeature
+                    {
+                        Material = "Steel", Color = "Red",
+                        BoundingBox = new[] { 100.0, 80.0, 60.0 },
+                        Area = 5000, Volume = 1000,
+                        Inertia = new[] { 2000.0, 1990.0, 500.0 },
+                        Holes = new List<WbHole>(),
+                        OuterProfiles = new List<WbOuterProfile> { profileA }
+                    };
+
+                    var featureB = new WbFeature
+                    {
+                        Material = "Steel", Color = "Red",
+                        BoundingBox = new[] { 100.0, 80.0, 60.0 },
+                        Area = 5000, Volume = 1000,
+                        Inertia = new[] { 2000.0, 1990.0, 500.0 },
+                        Holes = new List<WbHole>(),
+                        OuterProfiles = new List<WbOuterProfile> { profileB }
+                    };
+
+                    // 关闭所有其他判据，仅靠外轮廓面积容差判定
+                    var enabled = new Dictionary<V5Criterion, bool>
+                    {
+                        { V5Criterion.Length, false }, { V5Criterion.Volume, false },
+                        { V5Criterion.Inertia, false }, { V5Criterion.EdgeSum, false },
+                        { V5Criterion.HoleArea, false }, { V5Criterion.HolePosition, false }
+                    };
+                    var tolerances = new Dictionary<V5Criterion, double>
+                    {
+                        { V5Criterion.Length, 0.0 }, { V5Criterion.Volume, 0.0 },
+                        { V5Criterion.Inertia, 0.0 }, { V5Criterion.EdgeSum, 0.0 },
+                        { V5Criterion.HoleArea, 0.0 }, { V5Criterion.HolePosition, 0.0 }
+                    };
+                    var isRel = new Dictionary<V5Criterion, bool>
+                    {
+                        { V5Criterion.Length, true }, { V5Criterion.Volume, true },
+                        { V5Criterion.Inertia, true }, { V5Criterion.EdgeSum, true },
+                        { V5Criterion.HoleArea, true }, { V5Criterion.HolePosition, true }
+                    };
+
+                    bool matches = WbMigrationAudit.Matches(featureA, featureB,
+                        enabled, tolerances, isRel,
+                        strictMaterialColor: false, normalTol: 0.99,
+                        outerAreaRatio, outerPerimMin: 0.01,
+                        fallbackTolerance: fallbackTol);
+
+                    // 外轮廓已不参与匹配，除外轮廓外完全相同 → Matches 应为 true
+                    bool expected = true;
+                    bool passed = matches == expected;
+
+                    return new TestResult
+                    {
+                        TestName = "极小外轮廓面积→不再否决匹配",
+                        Passed = passed,
+                        Detail = passed
+                            ? "OK — 外轮廓不参与匹配后，其余特征完全一致，正确放行"
+                            : "失败 — 预期放行但 Matches=" + matches
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new TestResult
+                    {
+                        TestName = "极小外轮廓面积→不再否决匹配",
+                        Passed = false,
+                        Detail = ex.GetType().Name + ": " + ex.Message
+                    };
+                }
+            }
+
+            // 外轮廓已不参与匹配判定，两个零件除外轮廓外完全相同（0 孔、同材质颜色包围盒惯量体积）
+            // → 无论 fallbackTolerance 取何值，均应聚为 1 类。
+            private static TestResult TestEndToEndFallbackTolerance()
+            {
+                try
+                {
+                    var profileA = new WbOuterProfile { Area = 0.000001, Perimeter = 100, NU = 1, NV = 0, NW = 0 };
+                    var profileB = new WbOuterProfile { Area = 0.00001, Perimeter = 100, NU = 1, NV = 0, NW = 0 };
+
+                    var enabled = WbDegenerateMatchingTest.AllEnabled();
+                    var tolerances = WbDegenerateMatchingTest.DefaultTolerances();
+                    var isRel = WbDegenerateMatchingTest.DefaultIsRel();
+                    double outerAreaRatio = 0.01;
+                    double outerPerimMin = 0.01;
+
+                    var featureA = new WbFeature
+                    {
+                        Material = "Steel", Color = "Red",
+                        BoundingBox = new[] { 100.0, 80.0, 60.0 },
+                        Area = 5000, Volume = 1000,
+                        Inertia = new[] { 2000.0, 1990.0, 500.0 },
+                        Holes = new List<WbHole>(),
+                        OuterProfiles = new List<WbOuterProfile> { profileA }
+                    };
+
+                    var featureB = new WbFeature
+                    {
+                        Material = "Steel", Color = "Red",
+                        BoundingBox = new[] { 100.0, 80.0, 60.0 },
+                        Area = 5000, Volume = 1000,
+                        Inertia = new[] { 2000.0, 1990.0, 500.0 },
+                        Holes = new List<WbHole>(),
+                        OuterProfiles = new List<WbOuterProfile> { profileB }
+                    };
+
+                    var records = new List<WbMigrationRecord>
+                    {
+                        new WbMigrationRecord(0, "P1", featureA, "test.3dm"),
+                        new WbMigrationRecord(1, "P2", featureB, "test.3dm")
+                    };
+
+                    // 外轮廓不参与匹配后，两者除外轮廓外完全相同 → 均应聚为 1 类
+                    var auditStrict = WbMigrationAudit.Create(records, enabled, tolerances, isRel,
+                        strictMaterialColor: false, holeNormalTolerance: 0.99,
+                        outerProfileAreaRatio: outerAreaRatio, outerProfilePerimeterMin: outerPerimMin,
+                        fallbackTolerance: 0.001);
+                    bool strictClustered = auditStrict.Classes.Count == 1;
+
+                    var auditLoose = WbMigrationAudit.Create(records, enabled, tolerances, isRel,
+                        strictMaterialColor: false, holeNormalTolerance: 0.99,
+                        outerProfileAreaRatio: outerAreaRatio, outerProfilePerimeterMin: outerPerimMin,
+                        fallbackTolerance: 0.1);
+                    bool looseClustered = auditLoose.Classes.Count == 1;
+
+                    bool passed = strictClustered && looseClustered;
+                    return new TestResult
+                    {
+                        TestName = "端到端：外轮廓差异不再影响聚类",
+                        Passed = passed,
+                        Detail = passed
+                            ? "OK — tol=0.001→" + auditStrict.Classes.Count + "类, tol=0.1→" + auditLoose.Classes.Count + "类"
+                            : "tol=0.001→" + auditStrict.Classes.Count + "类(期望1), tol=0.1→" + auditLoose.Classes.Count + "类(期望1)"
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new TestResult
+                    {
+                        TestName = "端到端：fallbackTolerance 穿透聚类",
+                        Passed = false,
+                        Detail = ex.GetType().Name + ": " + ex.Message
+                    };
+                }
             }
         }
 
@@ -3874,9 +3176,9 @@ namespace NS_Parrot
             Dictionary<V5Criterion, bool> isRel, double mirrorTol, bool strictMat,
             double normalTol, double outerArea, double outerPerim)
         {
-            return WbMigrationAudit.GeometryMatches(a, b, e, t, isRel, false, normalTol,
-                outerArea, outerPerim) &&
-                SameMirrorCode(a, b, mirrorTol);
+            return WbMigrationAudit.GlobalMatches(a, b, e, t, isRel, strictMat) &&
+                   WbMigrationAudit.GeometryMatches(a, b, e, t, isRel, false, normalTol,
+                       outerArea, outerPerim);
         }
 
         private static bool MirrorMatches(WbFeature a, WbFeature b,
@@ -3884,9 +3186,405 @@ namespace NS_Parrot
             Dictionary<V5Criterion, bool> isRel, double mirrorTol, bool strictMat,
             double normalTol, double outerArea, double outerPerim)
         {
+            if (!WbMigrationAudit.GlobalMatches(a, b, e, t, isRel, strictMat))
+                return false;
+            // 非镜像变换下已匹配 → 本就是同件，不应再标为镜像关系
+            if (WbMigrationAudit.GeometryMatches(a, b, e, t, isRel, false, normalTol,
+                outerArea, outerPerim))
+                return false;
             return WbMigrationAudit.GeometryMatches(a, b, e, t, isRel, true, normalTol,
-                outerArea, outerPerim) &&
-                !SameMirrorCode(a, b, mirrorTol);
+                outerArea, outerPerim);
+        }
+    }
+
+    // ========================================================================
+    // 迁移完整性回归测试（建库清理、日志落盘）
+    // ========================================================================
+    internal static class WbMigrationStoreTest
+    {
+        public sealed class TestResult
+        {
+            public string TestName;
+            public bool Passed;
+            public string Detail;
+        }
+
+        public static List<TestResult> RunAll()
+        {
+            var results = new List<TestResult>();
+            results.Add(TestExistingDbNotDeletedOnCreateFailure());
+            results.Add(TestWriteLogToFilePreservesOriginalError());
+            return results;
+        }
+
+        /// <summary>
+        /// 测试1：已有数据库文件在创建失败时不被误删
+        /// 直接调用 WbCreateMigrationDatabase.CreateEmptyDatabaseAt，
+        /// 验证"目标已存在"异常路径下 createdByThisRun 为 false，不触发误删。
+        /// </summary>
+        private static TestResult TestExistingDbNotDeletedOnCreateFailure()
+        {
+            string tmpDir = null;
+            try
+            {
+                tmpDir = Path.Combine(Path.GetTempPath(),
+                    "wb_migstore_test_" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(tmpDir);
+                string dbPath = Path.Combine(tmpDir, "existing.db");
+                File.WriteAllText(dbPath, "ORIGINAL_CONTENT", Encoding.UTF8);
+
+                // 调用生产代码的共享方法
+                bool createdByThisRun = false;
+                bool threwExpectedException = false;
+                try
+                {
+                    WbCreateMigrationDatabase.CreateEmptyDatabaseAt(dbPath,
+                        out createdByThisRun);
+                }
+                catch (InvalidOperationException)
+                {
+                    threwExpectedException = true;
+                    if (createdByThisRun)
+                        File.Delete(dbPath);
+                }
+                catch
+                {
+                    if (createdByThisRun)
+                        File.Delete(dbPath);
+                }
+
+                bool stillExists = File.Exists(dbPath);
+                string content = stillExists
+                    ? File.ReadAllText(dbPath, Encoding.UTF8) : null;
+
+                // 清理
+                try { Directory.Delete(tmpDir, true); } catch { }
+
+                bool passed = stillExists
+                    && content == "ORIGINAL_CONTENT"
+                    && threwExpectedException
+                    && !createdByThisRun;
+
+                string detail;
+                if (!threwExpectedException)
+                    detail = "失败 — 未抛出预期的 InvalidOperationException";
+                else if (createdByThisRun)
+                    detail = "失败 — createdByThisRun=true，应保持 false";
+                else if (!stillExists)
+                    detail = "失败 — 已有文件被误删";
+                else if (content != "ORIGINAL_CONTENT")
+                    detail = "失败 — 文件内容被修改: " + (content ?? "null");
+                else
+                    detail = "OK — InvalidOperationException 抛出，createdByThisRun=false，已有文件完整保留";
+
+                return new TestResult
+                {
+                    TestName = "建库:已有文件不误删",
+                    Passed = passed,
+                    Detail = detail
+                };
+            }
+            catch (Exception ex)
+            {
+                try { if (tmpDir != null) Directory.Delete(tmpDir, true); } catch { }
+                return new TestResult
+                {
+                    TestName = "建库:已有文件不误删",
+                    Passed = false,
+                    Detail = ex.GetType().Name + ": " + ex.Message
+                };
+            }
+        }
+
+        /// <summary>
+        /// 测试2：WriteLogToFile 将日志落盘到数据库同目录，内容包含原始错误
+        /// 注意：本测试仅验证日志写入方法本身；完整的"入库异常→写日志→ResetMigration"路径
+        /// 需要在 GH 组件实例级别测试（当前回归测试框架不涵盖 GH_Component 生命周期）。
+        /// </summary>
+        private static TestResult TestWriteLogToFilePreservesOriginalError()
+        {
+            string tmpDir = null;
+            try
+            {
+                tmpDir = Path.Combine(Path.GetTempPath(),
+                    "wb_log_test_" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(tmpDir);
+                string dbPath = Path.Combine(tmpDir, "lib.db");
+                File.WriteAllText(dbPath, "dummy", Encoding.UTF8);
+
+                var logs = new List<string>
+                {
+                    "聚类/入库阶段失败：测试模拟异常",
+                    "详细：在 WriteFinalLogs 阶段发生 InvalidOperationException"
+                };
+
+                string logPath = WbClassificationMigration.WriteLogToFile(dbPath, logs);
+
+                bool fileCreated = logPath != null && File.Exists(logPath);
+                bool contentOk = false;
+                if (fileCreated)
+                {
+                    string content = File.ReadAllText(logPath, Encoding.UTF8);
+                    contentOk = content.Contains("聚类/入库阶段失败")
+                        && content.Contains("测试模拟异常");
+                }
+
+                // 清理
+                if (logPath != null)
+                    try { if (File.Exists(logPath)) File.Delete(logPath); } catch { }
+                try { File.Delete(dbPath); Directory.Delete(tmpDir, true); } catch { }
+
+                return new TestResult
+                {
+                    TestName = "日志:WriteLogToFile落盘含原始错误",
+                    Passed = fileCreated && contentOk,
+                    Detail = fileCreated
+                        ? (contentOk
+                            ? "OK — 日志文件已生成且包含原始错误信息"
+                            : "失败 — 日志文件存在但不包含原始错误")
+                        : "失败 — 未生成 TXT 日志文件"
+                };
+            }
+            catch (Exception ex)
+            {
+                try { if (tmpDir != null) Directory.Delete(tmpDir, true); } catch { }
+                return new TestResult
+                {
+                    TestName = "日志:WriteLogToFile落盘含原始错误",
+                    Passed = false,
+                    Detail = ex.GetType().Name + ": " + ex.Message
+                };
+            }
+        }
+    }
+
+    // ========================================================================
+    // WbClassificationSettings.TryParse 回归测试
+    // ========================================================================
+    internal static class WbSettingsParseTest
+    {
+        public sealed class TestResult
+        {
+            public string TestName;
+            public bool Passed;
+            public string Detail;
+        }
+
+        public static List<TestResult> RunAll()
+        {
+            var results = new List<TestResult>();
+            results.Add(TestEdgeSumRoundTrip());
+            results.Add(TestEdgesSumOldSpellingCompat());
+            results.Add(TestInvalidValueRejected());
+            return results;
+        }
+
+        /// <summary>
+        /// 测试：EdgeSum 自定义值序列化后可完整恢复。
+        /// 验证 bool/tol/isRel 经过 SettingsText → TryParse 往返后值完全一致。
+        /// </summary>
+        private static TestResult TestEdgeSumRoundTrip()
+        {
+            try
+            {
+                var s = new WbClassificationSettings();
+                s.Enabled[V5Criterion.EdgeSum] = true;
+                s.Tolerances[V5Criterion.EdgeSum] = 3.5;
+                s.IsRelativeTolerance[V5Criterion.EdgeSum] = true;
+
+                // 其余准则设非默认值避免巧合
+                s.Enabled[V5Criterion.Length] = false;
+                s.Tolerances[V5Criterion.Length] = 1.2;
+                s.IsRelativeTolerance[V5Criterion.Length] = false;
+                s.Enabled[V5Criterion.Inertia] = true;
+                s.Tolerances[V5Criterion.Inertia] = 0.8;
+                s.IsRelativeTolerance[V5Criterion.Inertia] = true;
+                s.Enabled[V5Criterion.Volume] = false;
+                s.Tolerances[V5Criterion.Volume] = 2.0;
+                s.IsRelativeTolerance[V5Criterion.Volume] = false;
+                s.Enabled[V5Criterion.HoleArea] = true;
+                s.Tolerances[V5Criterion.HoleArea] = 5.0;
+                s.IsRelativeTolerance[V5Criterion.HoleArea] = false;
+                s.Enabled[V5Criterion.HolePosition] = true;
+                s.Tolerances[V5Criterion.HolePosition] = 0.25;
+                s.IsRelativeTolerance[V5Criterion.HolePosition] = false;
+
+                string text = s.SettingsText();
+                if (!WbClassificationSettings.TryParse(text, out WbClassificationSettings parsed))
+                    return new TestResult
+                    {
+                        TestName = "SettingsParse:EdgeSum往返恢复",
+                        Passed = false,
+                        Detail = "TryParse 返回 false"
+                    };
+
+                // 验证六准则
+                var criteria = new[] { V5Criterion.Length, V5Criterion.Inertia, V5Criterion.Volume,
+                    V5Criterion.EdgeSum, V5Criterion.HoleArea, V5Criterion.HolePosition };
+                foreach (var c in criteria)
+                {
+                    if (parsed.Enabled[c] != s.Enabled[c])
+                        return new TestResult
+                        {
+                            TestName = "SettingsParse:EdgeSum往返恢复",
+                            Passed = false,
+                            Detail = c + " Enabled 不一致: 期望 " + s.Enabled[c] + "，实际 " + parsed.Enabled[c]
+                        };
+                    if (Math.Abs(parsed.Tolerances[c] - s.Tolerances[c]) > 1e-15)
+                        return new TestResult
+                        {
+                            TestName = "SettingsParse:EdgeSum往返恢复",
+                            Passed = false,
+                            Detail = c + " Tolerance 不一致: 期望 " + s.Tolerances[c] + "，实际 " + parsed.Tolerances[c]
+                        };
+                    if (parsed.IsRelativeTolerance[c] != s.IsRelativeTolerance[c])
+                        return new TestResult
+                        {
+                            TestName = "SettingsParse:EdgeSum往返恢复",
+                            Passed = false,
+                            Detail = c + " IsRelative 不一致: 期望 " + s.IsRelativeTolerance[c] + "，实际 " + parsed.IsRelativeTolerance[c]
+                        };
+                }
+
+                return new TestResult
+                {
+                    TestName = "SettingsParse:EdgeSum往返恢复",
+                    Passed = true,
+                    Detail = "OK — 六准则全部完整恢复，EdgeSum=" + parsed.Enabled[V5Criterion.EdgeSum] +
+                             ",tol=" + parsed.Tolerances[V5Criterion.EdgeSum].ToString("R", CultureInfo.InvariantCulture) +
+                             (parsed.IsRelativeTolerance[V5Criterion.EdgeSum] ? "%" : "")
+                };
+            }
+            catch (Exception ex)
+            {
+                return new TestResult
+                {
+                    TestName = "SettingsParse:EdgeSum往返恢复",
+                    Passed = false,
+                    Detail = ex.GetType().Name + ": " + ex.Message
+                };
+            }
+        }
+
+        /// <summary>
+        /// 测试：旧拼写 EdgesSum（多一个 s）可被兼容识别。
+        /// 构造含 "EdgesSum" 键的字符串，验证 TryParse 能解析并正确映射到 EdgeSum。
+        /// </summary>
+        private static TestResult TestEdgesSumOldSpellingCompat()
+        {
+            try
+            {
+                // 构造 SettingsText 字符串但将 EdgeSum 替换为旧拼写 EdgesSum
+                var s = new WbClassificationSettings();
+                s.Enabled[V5Criterion.EdgeSum] = true;
+                s.Tolerances[V5Criterion.EdgeSum] = 3.0;
+                s.IsRelativeTolerance[V5Criterion.EdgeSum] = true;
+                string text = s.SettingsText();
+
+                // 确保替换只影响准则键，不误改其他字段
+                int edgeIdx = text.IndexOf("EdgeSum=", StringComparison.Ordinal);
+                if (edgeIdx < 0)
+                    return new TestResult
+                    {
+                        TestName = "SettingsParse:EdgesSum旧拼写兼容",
+                        Passed = false,
+                        Detail = "SettingsText 中未找到 EdgeSum= 键"
+                    };
+
+                int endIdx = text.IndexOf(';', edgeIdx);
+                string compatText = text.Substring(0, edgeIdx) + "EdgesSum" + text.Substring(edgeIdx + 7, endIdx - edgeIdx - 7) + text.Substring(endIdx);
+
+                if (!WbClassificationSettings.TryParse(compatText, out WbClassificationSettings parsed))
+                    return new TestResult
+                    {
+                        TestName = "SettingsParse:EdgesSum旧拼写兼容",
+                        Passed = false,
+                        Detail = "TryParse 对 EdgesSum 旧拼写返回 false"
+                    };
+
+                if (!parsed.Enabled[V5Criterion.EdgeSum])
+                    return new TestResult
+                    {
+                        TestName = "SettingsParse:EdgesSum旧拼写兼容",
+                        Passed = false,
+                        Detail = "EdgesSum 旧拼写解析后 Enabled=false，期望 true"
+                    };
+                if (Math.Abs(parsed.Tolerances[V5Criterion.EdgeSum] - 3.0) > 1e-15)
+                    return new TestResult
+                    {
+                        TestName = "SettingsParse:EdgesSum旧拼写兼容",
+                        Passed = false,
+                        Detail = "EdgesSum 旧拼写解析后 Tolerance=" + parsed.Tolerances[V5Criterion.EdgeSum] + "，期望 3.0"
+                    };
+                if (!parsed.IsRelativeTolerance[V5Criterion.EdgeSum])
+                    return new TestResult
+                    {
+                        TestName = "SettingsParse:EdgesSum旧拼写兼容",
+                        Passed = false,
+                        Detail = "EdgesSum 旧拼写解析后 IsRelative=false，期望 true"
+                    };
+
+                return new TestResult
+                {
+                    TestName = "SettingsParse:EdgesSum旧拼写兼容",
+                    Passed = true,
+                    Detail = "OK — EdgesSum 旧拼写被正确映射为 EdgeSum，tol=3.0%"
+                };
+            }
+            catch (Exception ex)
+            {
+                return new TestResult
+                {
+                    TestName = "SettingsParse:EdgesSum旧拼写兼容",
+                    Passed = false,
+                    Detail = ex.GetType().Name + ": " + ex.Message
+                };
+            }
+        }
+
+        /// <summary>
+        /// 测试：任一必填项值非法时 TryParse 必须返回 false。
+        /// 构造 EdgeSum 的 bool 和 tol 均为非法字符串，验证不会静默套默认值。
+        /// </summary>
+        private static TestResult TestInvalidValueRejected()
+        {
+            try
+            {
+                var s = new WbClassificationSettings();
+                // 先获取合法文本，再注入损坏的 EdgeSum 项
+                string legal = s.SettingsText();
+                int edgeIdx = legal.IndexOf("EdgeSum=", StringComparison.Ordinal);
+                int endIdx = legal.IndexOf(';', edgeIdx);
+                // 替换 EdgeSum=True,tol=1% → EdgeSum=abc,tol=xyz
+                string corrupt = legal.Substring(0, edgeIdx)
+                    + "EdgeSum=abc,tol=xyz"
+                    + legal.Substring(endIdx);
+
+                bool parseOk = WbClassificationSettings.TryParse(corrupt, out WbClassificationSettings _);
+                if (parseOk)
+                    return new TestResult
+                    {
+                        TestName = "SettingsParse:非法值被拒绝",
+                        Passed = false,
+                        Detail = "EdgeSum=abc,tol=xyz 时 TryParse 错误地返回了 true，应返回 false"
+                    };
+
+                return new TestResult
+                {
+                    TestName = "SettingsParse:非法值被拒绝",
+                    Passed = true,
+                    Detail = "OK — 非法值 EdgeSum=abc,tol=xyz 被正确拒绝（TryParse 返回 false）"
+                };
+            }
+            catch (Exception ex)
+            {
+                return new TestResult
+                {
+                    TestName = "SettingsParse:非法值被拒绝",
+                    Passed = false,
+                    Detail = ex.GetType().Name + ": " + ex.Message
+                };
+            }
         }
     }
 
@@ -3896,70 +3594,72 @@ namespace NS_Parrot
     public sealed class WbClassificationMigration : GH_Component
     {
         private enum State { Idle, OpeningFile, AwaitingData }
+        /// <summary>
+        /// 迁移阶段：Extracting=提取中，Finalizing=提取完毕、待聚类入库。
+        /// 用于检查点恢复，避免重复提取已完成的文件。
+        /// </summary>
+        private enum SkipCategory { DataUnstable, EntityCountAbnormal, Timeout, Exception }
+
+        private readonly struct WbSkippedFileRecord
+        {
+            public readonly string FilePath;
+            public readonly string Reason;
+            public readonly SkipCategory Category;
+            public readonly int Index;  // 1-based
+            public readonly int Total;
+
+            public WbSkippedFileRecord(string filePath, string reason, SkipCategory category, int index, int total)
+            {
+                FilePath = filePath;
+                Reason = reason;
+                Category = category;
+                Index = index;
+                Total = total;
+            }
+
+            public override string ToString()
+            {
+                string cat = CategoryLabel(Category);
+                string pos = Index > 0
+                    ? string.Format(CultureInfo.InvariantCulture, "（第 {0}/{1} 个）", Index, Total)
+                    : "（从检查点恢复）";
+                return string.Format(CultureInfo.InvariantCulture,
+                    "  {0} — {1}{2}；原因：{3}", FilePath, cat, pos, Reason);
+            }
+        }
+
+        private static string CategoryLabel(SkipCategory category)
+        {
+            switch (category)
+            {
+                case SkipCategory.DataUnstable: return "数据未稳定";
+                case SkipCategory.EntityCountAbnormal: return "实体计数异常";
+                case SkipCategory.Timeout: return "等待超时";
+                case SkipCategory.Exception: return "异常崩溃";
+                default: return "未知";
+            }
+        }
 
         private const string SettingsChunk = "WbClassificationMigrationSettings";
 
-        private readonly Dictionary<V5Criterion, int> _decimals = new Dictionary<V5Criterion, int>
-        {
-            { V5Criterion.Length, 2 }, { V5Criterion.Inertia, 2 },
-            { V5Criterion.Area, 2 }, { V5Criterion.Volume, 2 },
-            { V5Criterion.EdgeSum, 2 }, { V5Criterion.HoleArea, 2 },
-            { V5Criterion.HolePosition, 4 }
-        };
-
-        // 注意：表面积(Area) 已从匹配中剔除，不参与校核
-        // 容差语义：_isRelativeTolerance[c]=true → % 相对误差；false → 绝对误差
-        // 孔位(HolePosition)固定为绝对误差，不可切换（见 IsAbsoluteOnlyCriterion 注释）
-        private readonly Dictionary<V5Criterion, bool> _isRelativeTolerance = new Dictionary<V5Criterion, bool>
-        {
-            { V5Criterion.Length, true }, { V5Criterion.Inertia, true },
-            { V5Criterion.Volume, true }, { V5Criterion.EdgeSum, true },
-            { V5Criterion.HoleArea, true }, { V5Criterion.HolePosition, false }
-        };
-
-        private readonly Dictionary<V5Criterion, bool> _enabled = new Dictionary<V5Criterion, bool>
-        {
-            { V5Criterion.Length, true }, { V5Criterion.Inertia, true },
-            { V5Criterion.Volume, true }, { V5Criterion.EdgeSum, true },
-            { V5Criterion.HoleArea, true }, { V5Criterion.HolePosition, true }
-        };
-
-        private readonly Dictionary<V5Criterion, double> _tolerances = new Dictionary<V5Criterion, double>
-        {
-            { V5Criterion.Length, 0.5 }, { V5Criterion.Inertia, 0.2 },
-            { V5Criterion.Volume, 0.5 }, { V5Criterion.EdgeSum, 1 },
-            { V5Criterion.HoleArea, 1 }, { V5Criterion.HolePosition, 0.5 }
-        };
-
-        // 镜像区分容差：HoleMirrorScore/MirrorScore 绝对值 <= 此值时不区分 A/B
-        private double _mirrorTolerance = 0.001;
-        // 非交互/headless 模式下 RhinoDoc.ActiveDoc==null 时的回退容差
-        private double _fallbackTolerance = 0.001;
-        // 惯量退化判定阈值：相邻主惯量比值超过此值时标记为退化件
-        private double _inertiaDegenerateRatio = 0.99;
-        // 孔法向兼容阈值：|cos| 低于此值不通过法向比较，默认 0.9986 (约 3°)
-        private double _holeNormalTolerance = 0.9986;
-        // 材质/颜色严格模式：true=空值不通配（双方均为空才匹配）
-        private bool _strictMaterialColor = true;
-        // 外轮廓面积相对容差：|A-B|/max(A,B,1) <= ratio 时通过
-        private double _outerProfileAreaRatio = 0.0001;
-        // 外轮廓周长最小绝对容差：max(tolerance, min) 的 min 值
-        private double _outerProfilePerimeterMin = 0.01;
-        // 退化孔孔位容差倍数：退化孔匹配时几何容差乘以此倍数
-        private double _degeneratePositionMultiplier = 2.0;
-        // 退化孔匹配开关：开启后使用拟合平面特征参与低置信度匹配（默认关）
-        private bool _enableDegenerateMatching;
+        // 注意：表面积(Area) 已从匹配中剔除，不参与校核，也不在右键菜单中显示。
+        // 设置与 WbEntityClassifier 共享；通过 WbClassificationSettings 统一管理。
+        private readonly WbClassificationSettings _settings = new WbClassificationSettings();
         // 迁移状态
         private bool _runRequested;
         private bool _paused;
+        private bool IsSettingsLocked => _runRequested || _paused || _state != State.Idle;
         private bool _lastRunInput;
         private State _state = State.Idle;
         private readonly List<string> _pendingFiles = new List<string>();
         private readonly List<WbMigrationRecord> _collectedRecords = new List<WbMigrationRecord>();
         private readonly List<string> _diagnostics = new List<string>();
         private int _fileIndex;
+        private WbMigrationPhase _checkpointPhase = WbMigrationPhase.Extracting;
         private int _waitingAttempts;
-        private int _failedFileCount;  // 迁移过程中失败跳过的文件数
+        private int _failedFileCount;  // 迁移过程中跳过/失败的文件数（含规则跳过与异常）
+        private readonly List<WbSkippedFileRecord> _skippedFiles = new List<WbSkippedFileRecord>();
+        private readonly List<string> _emptyFilePaths = new List<string>();
 
         // 数据稳定性检测
         private string _lastDataSignature = string.Empty;
@@ -3971,6 +3671,7 @@ namespace NS_Parrot
         private Timer _refreshTimer;
         private Timer _fileOpenTimer;
         private Timer _finalCloseTimer;
+        private List<string> _pendingLogs;
 
         private string _statusText = string.Empty;
         private string _pendingDatabasePath = string.Empty;
@@ -3991,6 +3692,8 @@ namespace NS_Parrot
             _fileIndex = 0;
             _waitingAttempts = 0;
             _failedFileCount = 0;
+            _skippedFiles.Clear();
+            _emptyFilePaths.Clear();
             _pendingDatabasePath = string.Empty;
             _runRequested = true;
             ScheduleRefresh(1500);
@@ -4017,7 +3720,7 @@ namespace NS_Parrot
         // ================================================================
         public WbClassificationMigration()
             : base("分类数据库迁移（WB）", "分类库迁移_WB",
-                  "从 3dm 文件提取实体、计算稳定特征、校核并写入 V8 分类数据库。",
+                  "从 3dm 文件提取实体、计算稳定特征、校核并写入 V9 分类数据库。",
                   "Parrot", "Library") { }
 
         public override void CreateAttributes()
@@ -4051,8 +3754,8 @@ namespace NS_Parrot
 
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager p)
         {
-            p.AddTextParameter("V8分类特征", "特征",
-                "本次计算并写入迁移库的标准 V8 特征。", GH_ParamAccess.list);
+            p.AddTextParameter("V9分类特征", "特征",
+                "本次计算并写入迁移库的标准 V9 特征。", GH_ParamAccess.list);
             p.AddTextParameter("日志", "日志",
                 "校核和迁移日志。", GH_ParamAccess.list);
             p.AddTextParameter("状态", "状态",
@@ -4116,7 +3819,10 @@ namespace NS_Parrot
             bool wasPaused = _paused;
             _paused = false;
             if (wasPaused && _state == State.OpeningFile)
+            {
+                _pendingLogs = logs;
                 ScheduleOpenCurrentFile();
+            }
 
             // 启动第一轮
             if (_runRequested)
@@ -4128,14 +3834,34 @@ namespace NS_Parrot
                     if (files.Count == 0)
                         throw new ArgumentException("文件路径不能为空。");
 
+                    // 每次启动时将当前右键设置保存到数据库
+                    {
+                        string settings = _settings.SettingsText();
+                        WbMigrationStore.SaveSettings(database, settings);
+                    }
+
                     // 尝试从检查点恢复
                     if (TryResumeCheckpoint(database, files))
                     {
+                        if (_checkpointPhase == WbMigrationPhase.Finalizing || _fileIndex >= _pendingFiles.Count)
+                        {
+                            // 所有文件已提取完毕，直接入库
+                            DoFinalizing(logs);
+                            _runRequested = false;
+                            da.SetDataList(0, new List<string>());
+                            da.SetDataList(1, logs);
+                            da.SetData(2, SafeFirstLog(logs));
+                            da.SetData(3, false);
+                            da.SetDataList(4, _diagnostics);
+                            return;
+                        }
+
                         _state = State.OpeningFile;
                         ResetDataStability();
                         _statusText = "从检查点恢复：打开第 " +
                             (_fileIndex + 1).ToString(CultureInfo.InvariantCulture) +
                             " / " + _pendingFiles.Count.ToString(CultureInfo.InvariantCulture) + " 个文件。";
+                        _pendingLogs = logs;
                         ScheduleOpenCurrentFile();
                         _runRequested = false;
                         logs.Add("已从检查点恢复迁移，继续处理第 " +
@@ -4143,7 +3869,7 @@ namespace NS_Parrot
                             " / " + _pendingFiles.Count.ToString(CultureInfo.InvariantCulture) + " 个文件。");
                         da.SetDataList(0, new List<string>());
                         da.SetDataList(1, logs);
-                        da.SetData(2, logs[0]);
+                        da.SetData(2, SafeFirstLog(logs));
                         da.SetData(3, false);
                         da.SetDataList(4, _diagnostics);
                         return;
@@ -4163,6 +3889,7 @@ namespace NS_Parrot
                     ResetDataStability();
                     _statusText = "准备打开第 1 / " +
                         _pendingFiles.Count.ToString(CultureInfo.InvariantCulture) + " 个文件。";
+                    _pendingLogs = logs;
                     ScheduleOpenCurrentFile();
                     logs.Add("已启动迁移；本轮求解结束后打开第 1 / " +
                         _pendingFiles.Count.ToString(CultureInfo.InvariantCulture) + " 个文件。");
@@ -4171,12 +3898,13 @@ namespace NS_Parrot
                 {
                     logs.Add("错误：" + ex.Message);
                     AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
+                    WriteLogToFile(_pendingDatabasePath, logs);
                     ResetMigration();
                 }
                 finally { _runRequested = false; }
                 da.SetDataList(0, featureTexts);
                 da.SetDataList(1, logs);
-                da.SetData(2, logs[0]);
+                da.SetData(2, SafeFirstLog(logs));
                 da.SetData(3, false);
                 return;
             }
@@ -4188,7 +3916,7 @@ namespace NS_Parrot
                     ? "等待在求解结束后打开当前文件。" : _statusText);
                 da.SetDataList(0, featureTexts);
                 da.SetDataList(1, logs);
-                da.SetData(2, logs[0]);
+                da.SetData(2, SafeFirstLog(logs));
                 da.SetData(3, false);
                 return;
             }
@@ -4217,13 +3945,14 @@ namespace NS_Parrot
             {
                 if (_dataCheckCount >= 20)
                 {
-                    logs.Add("跳过当前文件：旧编号和 GUID 未稳定；最后数量=" +
+                    RecordSkippedFile(logs, "编号和 GUID 数量=" +
                         numbers.Count.ToString(CultureInfo.InvariantCulture) + "/" +
-                        ids.Count.ToString(CultureInfo.InvariantCulture) + "。");
+                        ids.Count.ToString(CultureInfo.InvariantCulture),
+                        SkipCategory.DataUnstable);
                     saved = AdvanceFile(logs);
                     da.SetDataList(0, featureTexts);
                     da.SetDataList(1, logs);
-                    da.SetData(2, logs[0]);
+                    da.SetData(2, SafeFirstLog(logs));
                     da.SetData(3, saved);
                     return;
                 }
@@ -4234,21 +3963,22 @@ namespace NS_Parrot
                 ScheduleRefresh(500);
                 da.SetDataList(0, featureTexts);
                 da.SetDataList(1, logs);
-                da.SetData(2, logs[0]);
+                da.SetData(2, SafeFirstLog(logs));
                 da.SetData(3, false);
                 return;
             }
 
             if (numbers.Count > 1 || ids.Count > 1)
             {
-                logs.Add("跳过当前文件：旧编号数量=" +
+                RecordSkippedFile(logs, "编号数量=" +
                     numbers.Count.ToString(CultureInfo.InvariantCulture) +
                     "，GUID 数量=" + ids.Count.ToString(CultureInfo.InvariantCulture) +
-                    "；每个文件必须各有且只有 1 个。");
+                    "；每个文件必须各有且只有 1 个",
+                    SkipCategory.EntityCountAbnormal);
                 saved = AdvanceFile(logs);
                 da.SetDataList(0, featureTexts);
                 da.SetDataList(1, logs);
-                da.SetData(2, logs[0]);
+                da.SetData(2, SafeFirstLog(logs));
                 da.SetData(3, saved);
                 return;
             }
@@ -4258,20 +3988,36 @@ namespace NS_Parrot
                 _waitingAttempts++;
                 if (_waitingAttempts <= 50)
                 {
+                    // 第 5 次仍为空 → 判定为文件无实体，不再继续等待
+                    if (_waitingAttempts == 5 && _pendingFiles.Count > 0)
+                    {
+                        _emptyFilePaths.Add(_pendingFiles[_fileIndex]);
+                        logs.Add("文件未包含有效零件，已跳过：" +
+                            _pendingFiles[_fileIndex]);
+                        RecordSkippedFile(logs, "文件无实体",
+                            SkipCategory.Timeout);
+                        saved = AdvanceFile(logs);
+                        da.SetDataList(0, featureTexts);
+                        da.SetDataList(1, logs);
+                        da.SetData(2, SafeFirstLog(logs));
+                        da.SetData(3, saved);
+                        return;
+                    }
                     logs.Add("等待自动生成旧编号和 GUID（" +
                         _waitingAttempts.ToString(CultureInfo.InvariantCulture) + " / 50）。");
                     ScheduleRefresh(1500);
                     da.SetDataList(0, featureTexts);
                     da.SetDataList(1, logs);
-                    da.SetData(2, logs[0]);
+                    da.SetData(2, SafeFirstLog(logs));
                     da.SetData(3, false);
                     return;
                 }
-                logs.Add("跳过当前文件：等待超时。");
+                RecordSkippedFile(logs, "等待超时",
+                    SkipCategory.Timeout);
                 saved = AdvanceFile(logs);
                 da.SetDataList(0, featureTexts);
                 da.SetDataList(1, logs);
-                da.SetData(2, logs[0]);
+                da.SetData(2, SafeFirstLog(logs));
                 da.SetData(3, saved);
                 return;
             }
@@ -4296,7 +4042,7 @@ namespace NS_Parrot
                     Brep brep = ReadBrepFromActiveDocument(ids[i].Value, i);
                     WbFeature feature = WbFeature.Create(
                         TextAt(materials, i), TextAt(colors, i),
-                        brep, _decimals, _inertiaDegenerateRatio, _fallbackTolerance, _collectedRecords.Count);
+                        brep, _settings.InertiaDegenerateRatio, _settings.FallbackTolerance, _collectedRecords.Count);
                     _collectedRecords.Add(new WbMigrationRecord(
                         _collectedRecords.Count, numbers[i].Trim(),
                         feature, _pendingFiles[_fileIndex]));
@@ -4309,16 +4055,29 @@ namespace NS_Parrot
             }
             catch (Exception ex)
             {
-                _failedFileCount++;
-                logs.Add("跳过当前文件（" + _pendingFiles[_fileIndex] + "）：" + ex.Message);
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, ex.Message);
-                _diagnostics.Add("文件处理失败：" + _pendingFiles[_fileIndex] + " - " + ex.Message);
-                saved = AdvanceFile(logs);
+                if (_fileIndex < _pendingFiles.Count)
+                {
+                    RecordSkippedFile(logs, ex.Message, SkipCategory.Exception);
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, ex.Message);
+                    saved = AdvanceFile(logs);
+                }
+                else
+                {
+                    string msg = "聚类/入库阶段失败：" + ex.Message;
+                    logs.Add(msg);
+                    _diagnostics.Add(msg);
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, msg);
+                    saved = false;
+                    // 先落盘日志再重置（ResetMigration 会清空 _pendingDatabasePath）
+                    string dbForLog = _pendingDatabasePath;
+                    WriteLogToFile(dbForLog, logs);
+                    ResetMigration();
+                }
             }
 
             da.SetDataList(0, featureTexts);
             da.SetDataList(1, logs);
-            da.SetData(2, logs[0]);
+            da.SetData(2, SafeFirstLog(logs));
             da.SetData(3, saved);
             da.SetDataList(4, _diagnostics);
         }
@@ -4345,168 +4104,218 @@ namespace NS_Parrot
 
         private void SetCriterionEnabled(V5Criterion criterion, bool enabled)
         {
-            if (_enabled[criterion] == enabled)
+            if (IsSettingsLocked) return;
+            if (_settings.Enabled[criterion] == enabled)
                 return;
 
-            _enabled[criterion] = enabled;
+            _settings.Enabled[criterion] = enabled;
             MarkSettingsChanged();
         }
 
         private void SetCriterionTolerance(V5Criterion criterion, string text)
         {
+            if (IsSettingsLocked) return;
             if (!TryParseTolerance(text, out double value, out bool useAbsolute))
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "误差数值无法识别：" + text);
                 return;
             }
 
+            if (double.IsNaN(value) || double.IsInfinity(value))
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, CriterionDisplayName(criterion) + " 容差不能为 NaN 或无穷大：" + text);
+                return;
+            }
+
+            if (value < 0)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                    $"{CriterionDisplayName(criterion)} 容差为负值，已自动取绝对值。");
+
             value = Math.Abs(value);
             if (IsAbsoluteOnlyCriterion(criterion))
                 useAbsolute = true;
 
-            if (Math.Abs(_tolerances[criterion] - value) <= 1e-12 &&
-                _isRelativeTolerance[criterion] == !useAbsolute)
+            if (Math.Abs(_settings.Tolerances[criterion] - value) <= 1e-12 &&
+                _settings.IsRelativeTolerance[criterion] == !useAbsolute)
                 return;
 
-            _tolerances[criterion] = value;
-            _isRelativeTolerance[criterion] = !useAbsolute;
+            _settings.Tolerances[criterion] = value;
+            _settings.IsRelativeTolerance[criterion] = !useAbsolute;
             MarkSettingsChanged();
         }
 
-        private void SetMirrorTolerance(string text)
-        {
-            if (!TryParseTolerance(text, out double value, out bool _))
-            {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "镜像区分容差无法识别：" + text);
-                return;
-            }
-
-            value = Math.Abs(value);
-            if (Math.Abs(_mirrorTolerance - value) <= 1e-12)
-                return;
-
-            _mirrorTolerance = value;
-            MarkSettingsChanged();
-        }
 
         private void SetFallbackTolerance(string text)
         {
+            if (IsSettingsLocked) return;
             if (!TryParseTolerance(text, out double value, out bool _))
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "回退容差无法识别：" + text);
                 return;
             }
 
+            if (double.IsNaN(value) || double.IsInfinity(value))
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "回退容差不能为 NaN 或无穷大：" + text);
+                return;
+            }
+
+            if (value < 0)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "回退容差为负值，已自动取绝对值。");
+
             value = Math.Abs(value);
-            if (Math.Abs(_fallbackTolerance - value) <= 1e-12)
+            if (Math.Abs(_settings.FallbackTolerance - value) <= 1e-12)
                 return;
 
-            _fallbackTolerance = value;
+            _settings.FallbackTolerance = value;
             MarkSettingsChanged();
         }
 
         private void SetInertiaDegenerateRatio(string text)
         {
+            if (IsSettingsLocked) return;
             if (!double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out double value))
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "退化判定阈值无法识别：" + text);
                 return;
             }
 
-            value = Math.Max(0.5, Math.Min(1.0, value));
-            if (Math.Abs(_inertiaDegenerateRatio - value) <= 1e-12)
+            if (double.IsNaN(value) || double.IsInfinity(value))
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "退化判定阈值不能为 NaN 或无穷大：" + text);
+                return;
+            }
+
+            double clamped = Math.Max(0.5, Math.Min(1.0, value));
+            if (Math.Abs(clamped - value) > 1e-12)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                    $"退化判定阈值已自动限制在 0.5~1.0 范围内（输入 {value:G6} → {clamped:G6}）。");
+            value = clamped;
+
+            if (Math.Abs(_settings.InertiaDegenerateRatio - value) <= 1e-12)
                 return;
 
-            _inertiaDegenerateRatio = value;
+            _settings.InertiaDegenerateRatio = value;
             MarkSettingsChanged();
         }
 
         private void SetStrictMaterialColor(bool value)
         {
-            if (_strictMaterialColor == value) return;
-            _strictMaterialColor = value;
+            if (IsSettingsLocked) return;
+            if (_settings.StrictMaterialColor == value) return;
+            _settings.StrictMaterialColor = value;
             MarkSettingsChanged();
         }
 
         private void SetHoleNormalTolerance(string text)
         {
+            if (IsSettingsLocked) return;
             if (!double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out double value))
             {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "法向容差无法识别：" + text);
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "法向兼容阈值无法识别：" + text);
                 return;
             }
 
-            value = Math.Abs(value);
-            if (Math.Abs(_holeNormalTolerance - value) <= 1e-12)
+            if (double.IsNaN(value) || double.IsInfinity(value))
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "法向兼容阈值不能为 NaN 或无穷大：" + text);
+                return;
+            }
+
+            double clamped = Math.Max(0.0, Math.Min(1.0, value));
+            if (Math.Abs(clamped - value) > 1e-12)
+            {
+                string reason = value < 0 ? "负值" : value > 1 ? "超出上界" : "";
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                    $"法向兼容阈值超出 0~1 范围（{reason}），已自动限制（输入 {value:G6} → {clamped:G6}）。");
+            }
+            value = clamped;
+
+            if (Math.Abs(_settings.HoleNormalTolerance - value) <= 1e-12)
                 return;
 
-            _holeNormalTolerance = value;
+            _settings.HoleNormalTolerance = value;
             MarkSettingsChanged();
         }
 
         private void SetOuterProfileAreaRatio(string text)
         {
+            if (IsSettingsLocked) return;
             if (!double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out double value))
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "外轮廓面积容差无法识别：" + text);
                 return;
             }
-            value = Math.Max(0, value);
-            if (Math.Abs(_outerProfileAreaRatio - value) <= 1e-15) return;
-            _outerProfileAreaRatio = value;
+            if (double.IsNaN(value) || double.IsInfinity(value))
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "外轮廓面积容差不能为 NaN 或无穷大：" + text);
+                return;
+            }
+            double clamped = Math.Max(0, value);
+            if (Math.Abs(clamped - value) > 1e-15)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                    $"外轮廓面积容差不能为负，已自动修正为 0（输入 {value:G6} → {clamped:G6}）。");
+            value = clamped;
+            if (Math.Abs(_settings.OuterProfileAreaRatio - value) <= 1e-15) return;
+            _settings.OuterProfileAreaRatio = value;
             MarkSettingsChanged();
         }
 
         private void SetOuterProfilePerimeterMin(string text)
         {
+            if (IsSettingsLocked) return;
             if (!double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out double value))
             {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "外轮廓最小周长容差无法识别：" + text);
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "外轮廓周长最小容差无法识别：" + text);
                 return;
             }
-            value = Math.Max(0, value);
-            if (Math.Abs(_outerProfilePerimeterMin - value) <= 1e-15) return;
-            _outerProfilePerimeterMin = value;
+            if (double.IsNaN(value) || double.IsInfinity(value))
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "外轮廓周长最小容差不能为 NaN 或无穷大：" + text);
+                return;
+            }
+            double clamped = Math.Max(0, value);
+            if (Math.Abs(clamped - value) > 1e-15)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                    $"外轮廓周长最小容差不能为负，已自动修正为 0（输入 {value:G6} → {clamped:G6}）。");
+            value = clamped;
+            if (Math.Abs(_settings.OuterProfilePerimeterMin - value) <= 1e-15) return;
+            _settings.OuterProfilePerimeterMin = value;
             MarkSettingsChanged();
         }
 
         private void SetDegeneratePositionMultiplier(string text)
         {
+            if (IsSettingsLocked) return;
             if (!double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out double value))
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "退化孔容差倍数无法识别：" + text);
                 return;
             }
-            value = Math.Max(1.0, value);
-            if (Math.Abs(_degeneratePositionMultiplier - value) <= 1e-15) return;
-            _degeneratePositionMultiplier = value;
+            if (double.IsNaN(value) || double.IsInfinity(value))
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "退化孔容差倍数不能为 NaN 或无穷大：" + text);
+                return;
+            }
+            double clamped = Math.Max(1.0, value);
+            if (Math.Abs(clamped - value) > 1e-15)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                    $"退化孔容差倍数不能小于 1.0，已自动修正为 1.0（输入 {value:G6} → {clamped:G6}）。");
+            value = clamped;
+            if (Math.Abs(_settings.DegeneratePositionMultiplier - value) <= 1e-15) return;
+            _settings.DegeneratePositionMultiplier = value;
             MarkSettingsChanged();
         }
 
         private void SetEnableDegenerateMatching(bool value)
         {
-            if (_enableDegenerateMatching == value) return;
-            _enableDegenerateMatching = value;
+            if (IsSettingsLocked) return;
+            if (_settings.EnableDegenerateMatching == value) return;
+            _settings.EnableDegenerateMatching = value;
             MarkSettingsChanged();
         }
 
-        private void SetStorageDecimalPlaces(V5Criterion criterion, string text)
-        {
-            if (!TryParseStorageDecimalPlaces(text, out int value))
-            {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "入库精度无法识别：" + text);
-                return;
-            }
-
-            value = ClampStorageDecimalPlaces(value);
-            if (_decimals[criterion] == value)
-                return;
-
-            _decimals[criterion] = value;
-            MarkSettingsChanged();
-        }
-
-        private static bool TryParseTolerance(string text, out double value, out bool useAbsolute)
+        internal static bool TryParseTolerance(string text, out double value, out bool useAbsolute)
         {
             value = 0.0;
             useAbsolute = true;
@@ -4521,36 +4330,52 @@ namespace NS_Parrot
                 double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value);
         }
 
-        private static bool TryParseStorageDecimalPlaces(string text, out int value)
-        {
-            return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
-        }
-
-        private static int ClampStorageDecimalPlaces(int value)
-        {
-            return Math.Max(0, Math.Min(12, value));
-        }
-
         private string FormatToleranceForCriterion(V5Criterion criterion)
         {
-            string text = _tolerances[criterion].ToString("G6", CultureInfo.InvariantCulture);
-            return IsAbsoluteOnlyCriterion(criterion) || _isRelativeTolerance[criterion] == false
+            string text = _settings.Tolerances[criterion].ToString("R", CultureInfo.InvariantCulture);
+            return IsAbsoluteOnlyCriterion(criterion) || _settings.IsRelativeTolerance[criterion] == false
                 ? text
                 : text + "%";
         }
 
-        private static string CriterionDisplayName(V5Criterion criterion)
+        internal static string CriterionDisplayName(V5Criterion criterion)
         {
             switch (criterion)
             {
-                case V5Criterion.Length: return "长度";
+                case V5Criterion.Length: return "主轴定向包围盒";
                 case V5Criterion.Inertia: return "转动惯量";
-                case V5Criterion.Area: return "表面积";
                 case V5Criterion.Volume: return "体积";
-                case V5Criterion.EdgeSum: return "所有边周长";
+                case V5Criterion.EdgeSum: return "孔周长和";
                 case V5Criterion.HoleArea: return "孔面积";
                 case V5Criterion.HolePosition: return "孔位";
                 default: return criterion.ToString();
+            }
+        }
+
+        internal static string CriterionTooltip(V5Criterion criterion)
+        {
+            switch (criterion)
+            {
+                case V5Criterion.Length:
+                    return "基于体积/面积主惯量轴的定向包围盒三维尺寸，用于最基本的外形区分。若两件在该维度差异大则直接判为不同类。始终启用。\n" +
+                           "建议：相对误差 0.1%~2.0%，默认 0.5%。大尺寸模型可收紧，小尺寸模型宜放宽。（所有尺寸单位为当前 Rhino 文档单位）";
+                case V5Criterion.Inertia:
+                    return "主惯量轴对应的主惯量矩，反映质量/面积沿各轴的分布特征。不同形状、不同壁厚的零件惯量分布不同。\n" +
+                           "建议：相对误差 0.05%~1.0%，默认 0.2%。";
+                case V5Criterion.Volume:
+                    return "Brep 实体体积（含孔洞影响）。从整体层面区分尺寸差异，但对形状相同的局部孔洞变化不如孔周长/面积敏感。\n" +
+                           "建议：相对误差 0.1%~5.0%，默认 0.5%。大件可改用绝对值。";
+                case V5Criterion.EdgeSum:
+                    return "Brep 所有内环的周长总和（非物理孔数）。外形相同的件，内环细节不同（如倒角差异、孔型不同）会在此项体现。\n" +
+                           "建议：相对误差 0.5%~5.0%，默认 1.0%。内环多的件可适当放宽。";
+                case V5Criterion.HoleArea:
+                    return "Brep 所有内环的面积总和，与孔周长和互补：周长对边缘敏感，面积反映整体开孔率。\n" +
+                           "建议：相对误差 0.5%~10.0%，默认 1.0%。多内环大内环件需放宽，少内环小内环件可收紧。";
+                case V5Criterion.HolePosition:
+                    return "内环重心的空间坐标偏差。只能使用绝对误差，因为位置偏差与内环自身大小无关。单位为当前 Rhino 文档单位。\n" +
+                           "建议：0.1~5.0，默认 0.5。精密件用 0.1~0.3，粗分类用 1.0~3.0。";
+                default:
+                    return "带 % 表示相对误差，例如 0.5%；不带 % 表示绝对误差，例如 100。";
             }
         }
 
@@ -4560,7 +4385,7 @@ namespace NS_Parrot
         /// 若用包围盒尺寸归一化，则同一绝对偏差在小件和大件上判为不同比例，
         /// 引入新的不一致。跨尺度混库场景通过用户自行选择合适绝对容差来应对。
         /// </summary>
-        private static bool IsAbsoluteOnlyCriterion(V5Criterion criterion)
+        internal static bool IsAbsoluteOnlyCriterion(V5Criterion criterion)
         {
             return criterion == V5Criterion.HolePosition;
         }
@@ -4577,7 +4402,6 @@ namespace NS_Parrot
             {
                 V5Criterion.Length,
                 V5Criterion.Inertia,
-                V5Criterion.Area,
                 V5Criterion.Volume,
                 V5Criterion.EdgeSum,
                 V5Criterion.HoleArea,
@@ -4595,46 +4419,56 @@ namespace NS_Parrot
                 BackColor = SystemColors.Control;
                 Margin = Padding.Empty;
                 Padding = new Padding(8, 6, 8, 8);
-                Size = new Size(360, 556);
+                Size = new Size(256, 544);
 
                 TableLayoutPanel layout = new TableLayoutPanel
                 {
                     Dock = DockStyle.Fill,
-                    ColumnCount = 3,
+                    ColumnCount = 2,
                     RowCount = Criteria.Length + 11,
                     Margin = Padding.Empty,
                     Padding = Padding.Empty
                 };
                 layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
                 layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
-                layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));
                 layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
                 for (int i = 0; i < Criteria.Length + 9; i++)
                     layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
                 Controls.Add(layout);
 
                 AddHeader(layout);
                 for (int i = 0; i < Criteria.Length; i++)
                     AddCriterionRow(layout, i + 1, Criteria[i]);
 
-                AddMirrorRow(layout, Criteria.Length + 1);
-                AddFallbackToleranceRow(layout, Criteria.Length + 2);
-                AddInertiaRow(layout, Criteria.Length + 3);
-                AddMaterialStrictRow(layout, Criteria.Length + 4);
-                AddOuterProfileAreaRow(layout, Criteria.Length + 5);
-                AddOuterProfilePerimeterRow(layout, Criteria.Length + 6);
-                AddDegenerateMultiplierRow(layout, Criteria.Length + 7);
-                AddDegenerateMatchRow(layout, Criteria.Length + 8);
-                AddNormalToleranceRow(layout, Criteria.Length + 9);
-                AddHelp(layout, Criteria.Length + 10);
+                AddFallbackToleranceRow(layout, Criteria.Length + 1);
+                AddInertiaRow(layout, Criteria.Length + 2);
+                AddMaterialStrictRow(layout, Criteria.Length + 3);
+                AddOuterProfileAreaRow(layout, Criteria.Length + 4);
+                AddOuterProfilePerimeterRow(layout, Criteria.Length + 5);
+                AddDegenerateMultiplierRow(layout, Criteria.Length + 6);
+                AddDegenerateMatchRow(layout, Criteria.Length + 7);
+                AddNormalToleranceRow(layout, Criteria.Length + 8);
+                AddHelp(layout, Criteria.Length + 9);
+
+                // 迁移启动后参数全程锁定：从点击"启动"到迁移完成/失败/取消并重置为止
+                if (_owner.IsSettingsLocked)
+                    SetLayoutInputsEnabled(layout, false);
+            }
+
+            private static void SetLayoutInputsEnabled(TableLayoutPanel layout, bool enabled)
+            {
+                foreach (Control c in layout.Controls)
+                {
+                    if (c is CheckBox || c is TextBox || c is ComboBox)
+                        c.Enabled = enabled;
+                }
             }
 
             private void AddHeader(TableLayoutPanel layout)
             {
                 layout.Controls.Add(CreateHeaderLabel(""), 0, 0);
                 layout.Controls.Add(CreateHeaderLabel("容差"), 1, 0);
-                layout.Controls.Add(CreateHeaderLabel("入库精度"), 2, 0);
             }
 
             private void AddCriterionRow(TableLayoutPanel layout, int row, V5Criterion criterion)
@@ -4643,7 +4477,7 @@ namespace NS_Parrot
                 CheckBox checkBox = new CheckBox
                 {
                     Text = CriterionDisplayName(criterion),
-                    Checked = _owner._enabled[criterion],
+                    Checked = _owner._settings.Enabled[criterion],
                     AutoSize = false,
                     Dock = DockStyle.Fill,
                     Margin = new Padding(0, 1, 4, 1),
@@ -4655,42 +4489,11 @@ namespace NS_Parrot
                 layout.Controls.Add(checkBox, 0, row);
 
                 TextBox toleranceBox = CreateTextBox(_owner.FormatToleranceForCriterion(criterion));
-                _toolTip.SetToolTip(toleranceBox, IsAbsoluteOnlyCriterion(criterion)
-                    ? "孔位只支持绝对误差，例如 0.5。"
-                    : "带 % 表示相对误差，例如 0.5%；不带 % 表示绝对误差，例如 100。");
+                _toolTip.SetToolTip(toleranceBox, CriterionTooltip(criterion));
                 RegisterTextBoxCommit(
                     toleranceBox,
-                    () => _owner.SetCriterionTolerance(criterion, toleranceBox.Text));
-                layout.Controls.Add(toleranceBox, 1, row);
-
-                TextBox precisionBox = CreateTextBox(criterion == V5Criterion.Length
-                    ? "原值"
-                    : _owner._decimals[criterion].ToString(CultureInfo.InvariantCulture));
-                if (criterion == V5Criterion.Length)
-                {
-                    precisionBox.Enabled = false;
-                    _toolTip.SetToolTip(precisionBox, "包围盒三边按原始双精度值保存，不在这里改写。");
-                }
-                else
-                {
-                    _toolTip.SetToolTip(precisionBox, "保存到数据库时保留的小数位数，范围 0 到 12。");
-                    RegisterTextBoxCommit(
-                        precisionBox,
-                        () => _owner.SetStorageDecimalPlaces(criterion, precisionBox.Text));
-                }
-                layout.Controls.Add(precisionBox, 2, row);
-            }
-
-            private void AddMirrorRow(TableLayoutPanel layout, int row)
-            {
-                Label label = CreateBodyLabel("镜像区分");
-                layout.Controls.Add(label, 0, row);
-
-                TextBox toleranceBox = CreateTextBox(_owner._mirrorTolerance.ToString("G6", CultureInfo.InvariantCulture));
-                _toolTip.SetToolTip(toleranceBox, "镜像区分只支持绝对误差；小于等于该值时不区分 A/B。");
-                RegisterTextBoxCommit(
-                    toleranceBox,
-                    () => _owner.SetMirrorTolerance(toleranceBox.Text));
+                    () => _owner.SetCriterionTolerance(criterion, toleranceBox.Text),
+                    () => _owner.FormatToleranceForCriterion(criterion));
                 layout.Controls.Add(toleranceBox, 1, row);
             }
 
@@ -4699,11 +4502,13 @@ namespace NS_Parrot
                 Label label = CreateBodyLabel("回退容差");
                 layout.Controls.Add(label, 0, row);
 
-                TextBox toleranceBox = CreateTextBox(_owner._fallbackTolerance.ToString("G6", CultureInfo.InvariantCulture));
-                _toolTip.SetToolTip(toleranceBox, "无 Rhino 文档时的曲线拼接容差回退值。正常 Rhino 交互环境下不使用此值。");
+                TextBox toleranceBox = CreateTextBox(_owner._settings.FallbackTolerance.ToString("R", CultureInfo.InvariantCulture));
+                _toolTip.SetToolTip(toleranceBox, "无 Rhino 文档时的曲线拼接容差回退值。正常 Rhino 交互环境下不使用此值，仅在离线批处理或异常路径下生效。\n" +
+                    "建议：0.0001~0.01（当前 Rhino 文档单位），默认 0.001。一般无需修改。");
                 RegisterTextBoxCommit(
                     toleranceBox,
-                    () => _owner.SetFallbackTolerance(toleranceBox.Text));
+                    () => _owner.SetFallbackTolerance(toleranceBox.Text),
+                    () => _owner._settings.FallbackTolerance.ToString("R", CultureInfo.InvariantCulture));
                 layout.Controls.Add(toleranceBox, 1, row);
             }
 
@@ -4712,31 +4517,39 @@ namespace NS_Parrot
                 Label label = CreateBodyLabel("退化判定阈值");
                 layout.Controls.Add(label, 0, row);
 
-                TextBox ratioBox = CreateTextBox(_owner._inertiaDegenerateRatio.ToString("G6", CultureInfo.InvariantCulture));
-                _toolTip.SetToolTip(ratioBox, "相邻主惯量比值超过此值时标记为退化件，范围 0.5~1.0。默认 0.99。");
+                TextBox ratioBox = CreateTextBox(_owner._settings.InertiaDegenerateRatio.ToString("R", CultureInfo.InvariantCulture));
+                _toolTip.SetToolTip(ratioBox, "相邻主惯量比值 > 此值时标记为退化件（如近圆柱体、球体）。退化件缺少明确的主惯量轴方向，后续匹配走专用流程。\n" +
+                    "范围：0.5~1.0，默认 0.99。建议 0.95~0.99。越低越容易判为退化（更保守），越高越严格。");
                 RegisterTextBoxCommit(
                     ratioBox,
-                    () => _owner.SetInertiaDegenerateRatio(ratioBox.Text));
+                    () => _owner.SetInertiaDegenerateRatio(ratioBox.Text),
+                    () => _owner._settings.InertiaDegenerateRatio.ToString("R", CultureInfo.InvariantCulture));
                 layout.Controls.Add(ratioBox, 1, row);
             }
 
             private void AddOuterProfileAreaRow(TableLayoutPanel layout, int row)
             {
-                Label label = CreateBodyLabel("外轮廓面积容差");
+                Label label = CreateBodyLabel("外轮廓面积容差（仅诊断）");
                 layout.Controls.Add(label, 0, row);
-                TextBox tolBox = CreateTextBox(_owner._outerProfileAreaRatio.ToString("G6", CultureInfo.InvariantCulture));
-                _toolTip.SetToolTip(tolBox, "外轮廓面积相对容差：|A-B|/max(A,B,1) 低于此值时通过。默认 0.0001。");
-                RegisterTextBoxCommit(tolBox, () => _owner.SetOuterProfileAreaRatio(tolBox.Text));
+                TextBox tolBox = CreateTextBox(_owner._settings.OuterProfileAreaRatio.ToString("R", CultureInfo.InvariantCulture));
+                _toolTip.SetToolTip(tolBox, "外轮廓已不参与匹配判定，此参数仅在同件判定诊断输出中参考。保留以兼容旧设置与旧数据库参数。");
+                RegisterTextBoxCommit(
+                    tolBox,
+                    () => _owner.SetOuterProfileAreaRatio(tolBox.Text),
+                    () => _owner._settings.OuterProfileAreaRatio.ToString("R", CultureInfo.InvariantCulture));
                 layout.Controls.Add(tolBox, 1, row);
             }
 
             private void AddOuterProfilePerimeterRow(TableLayoutPanel layout, int row)
             {
-                Label label = CreateBodyLabel("外轮廓周长最小容差");
+                Label label = CreateBodyLabel("外轮廓周长最小容差（仅诊断）");
                 layout.Controls.Add(label, 0, row);
-                TextBox tolBox = CreateTextBox(_owner._outerProfilePerimeterMin.ToString("G6", CultureInfo.InvariantCulture));
-                _toolTip.SetToolTip(tolBox, "外轮廓周长匹配取 max(孔位容差, 此值) 的最小值。默认 0.01。");
-                RegisterTextBoxCommit(tolBox, () => _owner.SetOuterProfilePerimeterMin(tolBox.Text));
+                TextBox tolBox = CreateTextBox(_owner._settings.OuterProfilePerimeterMin.ToString("R", CultureInfo.InvariantCulture));
+                _toolTip.SetToolTip(tolBox, "外轮廓已不参与匹配判定，此参数仅在同件判定诊断输出中参考。保留以兼容旧设置与旧数据库参数。");
+                RegisterTextBoxCommit(
+                    tolBox,
+                    () => _owner.SetOuterProfilePerimeterMin(tolBox.Text),
+                    () => _owner._settings.OuterProfilePerimeterMin.ToString("R", CultureInfo.InvariantCulture));
                 layout.Controls.Add(tolBox, 1, row);
             }
 
@@ -4744,9 +4557,13 @@ namespace NS_Parrot
             {
                 Label label = CreateBodyLabel("退化孔容差倍数");
                 layout.Controls.Add(label, 0, row);
-                TextBox tolBox = CreateTextBox(_owner._degeneratePositionMultiplier.ToString("G6", CultureInfo.InvariantCulture));
-                _toolTip.SetToolTip(tolBox, "退化孔匹配时几何容差乘以此倍数。默认 2.0，范围 >= 1.0。");
-                RegisterTextBoxCommit(tolBox, () => _owner.SetDegeneratePositionMultiplier(tolBox.Text));
+                TextBox tolBox = CreateTextBox(_owner._settings.DegeneratePositionMultiplier.ToString("R", CultureInfo.InvariantCulture));
+                _toolTip.SetToolTip(tolBox, "退化孔匹配时将周长、面积、位置容差乘以此倍数以放宽匹配门槛。拟合法向阈值固定按 normalTol × 0.95 放宽，不受此倍数影响。退化孔特征少、置信度低，需要更大的容差空间。\n" +
+                    "范围：≥ 1.0，默认 2.0。建议 1.5~5.0。值越大越宽松，值越小越严格。");
+                RegisterTextBoxCommit(
+                    tolBox,
+                    () => _owner.SetDegeneratePositionMultiplier(tolBox.Text),
+                    () => _owner._settings.DegeneratePositionMultiplier.ToString("R", CultureInfo.InvariantCulture));
                 layout.Controls.Add(tolBox, 1, row);
             }
 
@@ -4754,23 +4571,24 @@ namespace NS_Parrot
             {
                 CheckBox checkBox = new CheckBox
                 {
-                    Text = "退化孔低置信度匹配",
-                    Checked = _owner._enableDegenerateMatching,
+                    Text = "退化孔容差放宽",
+                    Checked = _owner._settings.EnableDegenerateMatching,
                     AutoSize = false,
                     Dock = DockStyle.Fill,
                     Margin = new Padding(0, 1, 4, 1),
                     TextAlign = ContentAlignment.MiddleLeft
                 };
-                _toolTip.SetToolTip(checkBox, "开启后使用拟合平面特征（投影面积/拟合法向/圆形度）对退化孔进行低置信度匹配。默认关闭。");
+                _toolTip.SetToolTip(checkBox, "开启后，对双方均含退化孔的配对，将周长/面积/位置容差乘以退化孔容差倍数以放宽匹配门槛；拟合法向阈值固定按 normalTol × 0.95 放宽。\n" +
+                    "关闭时退化孔件使用常规容差参与匹配，且始终正常参与自动聚类。默认关闭。");
                 checkBox.CheckedChanged += (sender, e) => _owner.SetEnableDegenerateMatching(checkBox.Checked);
                 layout.Controls.Add(checkBox, 0, row);
 
-                Label hint = CreateBodyLabel("谨慎启用：低置信度");
+                Label hint = CreateBodyLabel("默认关闭：仅放宽容差，不控制聚类参与");
                 hint.ForeColor = Color.DimGray;
                 hint.AutoSize = false;
                 hint.Dock = DockStyle.Fill;
                 hint.TextAlign = ContentAlignment.MiddleLeft;
-                layout.SetColumnSpan(hint, 2);
+                layout.SetColumnSpan(hint, 1);
                 layout.Controls.Add(hint, 1, row);
             }
 
@@ -4779,11 +4597,14 @@ namespace NS_Parrot
                 Label label = CreateBodyLabel("法向兼容阈值");
                 layout.Controls.Add(label, 0, row);
 
-                TextBox tolBox = CreateTextBox(_owner._holeNormalTolerance.ToString("G6", CultureInfo.InvariantCulture));
-                _toolTip.SetToolTip(tolBox, "|cos(法向夹角)| 低于此值时法向比较不通过。默认 0.9986（约 3°）。");
+                TextBox tolBox = CreateTextBox(_owner._settings.HoleNormalTolerance.ToString("R", CultureInfo.InvariantCulture));
+                _toolTip.SetToolTip(tolBox, "|cos| 法向兼容阈值，同时用于孔法向比较和外轮廓法向比较。使用绝对值 |dot| 判断，正反法向均兼容。\n" +
+                    "|cos(法向夹角)| 低于此值时判定为不兼容。0.9986 ≈ 3° 偏差。\n" +
+                    "范围：0~1，默认 0.9986。建议 0.99~0.9999。越接近 1 越严格，越接近 0 越宽松。");
                 RegisterTextBoxCommit(
                     tolBox,
-                    () => _owner.SetHoleNormalTolerance(tolBox.Text));
+                    () => _owner.SetHoleNormalTolerance(tolBox.Text),
+                    () => _owner._settings.HoleNormalTolerance.ToString("R", CultureInfo.InvariantCulture));
                 layout.Controls.Add(tolBox, 1, row);
             }
 
@@ -4792,13 +4613,14 @@ namespace NS_Parrot
                 CheckBox checkBox = new CheckBox
                 {
                     Text = "材质/颜色严格模式",
-                    Checked = _owner._strictMaterialColor,
+                    Checked = _owner._settings.StrictMaterialColor,
                     AutoSize = false,
                     Dock = DockStyle.Fill,
                     Margin = new Padding(0, 1, 4, 1),
                     TextAlign = ContentAlignment.MiddleLeft
                 };
-                _toolTip.SetToolTip(checkBox, "开启后，材质和颜色必须双方均填写且相等，或双方均为空才匹配。关闭时任一方为空即视为匹配（宽松模式）。");
+                _toolTip.SetToolTip(checkBox, "开启后，材质和颜色必须双方均填写且相等，或双方均为空才匹配。关闭时任一方为空即视为匹配（宽松模式）。\n" +
+                    "建议：同一批生产数据开启严格模式；跨厂家跨批数据关闭，避免空值导致无法匹配。");
                 checkBox.CheckedChanged += (sender, e) => _owner.SetStrictMaterialColor(checkBox.Checked);
                 layout.Controls.Add(checkBox, 0, row);
                 
@@ -4807,17 +4629,18 @@ namespace NS_Parrot
                 hint.AutoSize = false;
                 hint.Dock = DockStyle.Fill;
                 hint.TextAlign = ContentAlignment.MiddleLeft;
-                layout.SetColumnSpan(hint, 2);
+                layout.SetColumnSpan(hint, 1);
                 layout.Controls.Add(hint, 1, row);
             }
 
             private void AddHelp(TableLayoutPanel layout, int row)
             {
-                Label help = CreateBodyLabel("容差默认按相对误差填写；输入 0.5% 表示相对误差，输入 100 表示绝对误差。孔位和镜像区分只能使用绝对误差。");
+                Label help = CreateBodyLabel("提示：容差末尾带 % 为相对误差（如 0.5%），不带 % 为绝对误差。" +
+                    "孔位强制绝对误差，镜像区分比较无量纲分数。鼠标悬停各参数可查看建议取值范围与详细说明。");
                 help.ForeColor = Color.DimGray;
                 help.AutoSize = false;
                 help.Dock = DockStyle.Fill;
-                layout.SetColumnSpan(help, 3);
+                layout.SetColumnSpan(help, 2);
                 layout.Controls.Add(help, 0, row);
             }
 
@@ -4865,15 +4688,21 @@ namespace NS_Parrot
                 }
             }
 
-            private void RegisterTextBoxCommit(TextBox box, Action commit)
+            private void RegisterTextBoxCommit(TextBox box, Action commit, Func<string> format)
             {
                 _commitActions.Add(commit);
+                box.Leave += (sender, e) =>
+                {
+                    commit();
+                    box.Text = format();
+                };
                 box.KeyDown += (sender, e) =>
                 {
                     if (e.KeyCode != Keys.Enter)
                         return;
 
                     commit();
+                    box.Text = format();
                     e.Handled = true;
                     e.SuppressKeyPress = true;
                 };
@@ -4885,85 +4714,13 @@ namespace NS_Parrot
         // ================================================================
         public override bool Write(GH_IWriter writer)
         {
-            foreach (V5Criterion c in _enabled.Keys)
-            {
-                writer.SetBoolean(SettingsChunk + c + "Enabled", _enabled[c]);
-                writer.SetDouble(SettingsChunk + c + "Tolerance", _tolerances[c]);
-                writer.SetBoolean(SettingsChunk + c + "TolIsRel", _isRelativeTolerance[c]);
-            }
-            foreach (V5Criterion c in _decimals.Keys)
-                writer.SetInt32(SettingsChunk + c + "Decimals", _decimals[c]);
-            writer.SetDouble(SettingsChunk + "MirrorTolerance", _mirrorTolerance);
-            writer.SetDouble(SettingsChunk + "FallbackTolerance", _fallbackTolerance);
-            writer.SetDouble(SettingsChunk + "InertiaDegenerateRatio", _inertiaDegenerateRatio);
-            writer.SetDouble(SettingsChunk + "HoleNormalTolerance", _holeNormalTolerance);
-            writer.SetBoolean(SettingsChunk + "StrictMaterialColor", _strictMaterialColor);
-            writer.SetDouble(SettingsChunk + "OuterProfileAreaRatio", _outerProfileAreaRatio);
-            writer.SetDouble(SettingsChunk + "OuterProfilePerimeterMin", _outerProfilePerimeterMin);
-            writer.SetDouble(SettingsChunk + "DegeneratePositionMultiplier", _degeneratePositionMultiplier);
-            writer.SetBoolean(SettingsChunk + "EnableDegenerateMatching", _enableDegenerateMatching);
+            _settings.Write(writer, SettingsChunk);
             return base.Write(writer);
         }
 
         public override bool Read(GH_IReader reader)
         {
-            foreach (V5Criterion c in _enabled.Keys.ToList())
-            {
-                bool e = _enabled[c];
-                double t = _tolerances[c];
-                bool isRel = _isRelativeTolerance[c];
-                if (reader.TryGetBoolean(SettingsChunk + c + "Enabled", ref e) &&
-                    c != V5Criterion.Length)
-                    _enabled[c] = e;
-                if (reader.TryGetDouble(SettingsChunk + c + "Tolerance", ref t))
-                    _tolerances[c] = Math.Abs(t);
-                if (reader.TryGetBoolean(SettingsChunk + c + "TolIsRel", ref isRel))
-                    _isRelativeTolerance[c] = isRel;
-            }
-            _enabled[V5Criterion.Length] = true;
-            foreach (V5Criterion c in _decimals.Keys.ToList())
-            {
-                int d = _decimals[c];
-                if (reader.TryGetInt32(SettingsChunk + c + "Decimals", ref d))
-                    _decimals[c] = Math.Max(0, Math.Min(12, d));
-            }
-
-            double mirrorTolerance = _mirrorTolerance;
-            if (reader.TryGetDouble(SettingsChunk + "MirrorTolerance", ref mirrorTolerance))
-                _mirrorTolerance = Math.Abs(mirrorTolerance);
-
-            double fallbackTolerance = _fallbackTolerance;
-            if (reader.TryGetDouble(SettingsChunk + "FallbackTolerance", ref fallbackTolerance))
-                _fallbackTolerance = Math.Max(0, fallbackTolerance);
-
-            double inertiaDegenerateRatio = _inertiaDegenerateRatio;
-            if (reader.TryGetDouble(SettingsChunk + "InertiaDegenerateRatio", ref inertiaDegenerateRatio))
-                _inertiaDegenerateRatio = Math.Max(0.5, Math.Min(1.0, inertiaDegenerateRatio));
-
-            double holeNormalTolerance = _holeNormalTolerance;
-            if (reader.TryGetDouble(SettingsChunk + "HoleNormalTolerance", ref holeNormalTolerance))
-                _holeNormalTolerance = holeNormalTolerance;
-
-            bool strictMaterialColor = _strictMaterialColor;
-            if (reader.TryGetBoolean(SettingsChunk + "StrictMaterialColor", ref strictMaterialColor))
-                _strictMaterialColor = strictMaterialColor;
-
-            double outerProfileAreaRatio = _outerProfileAreaRatio;
-            if (reader.TryGetDouble(SettingsChunk + "OuterProfileAreaRatio", ref outerProfileAreaRatio))
-                _outerProfileAreaRatio = Math.Max(0, outerProfileAreaRatio);
-
-            double outerProfilePerimeterMin = _outerProfilePerimeterMin;
-            if (reader.TryGetDouble(SettingsChunk + "OuterProfilePerimeterMin", ref outerProfilePerimeterMin))
-                _outerProfilePerimeterMin = Math.Max(0, outerProfilePerimeterMin);
-
-            double degeneratePositionMultiplier = _degeneratePositionMultiplier;
-            if (reader.TryGetDouble(SettingsChunk + "DegeneratePositionMultiplier", ref degeneratePositionMultiplier))
-                _degeneratePositionMultiplier = Math.Max(1.0, degeneratePositionMultiplier);
-
-            bool enableDegenerateMatching = _enableDegenerateMatching;
-            if (reader.TryGetBoolean(SettingsChunk + "EnableDegenerateMatching", ref enableDegenerateMatching))
-                _enableDegenerateMatching = enableDegenerateMatching;
-
+            _settings.Read(reader, SettingsChunk);
             return base.Read(reader);
         }
 
@@ -5126,7 +4883,10 @@ namespace NS_Parrot
             _fileIndex = 0;
             _waitingAttempts = 0;
             _failedFileCount = 0;
+            _skippedFiles.Clear();
+            _emptyFilePaths.Clear();
             _pendingDatabasePath = string.Empty;
+            _checkpointPhase = WbMigrationPhase.Extracting;
         }
 
         private void SaveCheckpoint()
@@ -5139,6 +4899,14 @@ namespace NS_Parrot
                     DatabasePath = _pendingDatabasePath,
                     PendingFiles = new List<string>(_pendingFiles),
                     FileIndex = _fileIndex,
+                    Phase = _checkpointPhase,
+                    FailedFiles = _skippedFiles.Select(r =>
+                        string.Format(CultureInfo.InvariantCulture, "{0}\u0001{1}\u0001{2}\u0001{3}\u0001{4}",
+                            Convert.ToBase64String(Encoding.UTF8.GetBytes(r.FilePath)),
+                            (int)r.Category,
+                            Convert.ToBase64String(Encoding.UTF8.GetBytes(r.Reason)),
+                            r.Index, r.Total)).ToList(),
+                    TotalErrorCount = _failedFileCount,
                     Diagnostics = new List<string>(_diagnostics)
                 };
                 foreach (var r in _collectedRecords)
@@ -5167,6 +4935,28 @@ namespace NS_Parrot
             catch { }
         }
 
+        /// <summary>
+        /// 将日志写入数据库同文件夹的 TXT 文件（带时间戳，永久保存）。
+        /// </summary>
+        internal static string WriteLogToFile(string databasePath, List<string> logs)
+        {
+            if (string.IsNullOrWhiteSpace(databasePath) || logs == null || logs.Count == 0)
+                return null;
+            try
+            {
+                string dir = Path.GetDirectoryName(Path.GetFullPath(databasePath));
+                if (string.IsNullOrWhiteSpace(dir)) return null;
+                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
+                string logPath = Path.Combine(dir, "迁移日志_" + timestamp + ".txt");
+                File.WriteAllText(logPath, string.Join(Environment.NewLine, logs), Encoding.UTF8);
+                return logPath;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         private bool TryResumeCheckpoint(string databasePath, List<string> currentFiles)
         {
             string cpPath = WbMigrationCheckpoint.GetCheckpointPath(databasePath);
@@ -5186,7 +4976,8 @@ namespace NS_Parrot
                 StringComparison.OrdinalIgnoreCase))
                 return false;
             if (cp.PendingFiles == null || cp.PendingFiles.Count == 0) return false;
-            if (cp.FileIndex <= 0 || cp.FileIndex >= cp.PendingFiles.Count) return false;
+            // NextFileIndex 语义：0=尚未提取任何文件，N=下一个待提取的文件索引，Count=全部提取完毕待入库
+            if (cp.FileIndex < 0 || cp.FileIndex > cp.PendingFiles.Count) return false;
 
             // 验证当前输入文件列表与检查点文件列表一致性
             // 按原顺序逐项比较规范化路径；顺序不同即拒绝恢复（FileIndex 依赖原顺序）
@@ -5202,12 +4993,43 @@ namespace NS_Parrot
             _pendingFiles.AddRange(cp.PendingFiles);
             _fileIndex = cp.FileIndex;
             _waitingAttempts = 0;
+            _failedFileCount = cp.TotalErrorCount;
+            _skippedFiles.Clear();
+            _emptyFilePaths.Clear();
+            if (cp.FailedFiles != null)
+                foreach (string entry in cp.FailedFiles)
+                {
+                    // 新格式: "{path}\u0001{category}\u0001{reason}\u0001{index}\u0001{total}"
+                    // 旧格式（兼容）: 纯路径
+                    string[] parts = entry.Split('\u0001');
+                    if (parts.Length >= 5)
+                    {
+                        // 新格式：完整记录
+                        int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int catInt);
+                        int.TryParse(parts[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int idx);
+                        int.TryParse(parts[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int total);
+                        _skippedFiles.Add(new WbSkippedFileRecord(
+                            Encoding.UTF8.GetString(Convert.FromBase64String(parts[0])),
+                            Encoding.UTF8.GetString(Convert.FromBase64String(parts[2])),
+                            (SkipCategory)catInt, idx, total));
+                    }
+                    else
+                    {
+                        // 旧格式：仅路径，回退为异常
+                        _skippedFiles.Add(new WbSkippedFileRecord(entry, "（从检查点恢复,原因不详）",
+                            SkipCategory.Exception, 0, cp.PendingFiles.Count));
+                    }
+                }
             if (cp.Diagnostics != null)
+            {
+                _diagnostics.Clear();
                 _diagnostics.AddRange(cp.Diagnostics);
+            }
 
             // 恢复已收集记录
             if (cp.CollectedRecords != null)
             {
+                _collectedRecords.Clear();
                 foreach (var cr in cp.CollectedRecords)
                 {
                     try
@@ -5230,6 +5052,17 @@ namespace NS_Parrot
                 }
             }
 
+            // 恢复迁移阶段
+            _checkpointPhase = cp.Phase;
+            if (_checkpointPhase == WbMigrationPhase.Finalizing || _fileIndex >= _pendingFiles.Count)
+            {
+                _fileIndex = _pendingFiles.Count;
+                _diagnostics.Add("从检查点恢复：所有文件已提取完毕（" + _pendingFiles.Count.ToString(CultureInfo.InvariantCulture) +
+                    " 个），共收集 " + _collectedRecords.Count.ToString(CultureInfo.InvariantCulture) +
+                    " 条记录；将直接进入聚类与入库阶段。");
+                return true;
+            }
+
             _diagnostics.Add("从检查点恢复：已处理前 " + _fileIndex.ToString(CultureInfo.InvariantCulture) +
                 " 个文件，共收集 " + _collectedRecords.Count.ToString(CultureInfo.InvariantCulture) +
                 " 条记录；从第 " + (_fileIndex + 1).ToString(CultureInfo.InvariantCulture) +
@@ -5240,11 +5073,26 @@ namespace NS_Parrot
         // ================================================================
         // 文件推进 → 聚类 → 入库
         // ================================================================
+        private void RecordSkippedFile(List<string> logs, string reason, SkipCategory category)
+        {
+            _failedFileCount++;
+            string filePath = _pendingFiles[_fileIndex];
+            int oneBased = _fileIndex + 1;
+            int total = _pendingFiles.Count;
+            var record = new WbSkippedFileRecord(filePath, reason, category, oneBased, total);
+            _skippedFiles.Add(record);
+            string catLabel = CategoryLabel(category);
+            logs.Add(string.Format(CultureInfo.InvariantCulture,
+                "跳过当前文件（{0}）：{1}；原因：{2}", filePath, catLabel, reason));
+            _diagnostics.Add(string.Format(CultureInfo.InvariantCulture,
+                "跳过文件：{0} ({1}) - {2}", filePath, catLabel, reason));
+        }
+
         private bool AdvanceFile(List<string> logs)
         {
-            // 保存检查点（跳过失败文件时也会到达这里）
-            SaveCheckpoint();
+            // 先推进索引，再保存检查点：断点续跑将从下一个文件开始，不会重复处理
             _fileIndex++;
+            SaveCheckpoint();
             if (_fileIndex < _pendingFiles.Count)
             {
                 _waitingAttempts = 0;
@@ -5254,6 +5102,7 @@ namespace NS_Parrot
                     (_fileIndex + 1).ToString(CultureInfo.InvariantCulture) +
                     " / " + _pendingFiles.Count.ToString(CultureInfo.InvariantCulture) +
                     " 个文件。";
+                _pendingLogs = logs;
                 ScheduleOpenCurrentFile();
                 logs.Add("当前文件处理完成；即将打开第 " +
                     (_fileIndex + 1).ToString(CultureInfo.InvariantCulture) +
@@ -5262,25 +5111,44 @@ namespace NS_Parrot
                 return false;
             }
 
-            // 全部处理完 → 聚类 → 入库
-            var audit = WbMigrationAudit.Create(_collectedRecords, _enabled, _tolerances, _isRelativeTolerance, _mirrorTolerance, _strictMaterialColor, _holeNormalTolerance,
-                _outerProfileAreaRatio, _outerProfilePerimeterMin, _degeneratePositionMultiplier, _enableDegenerateMatching);
+            // 全部提取完成 → 切换阶段并保存，防止入库中途崩溃时丢失进度
+            _checkpointPhase = WbMigrationPhase.Finalizing;
+            SaveCheckpoint();
+            return DoFinalizing(logs);
+        }
+
+        /// <summary>聚类 → 入库 → 清理。可从 AdvanceFile 或检查点恢复时调用。</summary>
+        private bool DoFinalizing(List<string> logs)
+        {
+            var audit = WbMigrationAudit.Create(_collectedRecords, _settings.Enabled, _settings.Tolerances, _settings.IsRelativeTolerance, _settings.StrictMaterialColor, _settings.HoleNormalTolerance,
+                _settings.OuterProfileAreaRatio, _settings.OuterProfilePerimeterMin, _settings.DegeneratePositionMultiplier, _settings.EnableDegenerateMatching,
+                fallbackTolerance: _settings.FallbackTolerance);
             _diagnostics.AddRange(audit.DiagnosticLines());
             var toInsert = audit.RecordsToInsert();
-            WbMigrationStore.Rebuild(_pendingDatabasePath, toInsert, audit,
-                _enabled, _tolerances, _decimals, _isRelativeTolerance, _mirrorTolerance,
-                _inertiaDegenerateRatio, _holeNormalTolerance, _strictMaterialColor,
-                _outerProfileAreaRatio, _outerProfilePerimeterMin, _degeneratePositionMultiplier,
-                _enableDegenerateMatching, _fallbackTolerance);
-            WbMigrationStore.Verify(_pendingDatabasePath, toInsert);
-            if (_failedFileCount > 0)
-                logs.Add("迁移过程中 " + _failedFileCount.ToString(CultureInfo.InvariantCulture) +
-                    " 个文件处理失败已跳过；详见诊断输出。");
-            logs.Add("已完成 V9 分类数据库重建，写入 " +
-                toInsert.Count.ToString(CultureInfo.InvariantCulture) + " 条（读入 " +
+            var (insertedIds, insertedRecords, dbSkippedCount) = WbMigrationStore.Rebuild(_pendingDatabasePath, toInsert, audit,
+                _settings.Enabled, _settings.Tolerances, _settings.IsRelativeTolerance,
+                _settings.InertiaDegenerateRatio, _settings.HoleNormalTolerance, _settings.StrictMaterialColor,
+                _settings.OuterProfileAreaRatio, _settings.OuterProfilePerimeterMin, _settings.DegeneratePositionMultiplier,
+                _settings.EnableDegenerateMatching, _settings.FallbackTolerance);
+            WbMigrationStore.Verify(_pendingDatabasePath, insertedRecords, insertedIds);
+            if (_skippedFiles.Count > 0)
+            {
+                int ruleSkip = _skippedFiles.Count(r => r.Category != SkipCategory.Exception);
+                int excSkip = _skippedFiles.Count(r => r.Category == SkipCategory.Exception);
+                logs.Add("跳过的文件清单（共 " + _skippedFiles.Count.ToString(CultureInfo.InvariantCulture) +
+                    " 个，其中规则跳过 " + ruleSkip.ToString(CultureInfo.InvariantCulture) +
+                    " 个、异常 " + excSkip.ToString(CultureInfo.InvariantCulture) + " 个）：");
+                foreach (var r in _skippedFiles)
+                    logs.Add(r.ToString());
+            }
+            logs.Add("已完成 V9 分类数据库增量入库，新增 " +
+                insertedRecords.Count.ToString(CultureInfo.InvariantCulture) + " 条，跳过已存在 " +
+                dbSkippedCount.ToString(CultureInfo.InvariantCulture) + " 条（读入 " +
                 _collectedRecords.Count.ToString(CultureInfo.InvariantCulture) + " 条）：" +
                 _pendingDatabasePath);
+            audit.EmptyFiles = _emptyFilePaths;
             logs.AddRange(audit.ToLogs());
+            WriteLogToFile(_pendingDatabasePath, logs);
             DeleteCheckpoint();
             ResetMigration();
             ScheduleFinalClose();
@@ -5325,6 +5193,46 @@ namespace NS_Parrot
             _refreshTimer = null;
         }
 
+        private void SkipCurrentFileAndContinue(string reason)
+        {
+            string filePath = _pendingFiles[_fileIndex];
+            _failedFileCount++;
+            var record = new WbSkippedFileRecord(filePath, reason, SkipCategory.Exception,
+                _fileIndex + 1, _pendingFiles.Count);
+            _skippedFiles.Add(record);
+            _diagnostics.Add("打开文件失败，跳过：" + filePath + " - " + reason);
+
+            if (_pendingLogs != null)
+            {
+                string catLabel = CategoryLabel(SkipCategory.Exception);
+                _pendingLogs.Add(string.Format(CultureInfo.InvariantCulture,
+                    "跳过当前文件（{0}）：{1}；原因：{2}", filePath, catLabel, reason));
+            }
+
+            _fileIndex++;
+            SaveCheckpoint();
+
+            if (_fileIndex < _pendingFiles.Count)
+            {
+                _waitingAttempts = 0;
+                _state = State.OpeningFile;
+                ResetDataStability();
+                _statusText = "跳过失败文件，准备打开第 " +
+                    (_fileIndex + 1).ToString(CultureInfo.InvariantCulture) +
+                    " / " + _pendingFiles.Count.ToString(CultureInfo.InvariantCulture) +
+                    " 个文件。";
+                ScheduleOpenCurrentFile();
+            }
+            else
+            {
+                _checkpointPhase = WbMigrationPhase.Finalizing;
+                SaveCheckpoint();
+                _state = State.Idle;
+                _runRequested = true;
+                _statusText = "所有文件已尝试打开，准备入库。";
+            }
+        }
+
         private void ScheduleOpenCurrentFile()
         {
             StopFileOpenTimer();
@@ -5349,9 +5257,10 @@ namespace NS_Parrot
                 }
                 catch (Exception ex)
                 {
-                    _statusText = "错误：" + ex.Message;
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
-                    ResetMigration();
+                    _statusText = "跳过无法打开的文件：" + ex.Message;
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                        "跳过无法打开的文件 " + _pendingFiles[_fileIndex] + "：" + ex.Message);
+                    SkipCurrentFileAndContinue(ex.Message);
                     ScheduleRefresh(100);
                 }
             };
@@ -5414,6 +5323,9 @@ namespace NS_Parrot
 
         private static string TextAt(List<string> values, int index) =>
             values == null || values.Count == 0 ? string.Empty : values[index] ?? string.Empty;
+
+        private static string SafeFirstLog(List<string> logs) =>
+            logs != null && logs.Count > 0 ? logs[0] : string.Empty;
 
         public override Guid ComponentGuid =>
             new Guid("B1D97B05-3A4A-4F3C-91F0-4AC1D59EE805");
@@ -5511,6 +5423,23 @@ namespace NS_Parrot
             p.AddTextParameter("状态", "状态", "创建状态。", GH_ParamAccess.item);
         }
 
+        /// <summary>
+        /// 在指定完整路径创建空 SQLite 迁移数据库（含 Schema 初始化）。
+        /// ��文件已存在则抛出 InvalidOperationException。
+        /// createdByThisRun 供调用方在 catch 中判断是否需要清理残留的空 .db 文件。
+        /// </summary>
+        internal static void CreateEmptyDatabaseAt(string fullPath, out bool createdByThisRun)
+        {
+            createdByThisRun = false;
+            if (File.Exists(fullPath))
+                throw new InvalidOperationException(
+                    "目标数据库已存在；请使用新名称，或在迁移电池中重建该库。");
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
+            SQLiteConnection.CreateFile(fullPath);
+            createdByThisRun = true;
+            WbMigrationStore.CreateEmpty(fullPath);
+        }
+
         protected override void SolveInstance(IGH_DataAccess da)
         {
             string folder = string.Empty, name = string.Empty;
@@ -5521,6 +5450,8 @@ namespace NS_Parrot
                 da.SetData(1, "右键点击\"创建新版数据库\"后执行。");
                 return;
             }
+            string path = null;
+            bool createdByThisRun = false;
             try
             {
                 if (string.IsNullOrWhiteSpace(folder) || string.IsNullOrWhiteSpace(name))
@@ -5531,20 +5462,18 @@ namespace NS_Parrot
                     throw new ArgumentException("数据库名称只能是文件名，不能包含路径。");
                 if (string.IsNullOrWhiteSpace(Path.GetExtension(fileName)))
                     fileName += ".db";
-                string path = Path.GetFullPath(
+                path = Path.GetFullPath(
                     Path.Combine(Path.GetFullPath(folder), fileName));
-                if (File.Exists(path))
-                    throw new InvalidOperationException(
-                        "目标数据库已存在；请使用新名称，或在迁移电池中重建该库。");
-                Directory.CreateDirectory(Path.GetDirectoryName(path));
-                SQLiteConnection.CreateFile(path);
-                WbMigrationStore.CreateEmpty(path);
+                CreateEmptyDatabaseAt(path, out createdByThisRun);
                 _lastPath = path;
                 da.SetData(0, path);
                 da.SetData(1, "已创建 WB 分类迁移数据库。");
             }
             catch (Exception ex)
             {
+                // 仅删除本次 CreateFile 生成的空文件；不误删"目标��存在"等场景的已有数据库
+                if (createdByThisRun)
+                    try { if (File.Exists(path)) File.Delete(path); } catch { }
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
                 da.SetData(0, _lastPath);
                 da.SetData(1, "错误：" + ex.Message);
