@@ -142,6 +142,30 @@ namespace NS_Parrot
             return bitmap;
         }
 
+        public static Bitmap GetCompareEntity()
+        {
+            Bitmap bitmap = CreateCanvas();
+            using (Graphics graphics = Graphics.FromImage(bitmap))
+            using (Pen darkPen = new Pen(Color.FromArgb(42, 42, 42), 1.8f))
+            using (Pen accentPen = new Pen(Color.FromArgb(45, 92, 175), 1.8f))
+            using (SolidBrush accentBrush = new SolidBrush(Color.FromArgb(45, 92, 175)))
+            {
+                ConfigureGraphics(graphics);
+
+                // 左侧实体（基准）
+                graphics.DrawRectangle(darkPen, 2, 5, 9, 14);
+                // 右侧实体（对齐后）
+                graphics.DrawRectangle(accentPen, 13, 5, 9, 14);
+                // 对齐箭头
+                graphics.DrawLine(darkPen, 11, 10, 13, 10);
+                DrawArrow(graphics, darkPen, 11, 10, 13, 10);
+                // 中心标记
+                graphics.FillEllipse(accentBrush, 9, 10, 3, 3);
+            }
+
+            return bitmap;
+        }
+
         private static Bitmap CreateCanvas()
         {
             Bitmap bitmap = new Bitmap(24, 24);

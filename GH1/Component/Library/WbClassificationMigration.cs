@@ -4957,6 +4957,49 @@ namespace NS_Parrot
             }
         }
 
+        /// <summary>
+        /// 将诊断信息写入数据库同文件夹的 TXT 文件。
+        /// </summary>
+        private static void WriteDiagnosticsToFile(string databasePath, List<string> diagnostics)
+        {
+            if (string.IsNullOrWhiteSpace(databasePath) || diagnostics == null || diagnostics.Count == 0)
+                return;
+            try
+            {
+                string dir = Path.GetDirectoryName(Path.GetFullPath(databasePath));
+                if (string.IsNullOrWhiteSpace(dir)) return;
+                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
+                string path = Path.Combine(dir, "迁移诊断_" + timestamp + ".txt");
+                File.WriteAllText(path, string.Join(Environment.NewLine, diagnostics), Encoding.UTF8);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// 将实体特征信息写入数据库同文件夹的 TXT 文件。
+        /// </summary>
+        private static void WriteFeaturesToFile(string databasePath, List<WbMigrationRecord> records)
+        {
+            if (string.IsNullOrWhiteSpace(databasePath) || records == null || records.Count == 0)
+                return;
+            try
+            {
+                string dir = Path.GetDirectoryName(Path.GetFullPath(databasePath));
+                if (string.IsNullOrWhiteSpace(dir)) return;
+                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
+                string path = Path.Combine(dir, "迁移特征_" + timestamp + ".txt");
+                var lines = new List<string>();
+                foreach (var r in records)
+                {
+                    string summary = r.Feature != null ? r.Feature.ToSummary() : "";
+                    lines.Add(string.Format(CultureInfo.InvariantCulture,
+                        "{0}\t{1}\t{2}\t{3}", r.Index, r.Number, r.SourceFile, summary));
+                }
+                File.WriteAllText(path, string.Join(Environment.NewLine, lines), Encoding.UTF8);
+            }
+            catch { }
+        }
+
         private bool TryResumeCheckpoint(string databasePath, List<string> currentFiles)
         {
             string cpPath = WbMigrationCheckpoint.GetCheckpointPath(databasePath);
@@ -5149,6 +5192,8 @@ namespace NS_Parrot
             audit.EmptyFiles = _emptyFilePaths;
             logs.AddRange(audit.ToLogs());
             WriteLogToFile(_pendingDatabasePath, logs);
+            WriteDiagnosticsToFile(_pendingDatabasePath, _diagnostics);
+            WriteFeaturesToFile(_pendingDatabasePath, _collectedRecords);
             DeleteCheckpoint();
             ResetMigration();
             ScheduleFinalClose();

@@ -1173,8 +1173,8 @@ namespace NS_Parrot
                             c.Where(r => string.Equals(r.Number, group.Key,
                                 StringComparison.OrdinalIgnoreCase))
                              .OrderBy(r => r.Index)
-                             .Select(r => (r.Index + 1).ToString(CultureInfo.InvariantCulture))) + ")");
-                    string detail = "编号相同但特征不同，待复核：" + group.Key +
+                             .Select(r => r.Index.ToString(CultureInfo.InvariantCulture))) + ")");
+                    string detail = "异件同号：" + group.Key +
                         "；" + (classCount > 0
                             ? "分为 " + classCount.ToString(CultureInfo.InvariantCulture) + " 类" +
                               "；分类明细：" + string.Join(" ", classDetails)
@@ -1254,7 +1254,7 @@ namespace NS_Parrot
                 {
                     string prefix = kept.Feature.HasDegenerateHoles || r.Feature.HasDegenerateHoles
                         ? "含退化孔：未在当前特征与容差下确认同件，待复核："
-                        : "编号相同但特征不同，待复核：";
+                        : "异件同号：";
                     string detail = prefix + r.Number +
                         "；保留来源=" + kept.SourceFile +
                         "；待复核来源=" + r.SourceFile;
@@ -1502,7 +1502,7 @@ namespace NS_Parrot
             if (!WbUtil.SameOptionalText(a.Material, b.Material, strictMaterialColor) ||
                 !WbUtil.SameOptionalText(a.Color, b.Color, strictMaterialColor))
             {
-                reasons.Add("异件同号，原因：材质或颜色不同");
+                reasons.Add("原因：材质或颜色不同");
             }
 
             // 2. 包围盒各维度独立检查（不短路）
@@ -1518,7 +1518,7 @@ namespace NS_Parrot
                         bbFailed = true;
                 }
                 if (bbFailed)
-                    reasons.Add("异件同号，原因：包围盒长度不同");
+                    reasons.Add("原因：包围盒长度不同");
             }
 
             // 3. 体积或惯量
@@ -1540,19 +1540,19 @@ namespace NS_Parrot
                 }
             }
             if (volumeOrInertiaFailed)
-                reasons.Add("异件同号，原因：体积或惯量超出容差");
+                reasons.Add("原因：体积或惯量超出容差");
 
             // 4. 孔匹配
             bool aDeg = a.HasDegenerateHoles;
             bool bDeg = b.HasDegenerateHoles;
             if (aDeg != bDeg)
             {
-                reasons.Add("异件同号，原因：退化孔状态不一致");
+                reasons.Add("原因：退化孔状态不一致");
             }
 
             if (a.Holes.Count != b.Holes.Count)
             {
-                reasons.Add("异件同号，原因：孔数不同（" +
+                reasons.Add("原因：孔数不同（" +
                     a.Holes.Count.ToString(CultureInfo.InvariantCulture) + " vs " +
                     b.Holes.Count.ToString(CultureInfo.InvariantCulture) + "）");
             }
@@ -1585,7 +1585,7 @@ namespace NS_Parrot
                     }
                 }
                 if (!holeMatch)
-                    reasons.Add("异件同号，原因：孔特征无法完整匹配");
+                    reasons.Add("原因：孔特征无法完整匹配");
             }
 
             // 5. 外轮廓计数（仅诊断，不参与同件判定）
@@ -1599,7 +1599,7 @@ namespace NS_Parrot
 
             // 兜底：各项判据均通过但不在一类（歧义组导致）
             if (reasons.Count == 0)
-                reasons.Add("异件同号，原因：容差不传递（详见诊断日志）");
+                reasons.Add("原因：容差不传递（详见诊断日志）");
 
             return reasons;
         }
