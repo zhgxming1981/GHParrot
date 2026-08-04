@@ -248,7 +248,10 @@ namespace NS_Parrot
             string[] parts = fullPath.Split(separators, StringSplitOptions.RemoveEmptyEntries);
 
             int take = Math.Min(3, parts.Length);
-            return string.Join("\\", parts.Skip(parts.Length - take));
+            string[] tail = parts.Skip(parts.Length - take).ToArray();
+            // 去掉最后一段的文件后缀名
+            tail[tail.Length - 1] = Path.GetFileNameWithoutExtension(tail[tail.Length - 1]);
+            return string.Join("\\", tail);
         }
 
         /// <summary>

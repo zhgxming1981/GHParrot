@@ -175,7 +175,9 @@ namespace NS_Parrot
         private static string Unescape(string s)
         {
             if (string.IsNullOrEmpty(s)) return "";
-            return s.Replace("\\r", "\r").Replace("\\n", "\n").Replace("\\\\", "\\");
+            // 必须先保护已转义的反斜杠；否则原始字面量 "\\r" / "\\n"
+            // 会在还原时被错误解析为回车/换行。
+            return s.Replace("\\\\", "\0").Replace("\\r", "\r").Replace("\\n", "\n").Replace("\0", "\\");
         }
 
         public static string GetCheckpointPath(string databasePath)

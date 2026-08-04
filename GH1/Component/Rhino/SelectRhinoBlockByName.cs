@@ -80,7 +80,15 @@ namespace NS_Parrot
                 return;
             }
 
-            foreach (RhinoObject obj in doc.Objects)
+            ObjectEnumeratorSettings objectSettings = new ObjectEnumeratorSettings
+            {
+                ActiveObjects = true,
+                HiddenObjects = true,
+                LockedObjects = true,
+                ObjectTypeFilter = ObjectType.InstanceReference
+            };
+
+            foreach (RhinoObject obj in doc.Objects.GetObjectList(objectSettings))
             {
                 if (!(obj is InstanceObject instanceObject))
                     continue;
