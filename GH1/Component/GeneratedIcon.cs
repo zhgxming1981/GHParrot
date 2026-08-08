@@ -166,6 +166,27 @@ namespace NS_Parrot
             return bitmap;
         }
 
+        public static Bitmap GetPlaneToLine()
+        {
+            Bitmap bitmap = CreateCanvas();
+            using (Graphics graphics = Graphics.FromImage(bitmap))
+            using (Pen planePen = new Pen(Color.FromArgb(45, 130, 255), 1.6f))
+            using (Pen linePen = new Pen(Color.FromArgb(42, 42, 42), 2.0f))
+            using (SolidBrush originBrush = new SolidBrush(Color.FromArgb(230, 92, 36)))
+            {
+                ConfigureGraphics(graphics);
+                // 平面表示：左上小矩形
+                graphics.DrawRectangle(planePen, 3, 3, 12, 8);
+                // 原点
+                graphics.FillEllipse(originBrush, 8, 5, 3, 3);
+                // 法向线从原点发出
+                graphics.DrawLine(linePen, 9, 6, 17, 16);
+                DrawArrow(graphics, linePen, 17, 16, 20, 19);
+            }
+
+            return bitmap;
+        }
+
         private static Bitmap CreateCanvas()
         {
             Bitmap bitmap = new Bitmap(24, 24);

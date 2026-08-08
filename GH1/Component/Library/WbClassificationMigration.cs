@@ -4042,15 +4042,22 @@ namespace NS_Parrot
                             (i + 1).ToString(CultureInfo.InvariantCulture) + " 个 GUID 无效。");
 
                     Brep brep = ReadBrepFromActiveDocument(ids[i].Value, i);
-                    WbFeature feature = WbFeature.Create(
-                        TextAt(materials, i), TextAt(colors, i),
-                        brep, _settings.InertiaDegenerateRatio, _settings.FallbackTolerance, _collectedRecords.Count);
-                    _collectedRecords.Add(new WbMigrationRecord(
-                        _collectedRecords.Count, numbers[i].Trim(),
-                        feature, _pendingFiles[_fileIndex]));
-                    featureTexts.Add(feature.Serialize());
-                    _diagnostics.AddRange(feature.DiagnosticLines(
-                        numbers[i].Trim(), _pendingFiles[_fileIndex]));
+                    try
+                    {
+                        WbFeature feature = WbFeature.Create(
+                            TextAt(materials, i), TextAt(colors, i),
+                            brep, _settings.InertiaDegenerateRatio, _settings.FallbackTolerance, _collectedRecords.Count);
+                        _collectedRecords.Add(new WbMigrationRecord(
+                            _collectedRecords.Count, numbers[i].Trim(),
+                            feature, _pendingFiles[_fileIndex]));
+                        featureTexts.Add(feature.Serialize());
+                        _diagnostics.AddRange(feature.DiagnosticLines(
+                            numbers[i].Trim(), _pendingFiles[_fileIndex]));
+                    }
+                    finally
+                    {
+                        brep.Dispose();
+                    }
                 }
 
                 saved = AdvanceFile(logs);

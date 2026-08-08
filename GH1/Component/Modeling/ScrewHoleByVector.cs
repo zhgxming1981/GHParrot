@@ -453,7 +453,8 @@ namespace NS_Parrot
             double length;
             Point3d cutterStart;
             Point3d cutterCenter;
-            bool useStartPoint = TryGetLocalCutterSpan(part, axisSource, center, cutterMargin, tolerance, out cutterStart, out cutterCenter, out length);
+            bool spanEntirePart = rule.Type == "过孔" || rule.Type == "工艺孔";
+            bool useStartPoint = TryGetLocalCutterSpan(part, axisSource, center, cutterMargin, tolerance, spanEntirePart, out cutterStart, out cutterCenter, out length);
             if (!useStartPoint)
             {
                 length = GetCutterLength(part, axisSource, rule, tolerance, inputCutterLength, cutterMargin);
@@ -510,6 +511,7 @@ namespace NS_Parrot
             Point3d hitPoint,
             double cutterMargin,
             double tolerance,
+            bool spanEntirePart,
             out Point3d start,
             out Point3d center,
             out double length)
@@ -524,24 +526,27 @@ namespace NS_Parrot
             if (parameters.Count < 2)
                 return false;
 
-            double hitParameter = NormalizedLineParameter(axis, hitPoint);
-            double bestDistance = double.MaxValue;
-            double bestStart = 0.0;
-            double bestEnd = 0.0;
-            for (int i = 0; i < parameters.Count - 1; i++)
+            double bestStart = parameters[0];
+            double bestEnd = parameters[parameters.Count - 1];
+            if (!spanEntirePart)
             {
-                double a = parameters[i];
-                double b = parameters[i + 1];
-                double distance = hitParameter < a
-                    ? a - hitParameter
-                    : hitParameter > b
-                        ? hitParameter - b
-                        : 0.0;
-                if (distance < bestDistance)
+                double hitParameter = NormalizedLineParameter(axis, hitPoint);
+                double bestDistance = double.MaxValue;
+                for (int i = 0; i < parameters.Count - 1; i++)
                 {
-                    bestDistance = distance;
-                    bestStart = a;
-                    bestEnd = b;
+                    double a = parameters[i];
+                    double b = parameters[i + 1];
+                    double distance = hitParameter < a
+                        ? a - hitParameter
+                        : hitParameter > b
+                            ? hitParameter - b
+                            : 0.0;
+                    if (distance < bestDistance)
+                    {
+                        bestDistance = distance;
+                        bestStart = a;
+                        bestEnd = b;
+                    }
                 }
             }
 
@@ -1801,6 +1806,7 @@ namespace NS_Parrot
                 catch
                 {
                     app = new Excel.Application();
+                    app.Visible = false;
                     appCreated = true;
                 }
 
@@ -1993,6 +1999,7 @@ namespace NS_Parrot
                 catch
                 {
                     app = new Excel.Application();
+                    app.Visible = false;
                     appCreated = true;
                 }
 
