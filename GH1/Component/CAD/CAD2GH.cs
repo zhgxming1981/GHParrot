@@ -252,6 +252,12 @@ namespace NS_Parrot
             item4.Image = Resources.check.GetThumbnailImage(25, 25, null, IntPtr.Zero); // 自定义的图片, Bitmap类型转Image
             menu.Items.Add(item4);
             item4.Click += ClearEntity;
+
+            ToolStripMenuItem item5 = new ToolStripMenuItem();
+            item5.Text = "选中并放大";
+            item5.Image = Resources.check.GetThumbnailImage(25, 25, null, IntPtr.Zero); // 自定义的图片, Bitmap类型转Image
+            menu.Items.Add(item5);
+            item5.Click += SelectAndZoomInCAD;
         }
 
         void ConnectAutoCAD(object argumentNameIsNotImportentEither, EventArgs butTheirOrderMatters)
@@ -266,6 +272,10 @@ namespace NS_Parrot
         {
             AutoCADTool.CAD2Rhino((res) =>
             {
+                // CAD 选择被 ESC 取消时会返回空列表；此时保留电池中已有的导入数据。
+                if (res == null || res.Count == 0)
+                    return;
+
                 SetRhinoResults(res);
                 RequestSafeUiRefresh();
             });
@@ -399,6 +409,26 @@ namespace NS_Parrot
             ExpireSolution(true);//告诉系统，电池需要重新计算
         }
 
+        void SelectAndZoomInCAD(object sender, EventArgs e)
+        {
+            List<string> handles = theRhinoResultList
+                .Select(r => r?.Handle)
+                .Where(handle => !string.IsNullOrWhiteSpace(handle))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            try
+            {
+                List<string> messages = AutoCADTool.SelectCADObjectsByHandles(handles, true);
+                if (messages.Count > 0)
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, string.Join("\n", messages));
+            }
+            catch (Exception ex)
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "选中并放大CAD对象失败: " + ex.Message);
+            }
+        }
+
         public override bool Write(GH_IWriter writer)
         {
             writer.SetInt32("PersistenceVersion", PersistenceVersion);
@@ -446,8 +476,22 @@ namespace NS_Parrot
 
         private void SetRhinoResults(IEnumerable<RhinoResult> results)
         {
-            theRhinoResultList = results?.ToList() ?? new List<RhinoResult>();
-            RebuildHandleSet();
+            // 正常导入时以本次结果完全替换旧缓存，并按 CAD 句柄去重。
+            theRhinoResultList.Clear();
+            theHandleSet.Clear();
+
+            if (results == null)
+                return;
+
+            foreach (RhinoResult result in results)
+            {
+                if (result == null)
+                    continue;
+
+                string handle = result.Handle;
+                if (string.IsNullOrWhiteSpace(handle) || theHandleSet.Add(handle))
+                    theRhinoResultList.Add(result);
+            }
         }
 
         private void RebuildHandleSet()
