@@ -5,6 +5,8 @@ VisualStudioVersion = 18.3.11222.16
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "parrot", "GH1\parrot.csproj", "{E35458D6-3E2A-40C2-AEE6-A8A86EE2496D}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "HaoChenArxBridge", "HaoChenArxBridge\HaoChenArxBridge.csproj", "{1E0B38E5-DCF4-41F1-8F25-C75ED949636E}"
+EndProject
 Project("{F184B08F-C81C-45F6-A57F-5ABD9991F28F}") = "CatiaFunction", "CatiaFunction\CatiaFunction.vbproj", "{B717F338-FFA6-4E9D-97B9-FF2C95DA3E70}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CommonFunction", "CommonFunction\CommonFunction.csproj", "{8292B3E9-4EAB-4E38-8B22-45C46AAE5625}"

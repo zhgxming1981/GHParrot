@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <OutputPath>$(MSBuildProjectDirectory)\HaoChen2GH.bundle\contents\modules\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="GcMgd"><HintPath>$(HaoChenCadDir)\GcMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="GcDbMgd"><HintPath>$(HaoChenCadDir)\GcDbMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="GcCoreMgd"><HintPath>$(HaoChenCadDir)\GcCoreMgd.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

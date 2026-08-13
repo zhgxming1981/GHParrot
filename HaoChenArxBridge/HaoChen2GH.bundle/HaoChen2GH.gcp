@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PluginPackage SchemaVersion="1.1"
+               Name="HaoChen2GH"
+               LocalName="HaoChen2GH"
+               Product="GstarCAD"
+               PluginType="ThirdParty"
+               Version="1.0.0"
+               Description="HaoChen ObjectARX bridge for Grasshopper"
+               Author="Parrot"
+               ProductCode="760d8d50-3612-46c4-a50b-d7d3c1af5105"
+               LoadMode="OnStartup">
+  <CompanyDetails Name="Parrot" Phone="" Url="" Email="" />
+  <RuntimeRequirements Series="*" Product="GstarCAD" ProductType="*" Platform="x64" OS="win10|win11" Dotnet="8.0" />
+  <Components>
+    <RuntimeRequirements Series="*" Product="GstarCAD" ProductType="*" Platform="x64" OS="win10|win11" Dotnet="8.0" />
+    <Commands GroupName="HaoChen2GH">
+      <Command>HAOCHEN2GHSTART</Command>
+      <Command>HAOCHEN2GHSTOP</Command>
+    </Commands>
+    <ComponentEntry Name="" Version="1.0.0" Type="Module" Path="contents/modules/HaoChenArxBridge.dll" />
+  </Components>
+</PluginPackage>

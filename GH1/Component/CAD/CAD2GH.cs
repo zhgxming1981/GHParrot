@@ -5,6 +5,8 @@ using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Attributes;
+using Grasshopper.Kernel.Parameters;
+using Grasshopper.Kernel.Types;
 using parrot.Properties;
 using Rhino.FileIO;
 using Rhino.Geometry;
@@ -40,6 +42,10 @@ namespace NS_Parrot
         public List<object> theBakeGeoList = new List<object>();//将要bake的对象
   
         private List<RhinoResult> theRhinoResultList = new List<RhinoResult>();
+        private HashSet<string> suppressedHandles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private bool writeFirstPointToPt;
+        private Point3d originalPt;
+        private bool hasOriginalPt;
         public string layerName = "";
 
 
@@ -128,6 +134,9 @@ namespace NS_Parrot
             // ============================
             foreach (var r in theRhinoResultList)
             {
+                if (IsSuppressed(r))
+                    continue;
+
                 object obj = r.Geometry;
                 object outGeo = null;
                 bool hasCadError = !string.IsNullOrWhiteSpace(r.ErrorMessage);
@@ -258,6 +267,18 @@ namespace NS_Parrot
             item5.Image = Resources.check.GetThumbnailImage(25, 25, null, IntPtr.Zero); // 自定义的图片, Bitmap类型转Image
             menu.Items.Add(item5);
             item5.Click += SelectAndZoomInCAD;
+
+            ToolStripMenuItem item6 = new ToolStripMenuItem("整理导入列表");
+            menu.Items.Add(item6);
+            item6.Click += EditImportedList;
+
+            ToolStripMenuItem item7 = new ToolStripMenuItem("首点写入 pt")
+            {
+                Checked = writeFirstPointToPt,
+                CheckOnClick = true
+            };
+            menu.Items.Add(item7);
+            item7.CheckedChanged += WriteFirstPointToPtChanged;
         }
 
         void ConnectAutoCAD(object argumentNameIsNotImportentEither, EventArgs butTheirOrderMatters)
@@ -277,8 +298,33 @@ namespace NS_Parrot
                     return;
 
                 SetRhinoResults(res);
+                SynchronizeFirstPointToInput();
                 RequestSafeUiRefresh();
             });
+        }
+
+        private void EditImportedList(object sender, EventArgs e)
+        {
+            using (CadImportListEditor dialog = new CadImportListEditor(theRhinoResultList, suppressedHandles))
+            {
+                if (dialog.ShowDialog() != DialogResult.OK)
+                    return;
+
+                theRhinoResultList = dialog.OrderedResults;
+                suppressedHandles = dialog.SuppressedHandles;
+                SynchronizeFirstPointToInput();
+                ExpireSolution(true);
+            }
+        }
+
+        private void WriteFirstPointToPtChanged(object sender, EventArgs e)
+        {
+            ToolStripMenuItem item = sender as ToolStripMenuItem;
+            if (item == null)
+                return;
+
+            SetWriteFirstPointToPt(item.Checked);
+            ExpireSolution(true);
         }
 
      
@@ -309,6 +355,7 @@ namespace NS_Parrot
                     }
                 }
 
+                SynchronizeFirstPointToInput();
                 RequestSafeUiRefresh();
             });
         }
@@ -357,6 +404,7 @@ namespace NS_Parrot
                     }
                 }
 
+                SynchronizeFirstPointToInput();
                 RequestSafeUiRefresh();
             });
         }
@@ -378,6 +426,7 @@ namespace NS_Parrot
                     try
                     {
                         StabilizeRhinoUi();
+                        SynchronizeFirstPointToInput();
                         ExpireSolution(true);
                     }
                     finally
@@ -432,6 +481,8 @@ namespace NS_Parrot
         public override bool Write(GH_IWriter writer)
         {
             writer.SetInt32("PersistenceVersion", PersistenceVersion);
+            writer.SetBoolean("WriteFirstPointToPt", writeFirstPointToPt);
+            writer.SetString("SuppressedHandles", string.Join("\n", suppressedHandles));
 
             GH_IWriter cacheChunk = writer.CreateChunk(PersistenceChunk);
             cacheChunk.SetInt32("Count", theRhinoResultList.Count);
@@ -449,6 +500,11 @@ namespace NS_Parrot
         {
             theRhinoResultList.Clear();
             theHandleSet.Clear();
+            suppressedHandles.Clear();
+
+            reader.TryGetBoolean("WriteFirstPointToPt", ref writeFirstPointToPt);
+            string suppressedHandleText = string.Empty;
+            reader.TryGetString("SuppressedHandles", ref suppressedHandleText);
 
             if (reader.FindChunk(PersistenceChunk) is GH_IReader cacheChunk)
             {
@@ -471,6 +527,9 @@ namespace NS_Parrot
                 SetRhinoResults(restored);
             }
 
+            foreach (string handle in suppressedHandleText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                suppressedHandles.Add(handle);
+
             return base.Read(reader);
         }
 
@@ -479,6 +538,7 @@ namespace NS_Parrot
             // 正常导入时以本次结果完全替换旧缓存，并按 CAD 句柄去重。
             theRhinoResultList.Clear();
             theHandleSet.Clear();
+            suppressedHandles.Clear();
 
             if (results == null)
                 return;
@@ -492,6 +552,58 @@ namespace NS_Parrot
                 if (string.IsNullOrWhiteSpace(handle) || theHandleSet.Add(handle))
                     theRhinoResultList.Add(result);
             }
+        }
+
+        private bool IsSuppressed(RhinoResult result)
+        {
+            return result != null && !string.IsNullOrWhiteSpace(result.Handle) && suppressedHandles.Contains(result.Handle);
+        }
+
+        private void SynchronizeFirstPointToInput()
+        {
+            if (!writeFirstPointToPt || Params.Input.Count == 0)
+            {
+                return;
+            }
+
+            RhinoResult firstResult = theRhinoResultList.FirstOrDefault(result => !IsSuppressed(result));
+            if (firstResult == null || !(firstResult.Geometry is Point3d firstPoint))
+                return;
+
+            Param_Point pointParam = Params.Input[0] as Param_Point;
+            if (pointParam == null)
+                return;
+
+            if (pointParam.SourceCount > 0)
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "pt 输入端已接线，未覆盖上游输入。");
+                return;
+            }
+
+            pointParam.PersistentData.Clear();
+            pointParam.PersistentData.Append(new GH_Point(firstPoint));
+            pointParam.OnObjectChanged(GH_ObjectEventType.PersistentData);
+            ScheduleSolutionAfterPtWrite();
+        }
+
+        private void SetWriteFirstPointToPt(bool enabled)
+        {
+            if (writeFirstPointToPt == enabled) return;
+            Param_Point pointParam = Params.Input.Count > 0 ? Params.Input[0] as Param_Point : null;
+            if (enabled && pointParam != null && pointParam.SourceCount == 0)
+            {
+                hasOriginalPt = false;
+                if (pointParam.PersistentData.DataCount > 0 && pointParam.PersistentData.get_Branch(0)[0] is GH_Point point) { originalPt = point.Value; hasOriginalPt = true; }
+            }
+            writeFirstPointToPt = enabled;
+            if (!enabled && pointParam != null && pointParam.SourceCount == 0) { pointParam.PersistentData.Clear(); if (hasOriginalPt) pointParam.PersistentData.Append(new GH_Point(originalPt)); pointParam.OnObjectChanged(GH_ObjectEventType.PersistentData); ScheduleSolutionAfterPtWrite(); }
+            SynchronizeFirstPointToInput();
+        }
+
+        private void ScheduleSolutionAfterPtWrite()
+        {
+            GH_Document document = OnPingDocument();
+            if (document != null) document.ScheduleSolution(1, doc => ExpireSolution(false));
         }
 
         private void RebuildHandleSet()
@@ -634,6 +746,115 @@ namespace NS_Parrot
 
 
 
+    }
+
+    internal sealed class CadImportListEditor : Form
+    {
+        private readonly ListView listView;
+
+        public List<RhinoResult> OrderedResults { get; private set; }
+        public HashSet<string> SuppressedHandles { get; private set; }
+
+        public CadImportListEditor(IEnumerable<RhinoResult> results, ISet<string> suppressedHandles)
+        {
+            Text = "整理 CAD 导入列表";
+            StartPosition = FormStartPosition.CenterParent;
+            Width = 700;
+            Height = 460;
+            MinimizeBox = false;
+            MaximizeBox = false;
+
+            listView = new ListView
+            {
+                Dock = DockStyle.Fill,
+                View = View.Details,
+                CheckBoxes = true,
+                FullRowSelect = true,
+                HideSelection = false
+            };
+            listView.Columns.Add("序号", 55);
+            listView.Columns.Add("导入项（取消勾选即抑制）", 570);
+
+            foreach (RhinoResult result in results ?? Enumerable.Empty<RhinoResult>())
+            {
+                if (result == null)
+                    continue;
+
+                string handle = result.Handle ?? string.Empty;
+                string name = string.IsNullOrWhiteSpace(result.BlockName) ? result.Geometry?.GetType().Name ?? "无几何" : result.BlockName;
+                string detail = string.Format("{0}    图层: {1}    句柄: {2}", name, result.Layer ?? string.Empty, handle);
+                ListViewItem item = new ListViewItem((listView.Items.Count + 1).ToString()) { Tag = result };
+                item.SubItems.Add(detail);
+                item.Checked = string.IsNullOrWhiteSpace(handle) || suppressedHandles == null || !suppressedHandles.Contains(handle);
+                listView.Items.Add(item);
+            }
+
+            Button upButton = new Button { Text = "上移", Width = 70 };
+            upButton.Click += (sender, e) => MoveSelectedItem(-1);
+            Button downButton = new Button { Text = "下移", Width = 70 };
+            downButton.Click += (sender, e) => MoveSelectedItem(1);
+            Button okButton = new Button { Text = "确定", DialogResult = DialogResult.OK, Width = 70 };
+            okButton.Click += (sender, e) => ApplyChanges();
+            Button cancelButton = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Width = 70 };
+
+            FlowLayoutPanel buttons = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 42,
+                FlowDirection = FlowDirection.RightToLeft,
+                Padding = new Padding(8)
+            };
+            buttons.Controls.Add(cancelButton);
+            buttons.Controls.Add(okButton);
+            buttons.Controls.Add(downButton);
+            buttons.Controls.Add(upButton);
+
+            Controls.Add(listView);
+            Controls.Add(buttons);
+            AcceptButton = okButton;
+            CancelButton = cancelButton;
+        }
+
+        private void MoveSelectedItem(int offset)
+        {
+            if (listView.SelectedItems.Count != 1)
+                return;
+
+            ListViewItem selected = listView.SelectedItems[0];
+            int oldIndex = selected.Index;
+            int newIndex = oldIndex + offset;
+            if (newIndex < 0 || newIndex >= listView.Items.Count)
+                return;
+
+            listView.Items.RemoveAt(oldIndex);
+            listView.Items.Insert(newIndex, selected);
+            selected.Selected = true;
+            selected.Focused = true;
+            RenumberItems();
+        }
+
+        private void RenumberItems()
+        {
+            for (int i = 0; i < listView.Items.Count; i++)
+                listView.Items[i].Text = (i + 1).ToString();
+        }
+
+        private void ApplyChanges()
+        {
+            OrderedResults = new List<RhinoResult>();
+            SuppressedHandles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (ListViewItem item in listView.Items)
+            {
+                RhinoResult result = item.Tag as RhinoResult;
+                if (result == null)
+                    continue;
+
+                OrderedResults.Add(result);
+                if (!item.Checked && !string.IsNullOrWhiteSpace(result.Handle))
+                    SuppressedHandles.Add(result.Handle);
+            }
+        }
     }
 
     internal class CButton_Refresh : GH_ComponentAttributes

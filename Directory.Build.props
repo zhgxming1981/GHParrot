@@ -13,6 +13,7 @@
     <Tekla2025Dir Condition="'$(Tekla2025Dir)' == ''">$(ProgramW6432)\Tekla Structures\2025.0</Tekla2025Dir>
     <Tekla2025Bin Condition="'$(Tekla2025Bin)' == ''">$(Tekla2025Dir)\bin</Tekla2025Bin>
     <AutoCAD2020Dir Condition="'$(AutoCAD2020Dir)' == ''">$(ProgramW6432)\Autodesk\AutoCAD 2020</AutoCAD2020Dir>
+    <HaoChenCadDir Condition="'$(HaoChenCadDir)' == ''">D:\Program Files\浩辰软件\浩辰CAD2026</HaoChenCadDir>
     <NxBaseDir Condition="'$(NxBaseDir)' == ''">D:\Program Files\Siemens\DesigncenterNX2512</NxBaseDir>
   </PropertyGroup>
 </Project>
