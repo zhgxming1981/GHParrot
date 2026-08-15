@@ -246,9 +246,8 @@ public sealed class HaoChenBridge : IExtensionApplication
 
     private static void ReadCurveEntity(Curve curve, DBObject item, List<HaoChenRegionDto> output, string fileName)
     {
-        var edge = new HaoChenLoopDto();
-        foreach (Point3d point in SampleCurve(curve, 64)) edge.Points.Add(new HaoChenPointDto(point.X, point.Y, point.Z));
-        if (edge.Points.Count < 2) return;
+        var edge = CreateEdgeDto(curve);
+        if (edge.Points.Count < 2 && edge.EdgeType != "Circle") return;
         output.Add(new HaoChenRegionDto { Kind = "Curve", Handle = item.Handle.ToString(), Layer = ((Entity)item).Layer, Color = ((Entity)item).Color.ColorValue.ToArgb(), LineType = ((Entity)item).Linetype, FileName = fileName, Loops = new List<HaoChenLoopDto> { edge } });
     }
 
@@ -295,14 +294,9 @@ public sealed class HaoChenBridge : IExtensionApplication
                 if (item is not Curve curve) continue;
                 using (curve)
                 {
-                    var edge = new HaoChenLoopDto();
-                    int pointCount = 0;
-                    foreach (Point3d point in SampleCurve(curve, 32))
-                    {
-                        edge.Points.Add(new HaoChenPointDto(point.X, point.Y, point.Z));
-                        pointCount++;
-                    }
-                    if (edge.Points.Count >= 2) edges.Add(edge);
+                    var edge = CreateEdgeDto(curve);
+                    int pointCount = edge.Points.Count;
+                    if (edge.Points.Count >= 2 || edge.EdgeType == "Circle") edges.Add(edge);
                     diagnostics.Add(blockTag + " | 边界=" + curve.GetType().Name + " | 采样点=" + pointCount);
                 }
             }
@@ -338,6 +332,28 @@ public sealed class HaoChenBridge : IExtensionApplication
         for (int i = 0; i <= count; i++)
             yield return curve.GetPointAtParameter(start + (end - start) * i / count);
     }
+
+    private static HaoChenLoopDto CreateEdgeDto(Curve curve)
+    {
+        if (curve is Line line)
+        {
+            return new HaoChenLoopDto { EdgeType = "Line", Points = new List<HaoChenPointDto> { ToDto(line.StartPoint), ToDto(line.EndPoint) } };
+        }
+        if (curve is Arc arc)
+        {
+            double middleParameter = (arc.StartParam + arc.EndParam) * 0.5;
+            return new HaoChenLoopDto { EdgeType = "Arc", Center = ToDto(arc.Center), MidPoint = ToDto(arc.GetPointAtParameter(middleParameter)), Points = new List<HaoChenPointDto> { ToDto(arc.StartPoint), ToDto(arc.EndPoint) } };
+        }
+        if (curve is Circle circle)
+        {
+            return new HaoChenLoopDto { EdgeType = "Circle", Center = ToDto(circle.Center), Normal = new HaoChenPointDto(circle.Normal.X, circle.Normal.Y, circle.Normal.Z), Radius = circle.Radius };
+        }
+        var edge = new HaoChenLoopDto { EdgeType = "Unsupported:" + curve.GetType().Name };
+        foreach (Point3d point in SampleCurve(curve, 64)) edge.Points.Add(ToDto(point));
+        return edge;
+    }
+
+    private static HaoChenPointDto ToDto(Point3d point) => new(point.X, point.Y, point.Z);
     private static void WriteMessage(string message) => Application.DocumentManager.MdiActiveDocument?.Editor.WriteMessage(message);
     private static void Log(string message)
     {
@@ -352,5 +368,5 @@ public sealed class HaoChenBridge : IExtensionApplication
 }
 public sealed class HaoChenImportResponse { public List<HaoChenRegionDto> Regions { get; set; } = new(); public long ElapsedMilliseconds { get; set; } public string Error { get; set; } = string.Empty; public List<string> Diagnostics { get; set; } = new(); public static HaoChenImportResponse Fail(string error) => new() { Error = error }; }
 public sealed class HaoChenRegionDto { public string Kind { get; set; } = "Brep"; public string Handle { get; set; } = ""; public string BlockName { get; set; } = ""; public string Layer { get; set; } = ""; public int Color { get; set; } public string LineType { get; set; } = ""; public string FileName { get; set; } = ""; public HaoChenPointDto Position { get; set; } public string Text { get; set; } = ""; public double TextHeight { get; set; } public double Rotation { get; set; } public List<HaoChenLoopDto> Loops { get; set; } = new(); }
-public sealed class HaoChenLoopDto { public List<HaoChenPointDto> Points { get; set; } = new(); }
+public sealed class HaoChenLoopDto { public string EdgeType { get; set; } = ""; public HaoChenPointDto? Center { get; set; } public HaoChenPointDto? MidPoint { get; set; } public HaoChenPointDto? Normal { get; set; } public double Radius { get; set; } public List<HaoChenPointDto> Points { get; set; } = new(); }
 public readonly record struct HaoChenPointDto(double X, double Y, double Z);

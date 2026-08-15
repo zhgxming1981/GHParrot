@@ -137,7 +137,27 @@ namespace NS_Parrot
                 var edges = new List<Curve>();
                 foreach (HaoChenLoopDto edge in item.Loops ?? new List<HaoChenLoopDto>())
                 {
+                    if (string.Equals(edge.EdgeType, "Circle", StringComparison.OrdinalIgnoreCase) && edge.Center != null && edge.Normal != null)
+                    {
+                        Point3d center = new Point3d(edge.Center.X, edge.Center.Y, edge.Center.Z);
+                        Vector3d normal = new Vector3d(edge.Normal.X, edge.Normal.Y, edge.Normal.Z);
+                        edges.Add(new ArcCurve(new Circle(new Plane(center, normal), edge.Radius)));
+                        continue;
+                    }
                     if (edge.Points == null || edge.Points.Count < 2) continue;
+                    if (string.Equals(edge.EdgeType, "Line", StringComparison.OrdinalIgnoreCase))
+                    {
+                        edges.Add(new LineCurve(new Point3d(edge.Points[0].X, edge.Points[0].Y, edge.Points[0].Z), new Point3d(edge.Points[1].X, edge.Points[1].Y, edge.Points[1].Z)));
+                        continue;
+                    }
+                    if (string.Equals(edge.EdgeType, "Arc", StringComparison.OrdinalIgnoreCase) && edge.MidPoint != null)
+                    {
+                        Point3d start = new Point3d(edge.Points[0].X, edge.Points[0].Y, edge.Points[0].Z);
+                        Point3d end = new Point3d(edge.Points[1].X, edge.Points[1].Y, edge.Points[1].Z);
+                        Point3d middle = new Point3d(edge.MidPoint.X, edge.MidPoint.Y, edge.MidPoint.Z);
+                        edges.Add(new ArcCurve(new Arc(start, middle, end)));
+                        continue;
+                    }
                     var polyline = new Polyline();
                     foreach (HaoChenPointDto point in edge.Points) polyline.Add(new Point3d(point.X, point.Y, point.Z));
                     edges.Add(new PolylineCurve(polyline));
@@ -265,7 +285,7 @@ namespace NS_Parrot
     }
     public sealed class HaoChenImportResponse { public List<HaoChenRegionDto> Regions { get; set; } = new List<HaoChenRegionDto>(); public string Error { get; set; } }
     public sealed class HaoChenRegionDto { public string Kind { get; set; } public string Handle { get; set; } public string BlockName { get; set; } public string Layer { get; set; } public int Color { get; set; } public string LineType { get; set; } public string FileName { get; set; } public HaoChenPointDto Position { get; set; } public string Text { get; set; } public double TextHeight { get; set; } public double Rotation { get; set; } public List<HaoChenLoopDto> Loops { get; set; } = new List<HaoChenLoopDto>(); }
-    public sealed class HaoChenLoopDto { public List<HaoChenPointDto> Points { get; set; } = new List<HaoChenPointDto>(); }
+    public sealed class HaoChenLoopDto { public string EdgeType { get; set; } public HaoChenPointDto Center { get; set; } public HaoChenPointDto MidPoint { get; set; } public HaoChenPointDto Normal { get; set; } public double Radius { get; set; } public List<HaoChenPointDto> Points { get; set; } = new List<HaoChenPointDto>(); }
     public sealed class HaoChenPointDto { public double X { get; set; } public double Y { get; set; } public double Z { get; set; } }
     internal sealed class HaoChenCachedItem { public GeometryBase Geometry; public string Handle; public string BlockName; public string Layer; public Color Color; public string LineType; public string FileName; }
     internal sealed class HaoChenImportListEditor : Form
