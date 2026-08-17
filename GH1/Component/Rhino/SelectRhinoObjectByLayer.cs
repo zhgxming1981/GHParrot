@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
 using CommonFunction;
+using GH_IO.Serialization;
 using Grasshopper.Kernel;
 using Rhino;
+using Rhino.Commands;
 using Rhino.DocObjects;
 using System.Text.RegularExpressions;
+using System.Windows.Forms;
 
 namespace NS_Parrot
 {
@@ -13,6 +16,8 @@ namespace NS_Parrot
         private bool _refreshScheduled = false;
         private uint _lastDocumentSerialNumber = 0;
         private string _lastDocumentPath = "";
+        private bool _includeHiddenObjects;
+        private bool _includeLockedObjects;
 
         /// <summary>
         /// Initializes a new instance of the SelectRhinoObjectByLayer class.
@@ -30,6 +35,7 @@ namespace NS_Parrot
             RhinoDoc.LayerTableEvent += OnRhinoLayerTableEvent;
             RhinoDoc.ActiveDocumentChanged += OnRhinoDocumentChanged;
             RhinoDoc.EndOpenDocument += OnRhinoDocumentChanged;
+            Command.EndCommand += OnRhinoCommandEnded;
         }
 
         /// <summary>
@@ -85,9 +91,25 @@ namespace NS_Parrot
 
             }
 
-            foreach (var item in activeDoc.Objects)
+            ObjectEnumeratorSettings objectSettings = new ObjectEnumeratorSettings
             {
-                if (layerIndices.Contains(item.Attributes.LayerIndex) && resultIdSet.Add(item.Id))
+                NormalObjects = true,
+                HiddenObjects = true,
+                LockedObjects = true
+            };
+
+            foreach (var item in activeDoc.Objects.GetObjectList(objectSettings))
+            {
+                if (!layerIndices.Contains(item.Attributes.LayerIndex))
+                    continue;
+
+                if (item.IsHidden && !_includeHiddenObjects)
+                    continue;
+
+                if (item.IsLocked && !_includeLockedObjects)
+                    continue;
+
+                if (resultIdSet.Add(item.Id))
                     result_guid.Add(item.Id);
             }
 
@@ -172,6 +194,38 @@ namespace NS_Parrot
             OnRhinoDocumentChanged(sender, e);
         }
 
+        private void OnRhinoCommandEnded(object sender, CommandEventArgs e)
+        {
+            if (!CommandChangesObjectVisibilityOrLocking(e))
+                return;
+
+            OnRhinoDocumentChanged(sender, e);
+        }
+
+        private static bool CommandChangesObjectVisibilityOrLocking(CommandEventArgs e)
+        {
+            string commandName = e?.CommandEnglishName;
+            if (string.IsNullOrEmpty(commandName))
+                return false;
+
+            switch (commandName)
+            {
+                case "Hide":
+                case "Show":
+                case "HideSwap":
+                case "Lock":
+                case "Unlock":
+                case "UnlockAll":
+                case "LockSwap":
+                case "Isolate":
+                case "Unisolate":
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
         private static bool LayerTableChangeAffectsSelection(Rhino.DocObjects.Tables.LayerTableEventArgs e)
         {
             if (e == null)
@@ -191,7 +245,9 @@ namespace NS_Parrot
                         return true;
 
                     return !string.Equals(oldLayer.Name, newLayer.Name, StringComparison.OrdinalIgnoreCase) ||
-                        oldLayer.ParentLayerId != newLayer.ParentLayerId;
+                        oldLayer.ParentLayerId != newLayer.ParentLayerId ||
+                        oldLayer.IsVisible != newLayer.IsVisible ||
+                        oldLayer.IsLocked != newLayer.IsLocked;
 
                 default:
                     return false;
@@ -215,6 +271,50 @@ namespace NS_Parrot
             });
         }
 
+        protected override void AppendAdditionalComponentMenuItems(ToolStripDropDown menu)
+        {
+            base.AppendAdditionalComponentMenuItems(menu);
+            Menu_AppendSeparator(menu);
+            Menu_AppendItem(menu, "选中隐藏对象", (sender, args) => ToggleIncludeHiddenObjects(), true, _includeHiddenObjects);
+            Menu_AppendItem(menu, "选中锁定对象", (sender, args) => ToggleIncludeLockedObjects(), true, _includeLockedObjects);
+        }
+
+        private void ToggleIncludeHiddenObjects()
+        {
+            _includeHiddenObjects = !_includeHiddenObjects;
+            ExpireSolution(true);
+        }
+
+        private void ToggleIncludeLockedObjects()
+        {
+            _includeLockedObjects = !_includeLockedObjects;
+            ExpireSolution(true);
+        }
+
+        public override bool Write(GH_IWriter writer)
+        {
+            GH_IWriter chunk = writer.CreateChunk("SelectRhinoObjectByLayerSettings");
+            chunk.SetBoolean("IncludeHiddenObjects", _includeHiddenObjects);
+            chunk.SetBoolean("IncludeLockedObjects", _includeLockedObjects);
+            return base.Write(writer);
+        }
+
+        public override bool Read(GH_IReader reader)
+        {
+            GH_IReader chunk = reader.FindChunk("SelectRhinoObjectByLayerSettings");
+            if (chunk != null)
+            {
+                bool includeHiddenObjects = _includeHiddenObjects;
+                bool includeLockedObjects = _includeLockedObjects;
+                if (chunk.TryGetBoolean("IncludeHiddenObjects", ref includeHiddenObjects))
+                    _includeHiddenObjects = includeHiddenObjects;
+                if (chunk.TryGetBoolean("IncludeLockedObjects", ref includeLockedObjects))
+                    _includeLockedObjects = includeLockedObjects;
+            }
+
+            return base.Read(reader);
+        }
+
         public override void RemovedFromDocument(GH_Document document)
         {
             RhinoDoc.AddRhinoObject -= OnRhinoDocumentChanged;
@@ -225,6 +325,7 @@ namespace NS_Parrot
             RhinoDoc.LayerTableEvent -= OnRhinoLayerTableEvent;
             RhinoDoc.ActiveDocumentChanged -= OnRhinoDocumentChanged;
             RhinoDoc.EndOpenDocument -= OnRhinoDocumentChanged;
+            Command.EndCommand -= OnRhinoCommandEnded;
             base.RemovedFromDocument(document);
         }
 
