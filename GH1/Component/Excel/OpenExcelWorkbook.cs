@@ -1,4 +1,4 @@
-using Excel = Microsoft.Office.Interop.Excel;
+﻿using Excel = Microsoft.Office.Interop.Excel;
 using Grasshopper.Kernel;
 using System;
 using System.IO;
@@ -45,7 +45,11 @@ namespace NS_Parrot
             _triggerRun = false;
             _lastRun = run;
             if (!trigger)
+            {
+                if (_workbook != null)
+                    DA.SetData(0, _workbook);
                 return;
+            }
 
             try
             {
@@ -118,6 +122,8 @@ namespace NS_Parrot
 
         private void ReportError(string errorMessage, IGH_DataAccess dataAccess)
         {
+            _workbook = null;
+            _openedPath = string.Empty;
             Message = "打开失败";
             AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, errorMessage);
             dataAccess.SetData(0, null);

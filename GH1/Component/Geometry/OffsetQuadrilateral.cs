@@ -17,7 +17,7 @@ namespace NS_Parrot
 
         public OffsetQuadrilateral()
           : base("四边形偏移", "四边形偏移",
-              "输入平面四边形面和正法向，按上、下、左、右偏移生成新的四边形。正值向内，负值向外。",
+              "输入平面四边形面，按上、下、左、右偏移生成新的四边形。正值向内，负值向外。",
               "Parrot", "Geometry")
         {
         }
@@ -25,18 +25,17 @@ namespace NS_Parrot
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
             pManager.AddSurfaceParameter("四边形", "四边形", "输入平面的四边形Surface或者封闭的平面四边形曲线", GH_ParamAccess.item);
-            pManager.AddVectorParameter("法向", "法向", "四边形法向的正方向，用于确定左右方向和偏移内外。", GH_ParamAccess.item);
             pManager.AddNumberParameter("上", "上", "上边偏移值；正值向内，负值向外。", GH_ParamAccess.item, 0.0);
             pManager.AddNumberParameter("下", "下", "下边偏移值；正值向内，负值向外。", GH_ParamAccess.item, 0.0);
             pManager.AddNumberParameter("左", "左", "左边偏移值；正值向内，负值向外。", GH_ParamAccess.item, 0.0);
             pManager.AddNumberParameter("右", "右", "右边偏移值；正值向内，负值向外。", GH_ParamAccess.item, 0.0);
             pManager.AddNumberParameter("容差", "容差", "几何计算容差；小于等于0时使用Rhino文档绝对容差。", GH_ParamAccess.item, 0.0);
 
+            pManager[1].Optional = true;
             pManager[2].Optional = true;
             pManager[3].Optional = true;
             pManager[4].Optional = true;
             pManager[5].Optional = true;
-            pManager[6].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -55,7 +54,6 @@ namespace NS_Parrot
                 return;
 
             Surface quadrilateral = null;
-            Vector3d normal = Vector3d.Unset;
             double topOffset = 0.0;
             double bottomOffset = 0.0;
             double leftOffset = 0.0;
@@ -63,12 +61,11 @@ namespace NS_Parrot
             double tolerance = 0.0;
 
             if (!DA.GetData(0, ref quadrilateral)) return;
-            if (!DA.GetData(1, ref normal)) return;
-            DA.GetData(2, ref topOffset);
-            DA.GetData(3, ref bottomOffset);
-            DA.GetData(4, ref leftOffset);
-            DA.GetData(5, ref rightOffset);
-            DA.GetData(6, ref tolerance);
+            DA.GetData(1, ref topOffset);
+            DA.GetData(2, ref bottomOffset);
+            DA.GetData(3, ref leftOffset);
+            DA.GetData(4, ref rightOffset);
+            DA.GetData(5, ref tolerance);
 
             tolerance = ResolveTolerance(tolerance);
 
@@ -76,7 +73,8 @@ namespace NS_Parrot
             {
                 _labels.Clear();
                 QuadrilateralData data = ParseQuadrilateral(quadrilateral, tolerance);
-                Plane plane = BuildReferencePlane(data.Surface, normal);
+                Vector3d sourceNormal = GetSurfaceNormal(data.Surface);
+                Plane plane = BuildReferencePlane(data.Surface, sourceNormal);
                 List<Point2d> points2d = data.Vertices.Select(point => ToPlanePoint(plane, point)).ToList();
 
                 if (SignedArea(points2d) < 0.0)
@@ -103,7 +101,7 @@ namespace NS_Parrot
                 Polyline polyline = new Polyline(resultVertices);
                 polyline.Add(resultVertices[0]);
                 PolylineCurve resultCurve = new PolylineCurve(polyline);
-                Brep resultSurface = CreatePlanarSurface(resultCurve, normal, tolerance);
+                Brep resultSurface = CreatePlanarSurface(resultCurve, sourceNormal, tolerance);
 
                 Dictionary<EdgeName, Line> namedEdges = BuildNamedResultEdges(edges, resultVertices);
                 bool isRectangle = IsRectangle(resultVertices, tolerance);
@@ -206,6 +204,24 @@ namespace NS_Parrot
                 throw new ArgumentException("参考坐标系无效。");
 
             return plane;
+        }
+
+        private static Vector3d GetSurfaceNormal(Surface surface)
+        {
+            if (surface == null)
+                throw new ArgumentException("四边形Surface为空。");
+
+            Interval uDomain = surface.Domain(0);
+            Interval vDomain = surface.Domain(1);
+            Vector3d surfaceNormal = surface.NormalAt(
+                0.5 * (uDomain.T0 + uDomain.T1),
+                0.5 * (vDomain.T0 + vDomain.T1));
+
+            if (!surfaceNormal.IsValid || surfaceNormal.Length <= RhinoMath.ZeroTolerance)
+                throw new ArgumentException("无法获取输入四边形的面法向。");
+
+            surfaceNormal.Unitize();
+            return surfaceNormal;
         }
 
         private static List<Point3d> ExtractQuadrilateralVertices(Curve curve, double tolerance)

@@ -1,4 +1,4 @@
-// ========================================================================
+﻿// ========================================================================
 // WbClassificationCore — 分类库核心（WbClassificationMigration 与 WbEntityClassifier 共用）
 //
 // 包含类：WbUtil, WbHole, WbFeature, WbMigrationRecord,
@@ -57,6 +57,10 @@ namespace NS_Parrot
             return aEmpty || bEmpty || string.Equals(a, b, StringComparison.Ordinal);
         }
 
+        /// <summary>与 SameOptionalText 一致：纯空白材质/颜色统一按空值处理。</summary>
+        internal static string NormalizeOptionalMatchText(string value) =>
+            string.IsNullOrWhiteSpace(value) ? string.Empty : value;
+
         /// <summary>
         /// 二分图完美匹配（DFS 增广路径）。
         /// 要求两侧元素数量相等，每个左侧元素必须找到互不冲突的右侧元素。
@@ -66,7 +70,17 @@ namespace NS_Parrot
             List<T> left, List<T> right,
             Func<T, T, bool> compatible)
         {
+            return TryBipartiteMatch(left, right, compatible, out _);
+        }
+
+        /// <summary>二分图完美匹配，并返回左侧各项对应的右侧索引。</summary>
+        internal static bool TryBipartiteMatch<T>(
+            List<T> left, List<T> right,
+            Func<T, T, bool> compatible, out int[] rightByLeft)
+        {
             int n = left.Count;
+            rightByLeft = Array.Empty<int>();
+            if (n != right.Count) return false;
             if (n == 0) return true;
             int[] assigned = Enumerable.Repeat(-1, n).ToArray();
             for (int i = 0; i < n; i++)
@@ -74,6 +88,9 @@ namespace NS_Parrot
                 if (!DfsAssign(i, left, right, compatible, assigned, new bool[n]))
                     return false;
             }
+            rightByLeft = Enumerable.Repeat(-1, n).ToArray();
+            for (int rightIndex = 0; rightIndex < n; rightIndex++)
+                rightByLeft[assigned[rightIndex]] = rightIndex;
             return true;
         }
 
@@ -101,16 +118,27 @@ namespace NS_Parrot
     // ========================================================================
     // 数据结构
     // ========================================================================
-    internal sealed class WbLoopBoundary
+    internal sealed class WbLoopBoundary : IDisposable
     {
         public List<Curve> Curves;
         public Curve ClosedCurve;
         public double Perimeter;
-        public WbLoopBoundary(List<Curve> curves, Curve closedCurve)
+        private readonly Curve[] _joinedCurves;
+
+        public WbLoopBoundary(List<Curve> curves, Curve[] joinedCurves, Curve closedCurve)
         {
             Curves = curves;
+            _joinedCurves = joinedCurves ?? Array.Empty<Curve>();
             ClosedCurve = closedCurve;
             Perimeter = curves.Sum(c => c.GetLength());
+        }
+
+        public void Dispose()
+        {
+            foreach (Curve curve in Curves)
+                curve?.Dispose();
+            foreach (Curve curve in _joinedCurves)
+                curve?.Dispose();
         }
     }
 
@@ -201,7 +229,9 @@ namespace NS_Parrot
         public static WbFeature Create(
             string material, string color, Brep brep,
             double inertiaDegenerateRatio,
-            double fallbackTolerance, int index)
+            double fallbackTolerance, int index,
+            double? curveJoinToleranceOverride = null,
+            bool curveJoinUsesFallbackOverride = false)
         {
             if (brep == null)
                 throw new ArgumentException("第 " + (index + 1).ToString(CultureInfo.InvariantCulture) +
@@ -241,11 +271,29 @@ namespace NS_Parrot
                     Inertia = inertia,
                     Centroid = center,
                     LocalOrigin = box.Center,
-                    Axes = axes.Select(x => x).ToArray()
+                    Axes = (Vector3d[])axes.Clone()
                 };
 
-                // 一次遍历提取孔 + 外轮廓
-                ExtractFeatures(brep, center, axes, index, fallbackTolerance,
+                // 一次遍历提取孔 + 外轮廓。后台线程可传入主线程冻结的文档容差，
+                // 避免在后台访问 RhinoDoc.ActiveDoc。
+                bool usesFallbackTolerance;
+                double curveJoinTolerance;
+                if (curveJoinToleranceOverride.HasValue)
+                {
+                    curveJoinTolerance = curveJoinToleranceOverride.Value;
+                    usesFallbackTolerance = curveJoinUsesFallbackOverride;
+                }
+                else if (RhinoDoc.ActiveDoc == null)
+                {
+                    curveJoinTolerance = fallbackTolerance;
+                    usesFallbackTolerance = true;
+                }
+                else
+                {
+                    curveJoinTolerance = RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
+                    usesFallbackTolerance = false;
+                }
+                ExtractFeatures(brep, center, axes, index, curveJoinTolerance, usesFallbackTolerance,
                     out f.Holes, out f.OuterProfiles, out f.UsedFallbackTolerance);
 
                 f.MirrorScore = ComputeMirrorScore(faceCentroids, center, axes);
@@ -268,9 +316,14 @@ namespace NS_Parrot
         // ================================================================
         // 串行化
         // ================================================================
-        public string Serialize()
+        public string Serialize() => Serialize(Material, Color);
+
+        /// <summary>使用事务内确定的材质和颜色序列化，不修改当前特征对象。</summary>
+        internal string Serialize(string material, string color)
         {
-            string holes = string.Join("/", Holes.Select(h =>
+            // 不能使用 /：退化类型采用 Base64 编码，其中可能天然包含 /。
+            // ~ 不属于数字或标准 Base64 字符集，作为孔记录分隔符安全。
+            string holes = string.Join("~", Holes.Select(h =>
             {
                 var baseFields = new[] {
                     WbUtil.FR(h.Perimeter), WbUtil.FR(h.Area),
@@ -299,7 +352,7 @@ namespace NS_Parrot
 
             return string.Join(";", new[] {
                 Header,
-                WbUtil.B64(Material), WbUtil.B64(Color),
+                WbUtil.B64(material), WbUtil.B64(color),
                 WbUtil.B64(bbox),
                 WbUtil.FR(Area), WbUtil.FR(Volume),
                 WbUtil.FR(Inertia[0]), WbUtil.FR(Inertia[1]), WbUtil.FR(Inertia[2]),
@@ -321,6 +374,42 @@ namespace NS_Parrot
                 Holes.Count,
                 WbUtil.FD(Holes.Sum(h => h.Perimeter)),
                 WbUtil.FD(Holes.Sum(h => h.Area)));
+        }
+
+        /// <summary>输出与数据库 parts、holes 表对应的特征字段。</summary>
+        public string ToDatabaseSummary(string number)
+        {
+            string bbox = string.Join(",", BoundingBox.Select(WbUtil.FR));
+            var lines = new List<string>
+            {
+                string.Format(CultureInfo.InvariantCulture,
+                    "编号={0}; 材质={1}; 颜色={2}; 包围盒=({3}); 惯量=({4},{5},{6}); 表面积={7}; 体积={8}; 孔数={9}; 孔周长和={10}; 孔面积和={11}",
+                    number ?? string.Empty, Material, Color, bbox,
+                    WbUtil.FR(Inertia[0]), WbUtil.FR(Inertia[1]), WbUtil.FR(Inertia[2]),
+                    WbUtil.FR(Area), WbUtil.FR(Volume), Holes.Count,
+                    WbUtil.FR(Holes.Sum(h => h.Perimeter)), WbUtil.FR(Holes.Sum(h => h.Area)))
+            };
+
+            for (int i = 0; i < Holes.Count; i++)
+            {
+                WbHole h = Holes[i];
+                string holeLine = "孔[" + i.ToString(CultureInfo.InvariantCulture) +
+                    "] 局部=(" + WbUtil.FR(h.U) + "," + WbUtil.FR(h.V) + "," + WbUtil.FR(h.W) +
+                    "); 周长=" + WbUtil.FR(h.Perimeter) +
+                    "; 面积=" + WbUtil.FR(h.Area) +
+                    "; 法向=(" + WbUtil.FR(h.NU) + "," + WbUtil.FR(h.NV) + "," + WbUtil.FR(h.NW) + ")";
+                if (h.IsDegenerate)
+                {
+                    holeLine += "; 退化类型=" + h.DegenerateType +
+                        "; 投影面积=" + WbUtil.FR(h.DegenerateProjectedArea) +
+                        "; 圆形度=" + WbUtil.FR(h.DegenerateCircularity) +
+                        "; 纵横比=" + WbUtil.FR(h.DegenerateAspectRatio) +
+                        "; 拟合法向=(" + WbUtil.FR(h.DegenerateNormalU) + "," +
+                        WbUtil.FR(h.DegenerateNormalV) + "," + WbUtil.FR(h.DegenerateNormalW) + ")";
+                }
+                lines.Add(holeLine);
+            }
+            return string.Join(Environment.NewLine, lines);
         }
 
         /// <summary>从 V9 格式反序列化特征（用于检查点恢复，兼容不含退化孔字段的旧版本 V9 数据）</summary>
@@ -370,11 +459,12 @@ namespace NS_Parrot
             string holesPart = parts[9];
             if (!string.IsNullOrEmpty(holesPart))
             {
-                string[] holeLines = holesPart.Split('/');
+                string[] holeLines = SplitSerializedHoles(holesPart);
                 foreach (string hl in holeLines)
                 {
                     string[] hv = hl.Split(',');
-                    if (hv.Length < 8) continue;
+                    if (hv.Length < 8)
+                        throw new InvalidDataException("孔特征字段不完整，无法恢复。");
                     double perim = double.Parse(hv[0], CultureInfo.InvariantCulture);
                     double area = double.Parse(hv[1], CultureInfo.InvariantCulture);
                     double u = double.Parse(hv[2], CultureInfo.InvariantCulture);
@@ -442,6 +532,36 @@ namespace NS_Parrot
             }
 
             return f;
+        }
+
+        /// <summary>
+        /// 分割孔特征记录。新格式使用 ~；兼容早期错误使用 / 的记录，
+        /// 后者需把被退化类型 Base64 中 / 截断的片段重新拼回。
+        /// </summary>
+        private static string[] SplitSerializedHoles(string holesPart)
+        {
+            if (holesPart.IndexOf('~') >= 0)
+                return holesPart.Split('~');
+
+            var result = new List<string>();
+            var current = new StringBuilder();
+            foreach (string fragment in holesPart.Split('/'))
+            {
+                if (current.Length > 0) current.Append('/');
+                current.Append(fragment);
+
+                string[] fields = current.ToString().Split(',');
+                bool degenerate = fields.Length >= 9 && fields[8] == "D";
+                bool complete = degenerate ? fields.Length >= 16 : fields.Length == 8;
+                if (!complete) continue;
+
+                result.Add(current.ToString());
+                current.Clear();
+            }
+
+            if (current.Length > 0)
+                throw new InvalidDataException("孔特征记录不完整，无法恢复。");
+            return result.ToArray();
         }
 
         public IEnumerable<string> DiagnosticLines(string number, string sourceFile)
@@ -671,19 +791,20 @@ namespace NS_Parrot
         private static void ExtractFeatures(
             Brep brep, Point3d center, Vector3d[] axes,
             int index,
-            double fallbackTolerance,
+            double curveJoinTolerance, bool curveJoinUsesFallback,
             out List<WbHole> holes, out List<WbOuterProfile> profiles,
             out bool usedFallbackTolerance)
         {
-            usedFallbackTolerance = false;
+            usedFallbackTolerance = curveJoinUsesFallback;
             holes = new List<WbHole>();
             profiles = new List<WbOuterProfile>();
 
             foreach (BrepFace face in brep.Faces)
             foreach (BrepLoop loop in face.Loops)
             {
-                WbLoopBoundary boundary = ReadLoopBoundary(loop, fallbackTolerance,
-                    out bool loopUsedFallback);
+                using (WbLoopBoundary boundary = ReadLoopBoundary(loop, curveJoinTolerance, curveJoinUsesFallback,
+                    out bool loopUsedFallback))
+                {
                 if (loopUsedFallback) usedFallbackTolerance = true;
                 if (boundary.Perimeter <= RhinoMath.ZeroTolerance)
                     continue;
@@ -783,6 +904,7 @@ namespace NS_Parrot
                         outerProps?.Dispose();
                     }
                 }
+                }
             }
 
             // 确定性排序
@@ -796,10 +918,11 @@ namespace NS_Parrot
                 .ThenBy(p => p.Perimeter).ToList();
         }
 
-        private static WbLoopBoundary ReadLoopBoundary(BrepLoop loop, double fallbackTolerance,
+        private static WbLoopBoundary ReadLoopBoundary(BrepLoop loop, double curveJoinTolerance,
+            bool curveJoinUsesFallback,
             out bool usedFallbackTolerance)
         {
-            usedFallbackTolerance = false;
+            usedFallbackTolerance = curveJoinUsesFallback;
             var edges = new List<Curve>();
             foreach (BrepTrim trim in loop.Trims)
             {
@@ -811,20 +934,10 @@ namespace NS_Parrot
             if (edges.Count == 0)
                 throw new ArgumentException("孔轮廓不包含有效边。");
 
-            double tolerance;
-            if (RhinoDoc.ActiveDoc == null)
-            {
-                tolerance = fallbackTolerance;
-                usedFallbackTolerance = true;
-            }
-            else
-            {
-                tolerance = RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
-            }
-            Curve[] joined = Curve.JoinCurves(edges, tolerance);
+            Curve[] joined = Curve.JoinCurves(edges, curveJoinTolerance);
             Curve closed = joined != null && joined.Length == 1 && joined[0].IsClosed
                 ? joined[0] : null;
-            return new WbLoopBoundary(edges, closed);
+            return new WbLoopBoundary(edges, joined, closed);
         }
 
         /// <summary>
@@ -985,6 +1098,15 @@ namespace NS_Parrot
     // ========================================================================
     // 校核与聚类
     // ========================================================================
+    /// <summary>分类核心选出的孔一一对应及对比侧局部坐标变换。</summary>
+    internal sealed class WbHoleAssignment
+    {
+        public int[] ComparisonIndexByBaseline;
+        public List<WbHole> TransformedComparisonHoles;
+        public int[] Permutation;
+        public double[] Sign;
+    }
+
     internal sealed class WbMigrationAudit
     {
         // 6 种轴排列：惯量退化零件的主轴顺序可能在不同文件间交换
@@ -1093,7 +1215,8 @@ namespace NS_Parrot
                 // 桶键：孔数（必需相同）+ 材质/颜色（严格模式下才作为桶键）
                 string bucketKey = f.Holes.Count.ToString(CultureInfo.InvariantCulture);
                 if (strictMaterialColor)
-                    bucketKey += "|" + (f.Material ?? string.Empty) + "|" + (f.Color ?? string.Empty);
+                    bucketKey += "|" + WbUtil.NormalizeOptionalMatchText(f.Material) + "|" +
+                        WbUtil.NormalizeOptionalMatchText(f.Color);
 
                 if (!buckets.TryGetValue(bucketKey, out var list))
                 {
@@ -1191,7 +1314,9 @@ namespace NS_Parrot
                          .OrderBy(r => r.Index)
                          .Select(r => r.Index.ToString(CultureInfo.InvariantCulture))) + ")")
                     .ToList();
-                if (classCount > 1 || ambiguityDetails.Count > 0)
+                // “异件同号”仅适用于本次输入中同一编号出现至少两条记录；
+                // 单条记录落入跨编号歧义组时，由“聚类歧义”日志说明即可。
+                if (group.Count() > 1 && (classCount > 1 || ambiguityDetails.Count > 0))
                 {
                     var mismatchedClasses = audit.Classes
                         .Where(c => c.Any(r => string.Equals(r.Number, group.Key,
@@ -1296,6 +1421,7 @@ namespace NS_Parrot
                 WbMigrationRecord b = audit.Classes[right].OrderBy(r => r.Index).First();
                 if (MirrorMatches(a.Feature, b.Feature, enabled, tolerances, isRel, strictMaterialColor, holeNormalTolerance,
                     outerProfileAreaRatio, outerProfilePerimeterMin,
+                    degeneratePositionMultiplier, enableDegenerateMatching,
                     fallbackTolerance: fallbackTolerance))
                     audit.MirrorParts.Add(
                         "镜像零件：" + a.Number +
@@ -1450,7 +1576,8 @@ namespace NS_Parrot
                         double maximum = minima.Count == 0 ? 0 : minima.Max();
                         double average = minima.Count == 0 ? 0 : minima.Average();
                         bool assignment = PerfectAssignment(
-                            a.Feature.Holes, b.Feature.Holes, sign, _enabled, _tolerances, _isRel, _holeNormalTolerance);
+                            a.Feature.Holes, b.Feature.Holes, sign, _enabled, _tolerances, _isRel, _holeNormalTolerance,
+                            _degeneratePositionMultiplier, _enableDegenerateMatching);
                         yield return "变换(" + string.Join(",", sign.Select(WbUtil.FD)) +
                             ")：逐孔最近距离 最大=" + WbUtil.FD(maximum) +
                             "，平均=" + WbUtil.FD(average) +
@@ -1519,6 +1646,105 @@ namespace NS_Parrot
         {
             return GlobalMatches(a, b, e, t, isRel, strictMaterialColor) &&
                    GeometryMatches(a, b, e, t, isRel, false, normalTol, outerAreaRatio, outerPerimMin, degenMult, enableDegenMatch, fallbackTolerance);
+        }
+
+        /// <summary>
+        /// 在不改变 Matches 判定口径的前提下，计算已匹配零件的接近度。
+        /// 分数是各已启用数值判据“误差 / 当前有效容差”的最大值；越小越接近。
+        /// 仅用于多个均可匹配候选之间的确定性排序，不能使原本不匹配的零件通过。
+        /// </summary>
+        internal static bool TryGetMatchScore(
+            WbFeature a, WbFeature b,
+            Dictionary<V5Criterion, bool> e, Dictionary<V5Criterion, double> t,
+            Dictionary<V5Criterion, bool> isRel, bool strictMaterialColor, double normalTol,
+            double outerAreaRatio, double outerPerimMin,
+            double degenMult, bool enableDegenMatch, double fallbackTolerance,
+            out double score)
+        {
+            score = double.PositiveInfinity;
+            if (!GlobalMatches(a, b, e, t, isRel, strictMaterialColor))
+                return false;
+            if (!TryGetHoleAssignment(a, b, e, t, isRel, normalTol,
+                degenMult, enableDegenMatch, out WbHoleAssignment assignment))
+                return false;
+
+            double maxScore = 0.0;
+            for (int i = 0; i < 3; i++)
+                UpdateNormalizedScore(ref maxScore, a.BoundingBox[i], b.BoundingBox[i],
+                    t[V5Criterion.Length], isRel[V5Criterion.Length]);
+
+            if (e[V5Criterion.Inertia])
+                for (int i = 0; i < 3; i++)
+                    UpdateNormalizedScore(ref maxScore, a.Inertia[i], b.Inertia[i],
+                        t[V5Criterion.Inertia], isRel[V5Criterion.Inertia]);
+            if (e[V5Criterion.Volume])
+                UpdateNormalizedScore(ref maxScore, a.Volume, b.Volume,
+                    t[V5Criterion.Volume], isRel[V5Criterion.Volume]);
+
+            // 退化路径的孔已被 RemapHoles 变换；正常路径仍需应用 assignment.Sign。
+            bool comparisonAlreadyTransformed = !ReferenceEquals(assignment.TransformedComparisonHoles, b.Holes);
+            double[] coordinateSign = comparisonAlreadyTransformed ? IdentitySign : assignment.Sign;
+            for (int i = 0; i < a.Holes.Count; i++)
+            {
+                WbHole left = a.Holes[i];
+                WbHole right = assignment.TransformedComparisonHoles[assignment.ComparisonIndexByBaseline[i]];
+                bool bothDegenerate = left.IsDegenerate && right.IsDegenerate;
+                bool relax = enableDegenMatch && bothDegenerate;
+
+                if (e[V5Criterion.EdgeSum])
+                    UpdateNormalizedScore(ref maxScore, left.Perimeter, right.Perimeter,
+                        relax ? t[V5Criterion.EdgeSum] * degenMult : t[V5Criterion.EdgeSum],
+                        isRel[V5Criterion.EdgeSum]);
+                if (e[V5Criterion.HoleArea])
+                {
+                    double areaTol = relax
+                        ? (isRel[V5Criterion.HoleArea]
+                            ? Math.Max(t[V5Criterion.HoleArea] * degenMult, 5.0)
+                            : t[V5Criterion.HoleArea] * degenMult)
+                        : t[V5Criterion.HoleArea];
+                    UpdateNormalizedScore(ref maxScore,
+                        bothDegenerate ? left.DegenerateProjectedArea : left.Area,
+                        bothDegenerate ? right.DegenerateProjectedArea : right.Area,
+                        areaTol, isRel[V5Criterion.HoleArea]);
+                }
+                if (e[V5Criterion.HolePosition])
+                {
+                    double positionTol = relax ? t[V5Criterion.HolePosition] * degenMult : t[V5Criterion.HolePosition];
+                    double du = left.U - right.U * coordinateSign[0];
+                    double dv = left.V - right.V * coordinateSign[1];
+                    double dw = left.W - right.W * coordinateSign[2];
+                    UpdateAbsoluteScore(ref maxScore, Math.Sqrt(du * du + dv * dv + dw * dw), positionTol);
+                }
+                if (bothDegenerate)
+                {
+                    double shapeTol = relax ? 0.15 * degenMult : 0.15;
+                    UpdateAbsoluteScore(ref maxScore,
+                        Math.Abs(left.DegenerateCircularity - right.DegenerateCircularity), shapeTol);
+                    UpdateAbsoluteScore(ref maxScore,
+                        Math.Abs(left.DegenerateAspectRatio - right.DegenerateAspectRatio), shapeTol);
+                }
+            }
+
+            score = maxScore;
+            return true;
+        }
+
+        private static void UpdateNormalizedScore(ref double maxScore, double a, double b,
+            double tolerance, bool relative)
+        {
+            double allowed = relative
+                ? Math.Max(Math.Max(Math.Abs(a), Math.Abs(b)), 1e-9) * Math.Abs(tolerance) / 100.0
+                : Math.Abs(tolerance);
+            UpdateAbsoluteScore(ref maxScore, Math.Abs(a - b), allowed);
+        }
+
+        private static void UpdateAbsoluteScore(ref double maxScore, double deviation, double allowed)
+        {
+            double ratio = allowed <= 1e-12
+                ? (deviation <= 1e-12 ? 0.0 : double.PositiveInfinity)
+                : deviation / allowed;
+            if (ratio > maxScore)
+                maxScore = ratio;
         }
 
         internal static bool MirrorMatches(
@@ -1924,6 +2150,60 @@ namespace NS_Parrot
         }
 
         /// <summary>
+        /// 按 GeometryMatches 完全相同的顺序寻找孔坐标变换与完美指派。
+        /// 供核查电池显示真实孔位差，避免局部坐标轴方向不同导致误报。
+        /// </summary>
+        internal static bool TryGetHoleAssignment(
+            WbFeature a, WbFeature b,
+            Dictionary<V5Criterion, bool> e, Dictionary<V5Criterion, double> t,
+            Dictionary<V5Criterion, bool> isRel, double normalTol,
+            double degenMult, bool enableDegenMatch, out WbHoleAssignment assignment)
+        {
+            assignment = null;
+            if (!CanAutoMatch(a, b, enableDegenMatch) || a.Holes.Count != b.Holes.Count)
+                return false;
+
+            if (a.IsDegenerate || b.IsDegenerate)
+            {
+                foreach (int[] perm in AxisPermutations)
+                foreach (double[] sign in NonReflectionSigns)
+                {
+                    List<WbHole> remapped = RemapHoles(b.Holes, perm, sign);
+                    if (!WbUtil.TryBipartiteMatch(a.Holes, remapped,
+                        (left, right) => HoleCompatible(left, right, IdentitySign, e, t, isRel,
+                            normalTol, degenMult, enableDegenMatch), out int[] rightByLeft))
+                        continue;
+                    assignment = new WbHoleAssignment
+                    {
+                        ComparisonIndexByBaseline = rightByLeft,
+                        TransformedComparisonHoles = remapped,
+                        Permutation = (int[])perm.Clone(),
+                        Sign = (double[])sign.Clone()
+                    };
+                    return true;
+                }
+                return false;
+            }
+
+            foreach (double[] sign in NonReflectionSigns)
+            {
+                if (!WbUtil.TryBipartiteMatch(a.Holes, b.Holes,
+                    (left, right) => HoleCompatible(left, right, sign, e, t, isRel,
+                        normalTol, degenMult, enableDegenMatch), out int[] rightByLeft))
+                    continue;
+                assignment = new WbHoleAssignment
+                {
+                    ComparisonIndexByBaseline = rightByLeft,
+                    TransformedComparisonHoles = b.Holes,
+                    Permutation = new[] { 0, 1, 2 },
+                    Sign = (double[])sign.Clone()
+                };
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
         /// 判断两特征是否允许进入自动匹配。
         /// 一侧退化孔一侧正常孔 → 禁止；双方均退化孔或均正常 → 允许。
         /// 退化孔记录始终参与聚类，参数 enableDegenerateMatching 仅控制
@@ -2002,7 +2282,9 @@ namespace NS_Parrot
                 double areaA = bothDegenerate ? a.DegenerateProjectedArea : a.Area;
                 double areaB = bothDegenerate ? b.DegenerateProjectedArea : b.Area;
                 double areaTol = relax
-                    ? Math.Max(t[V5Criterion.HoleArea] * degenMult, 5.0)  // 容差放宽：最低面积容差 5%
+                    ? (isRel[V5Criterion.HoleArea]
+                        ? Math.Max(t[V5Criterion.HoleArea] * degenMult, 5.0)  // 相对容差最低 5%
+                        : t[V5Criterion.HoleArea] * degenMult)
                     : t[V5Criterion.HoleArea];
                 if (!WbUtil.WithinTolerance(areaA, areaB, areaTol,
                     isRel[V5Criterion.HoleArea]))
@@ -2016,7 +2298,7 @@ namespace NS_Parrot
                 double du = a.U - b.U * s[0];
                 double dv = a.V - b.V * s[1];
                 double dw = a.W - b.W * s[2];
-                if (Math.Sqrt(du * du + dv * dv + dw * dw) >= tol)
+                if (Math.Sqrt(du * du + dv * dv + dw * dw) > tol)
                     return false;
             }
 
@@ -2098,7 +2380,9 @@ namespace NS_Parrot
                 double areaA = bothDegenerate ? a.DegenerateProjectedArea : a.Area;
                 double areaB = bothDegenerate ? b.DegenerateProjectedArea : b.Area;
                 double areaTol = relax
-                    ? Math.Max(t[V5Criterion.HoleArea] * degenMult, 5.0)
+                    ? (isRel[V5Criterion.HoleArea]
+                        ? Math.Max(t[V5Criterion.HoleArea] * degenMult, 5.0)
+                        : t[V5Criterion.HoleArea] * degenMult)
                     : t[V5Criterion.HoleArea];
                 if (!WbUtil.WithinTolerance(areaA, areaB, areaTol,
                     isRel[V5Criterion.HoleArea]))
@@ -2125,7 +2409,7 @@ namespace NS_Parrot
                 double dv = a.V - b.V * s[1];
                 double dw = a.W - b.W * s[2];
                 double dist = Math.Sqrt(du * du + dv * dv + dw * dw);
-                if (dist >= tol)
+                if (dist > tol)
                     return string.Format(CultureInfo.InvariantCulture,
                         "位置距离={0:F4}，容差={1:F4}", dist, tol);
             }
@@ -2385,7 +2669,7 @@ namespace NS_Parrot
 
             if (!creatingEmpty && File.Exists(full))
                 File.Copy(full,
-                    full + ".v8backup_" +
+                    full + ".v9backup_" +
                     DateTime.Now.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture),
                     true);
 
@@ -2887,6 +3171,47 @@ namespace NS_Parrot
             cmd.ExecuteNonQuery();
         }
 
+        /// <summary>确认文件为当前可读取的 WB 分类库，避免将其他 SQLite 文件误用于分类。</summary>
+        internal static bool TryValidateWbDatabase(string path, out string message)
+        {
+            message = null;
+            try
+            {
+                string full = Path.GetFullPath(path);
+                using (var c = new SQLiteConnection("Data Source=" + full + ";Version=3;"))
+                {
+                    c.Open();
+                    using (var cmd = c.CreateCommand())
+                    {
+                        cmd.CommandText =
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' " +
+                            "AND name IN ('database_info','parts','part_features');";
+                        long tableCount = Convert.ToInt64(cmd.ExecuteScalar(), CultureInfo.InvariantCulture);
+                        if (tableCount != 3)
+                        {
+                            message = "所选文件不是有效的 WB 分类库（缺少必要的数据表）。";
+                            return false;
+                        }
+
+                        cmd.CommandText = "SELECT schema_version FROM database_info WHERE id=1;";
+                        object value = cmd.ExecuteScalar();
+                        if (value == null || value == DBNull.Value ||
+                            Convert.ToInt64(value, CultureInfo.InvariantCulture) != 9)
+                        {
+                            message = "所选 WB 分类库的版本不受支持，请先使用“分类数据库迁移_WB”完成迁移。";
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            }
+            catch
+            {
+                message = "无法读取所选数据库，请确认文件可访问且为有效的 SQLite 数据库。";
+                return false;
+            }
+        }
+
         /// <summary>从数据库加载所有已有件（纯只读，不创建表、不回填）。</summary>
         internal static List<WbMigrationRecord> LoadAllParts(string path)
         {
@@ -3160,6 +3485,217 @@ namespace NS_Parrot
             }
         }
 
+        /// <summary>
+        /// 用新提取的特征替换已有编号的数据。编号及来源信息保持不变；
+        /// 材质、颜色为空时保留事务内读取的原值，非空时更新；不修改传入的特征对象。
+        /// 零件主表、孔、外轮廓和 feature_text 在同一事务内同步更新。
+        /// </summary>
+        internal static void ReplacePartsBatch(string path, List<WbMigrationRecord> records)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException("数据库地址不能为空。");
+            if (records == null || records.Count == 0)
+                throw new ArgumentException("没有可替换的实体。");
+
+            string full = Path.GetFullPath(path);
+            if (!File.Exists(full))
+                throw new FileNotFoundException("数据库文件不存在：" + full);
+
+            using (var c = new SQLiteConnection("Data Source=" + full + ";Version=3;"))
+            {
+                c.Open();
+                using (var cmd = c.CreateCommand())
+                using (var tx = c.BeginTransaction())
+                {
+                    cmd.Transaction = tx;
+                    try
+                    {
+                        foreach (WbMigrationRecord record in records)
+                        {
+                            if (record == null || record.Feature == null || string.IsNullOrWhiteSpace(record.Number))
+                                throw new ArgumentException("替换记录不完整。");
+                            double[] box = record.Feature.BoundingBox;
+                            if (box == null || box.Length != 3)
+                                throw new InvalidOperationException("包围盒必须包含三条边：" + record.Number);
+
+                            cmd.CommandText =
+                                "SELECT part_id,material,color FROM parts " +
+                                "WHERE part_number=@number COLLATE NOCASE;";
+                            cmd.Parameters.Clear();
+                            cmd.Parameters.AddWithValue("@number", record.Number);
+                            long partId;
+                            string material = record.Feature.Material;
+                            string color = record.Feature.Color;
+                            using (SQLiteDataReader reader = cmd.ExecuteReader())
+                            {
+                                if (!reader.Read())
+                                    throw new InvalidOperationException("未找到编号：" + record.Number);
+                                partId = reader.GetInt64(0);
+                                // 输入为空时保留原值；非空时使用调用方给出的新材质/颜色。
+                                if (string.IsNullOrWhiteSpace(material))
+                                    material = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
+                                if (string.IsNullOrWhiteSpace(color))
+                                    color = reader.IsDBNull(2) ? string.Empty : reader.GetString(2);
+                                if (reader.Read())
+                                    throw new InvalidOperationException("编号命中多条记录，已回滚：" + record.Number);
+                            }
+
+                            cmd.CommandText =
+                                "UPDATE parts SET material=@mat,color=@col,entity_type=@ety,is_solid=@sol," +
+                                "volume=@vol,surface_area=@area,bbox_max=@max,bbox_mid=@mid,bbox_min=@min," +
+                                "bbox_count=@cnt,inertia_1=@i1,inertia_2=@i2,inertia_3=@i3," +
+                                "hole_count=@hc,hole_perimeter_sum=@hps,hole_area_sum=@has " +
+                                "WHERE part_id=@id;";
+                            cmd.Parameters.Clear();
+                            cmd.Parameters.AddWithValue("@mat", material);
+                            cmd.Parameters.AddWithValue("@col", color);
+                            cmd.Parameters.AddWithValue("@ety", 1);
+                            cmd.Parameters.AddWithValue("@sol", record.Feature.Volume > 0 ? 1 : 0);
+                            cmd.Parameters.AddWithValue("@vol", record.Feature.Volume);
+                            cmd.Parameters.AddWithValue("@area", record.Feature.Area);
+                            cmd.Parameters.AddWithValue("@max", box[0]);
+                            cmd.Parameters.AddWithValue("@mid", box[1]);
+                            cmd.Parameters.AddWithValue("@min", box[2]);
+                            cmd.Parameters.AddWithValue("@cnt", 3);
+                            cmd.Parameters.AddWithValue("@i1", record.Feature.Inertia[0]);
+                            cmd.Parameters.AddWithValue("@i2", record.Feature.Inertia[1]);
+                            cmd.Parameters.AddWithValue("@i3", record.Feature.Inertia[2]);
+                            cmd.Parameters.AddWithValue("@hc", record.Feature.Holes.Count);
+                            cmd.Parameters.AddWithValue("@hps", record.Feature.Holes.Sum(h => h.Perimeter));
+                            cmd.Parameters.AddWithValue("@has", record.Feature.Holes.Sum(h => h.Area));
+                            cmd.Parameters.AddWithValue("@id", partId);
+                            if (cmd.ExecuteNonQuery() != 1)
+                                throw new InvalidOperationException("更新零件主记录失败：" + record.Number);
+
+                            cmd.CommandText = "DELETE FROM holes WHERE part_id=@id;";
+                            cmd.Parameters.Clear();
+                            cmd.Parameters.AddWithValue("@id", partId);
+                            cmd.ExecuteNonQuery();
+                            cmd.CommandText = "DELETE FROM outer_profiles WHERE part_id=@id;";
+                            cmd.ExecuteNonQuery();
+                            cmd.CommandText = "DELETE FROM part_features WHERE part_id=@id;";
+                            cmd.ExecuteNonQuery();
+
+                            for (int i = 0; i < record.Feature.Holes.Count; i++)
+                            {
+                                WbHole h = record.Feature.Holes[i];
+                                cmd.CommandText =
+                                    "INSERT INTO holes (part_id,hole_index,center_u,center_v,center_w," +
+                                    "perimeter,enclosed_area,normal_u,normal_v,normal_w) " +
+                                    "VALUES (@id,@idx,@u,@v,@w,@p,@a,@nu,@nv,@nw);";
+                                cmd.Parameters.Clear();
+                                cmd.Parameters.AddWithValue("@id", partId);
+                                cmd.Parameters.AddWithValue("@idx", i);
+                                cmd.Parameters.AddWithValue("@u", h.U);
+                                cmd.Parameters.AddWithValue("@v", h.V);
+                                cmd.Parameters.AddWithValue("@w", h.W);
+                                cmd.Parameters.AddWithValue("@p", h.Perimeter);
+                                cmd.Parameters.AddWithValue("@a", h.Area);
+                                cmd.Parameters.AddWithValue("@nu", h.NU);
+                                cmd.Parameters.AddWithValue("@nv", h.NV);
+                                cmd.Parameters.AddWithValue("@nw", h.NW);
+                                cmd.ExecuteNonQuery();
+                            }
+
+                            for (int i = 0; i < record.Feature.OuterProfiles.Count; i++)
+                            {
+                                WbOuterProfile profile = record.Feature.OuterProfiles[i];
+                                cmd.CommandText =
+                                    "INSERT INTO outer_profiles (part_id,profile_index,enclosed_area,perimeter," +
+                                    "normal_u,normal_v,normal_w) VALUES (@id,@idx,@area,@per,@nu,@nv,@nw);";
+                                cmd.Parameters.Clear();
+                                cmd.Parameters.AddWithValue("@id", partId);
+                                cmd.Parameters.AddWithValue("@idx", i);
+                                cmd.Parameters.AddWithValue("@area", profile.Area);
+                                cmd.Parameters.AddWithValue("@per", profile.Perimeter);
+                                cmd.Parameters.AddWithValue("@nu", profile.NU);
+                                cmd.Parameters.AddWithValue("@nv", profile.NV);
+                                cmd.Parameters.AddWithValue("@nw", profile.NW);
+                                cmd.ExecuteNonQuery();
+                            }
+
+                            cmd.CommandText =
+                                "INSERT INTO part_features (part_id,feature_text) VALUES (@id,@text);";
+                            cmd.Parameters.Clear();
+                            cmd.Parameters.AddWithValue("@id", partId);
+                            cmd.Parameters.AddWithValue("@text", record.Feature.Serialize(material, color));
+                            cmd.ExecuteNonQuery();
+                        }
+                        tx.Commit();
+                    }
+                    catch
+                    {
+                        tx.Rollback();
+                        throw;
+                    }
+                }
+            }
+        }
+
+        /// <summary>预检全部替换目标是否均唯一存在；写入事务内仍会再次校验。</summary>
+        internal static bool TryValidateReplacementTargets(
+            string path, IEnumerable<string> numbers, out string message)
+        {
+            message = null;
+            try
+            {
+                using (var c = new SQLiteConnection("Data Source=" + Path.GetFullPath(path) + ";Version=3;"))
+                {
+                    c.Open();
+                    using (var cmd = c.CreateCommand())
+                    {
+                        var targets = numbers.ToList();
+                        const int batchSize = 400;
+                        for (int offset = 0; offset < targets.Count; offset += batchSize)
+                        {
+                            cmd.Parameters.Clear();
+                            int count = Math.Min(batchSize, targets.Count - offset);
+                            var rows = new List<string>(count);
+                            for (int i = 0; i < count; i++)
+                            {
+                                string parameter = "@n" + i.ToString(CultureInfo.InvariantCulture);
+                                rows.Add("(" + i.ToString(CultureInfo.InvariantCulture) + "," + parameter + ")");
+                                cmd.Parameters.AddWithValue(parameter, targets[offset + i]);
+                            }
+
+                            // 按输入序号分组，完全沿用 SQLite NOCASE 的匹配口径；
+                            // 不用 .NET 字符串比较重新归并，避免改变非 ASCII 编号的语义。
+                            cmd.CommandText = "WITH requested(idx,number) AS (VALUES " +
+                                string.Join(",", rows) + ") " +
+                                "SELECT r.idx,COUNT(p.part_id) FROM requested r " +
+                                "LEFT JOIN parts p ON p.part_number=r.number COLLATE NOCASE " +
+                                "GROUP BY r.idx ORDER BY r.idx;";
+                            using (SQLiteDataReader reader = cmd.ExecuteReader())
+                            {
+                                while (reader.Read())
+                                {
+                                    int index = Convert.ToInt32(reader.GetValue(0), CultureInfo.InvariantCulture);
+                                    long matches = reader.GetInt64(1);
+                                    string number = targets[offset + index];
+                                    if (matches == 0)
+                                    {
+                                        message = "未找到编号：" + number;
+                                        return false;
+                                    }
+                                    if (matches != 1)
+                                    {
+                                        message = "编号命中多条记录，不能替换：" + number;
+                                        return false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                message = "无法预检替换目标：" + ex.Message;
+                return false;
+            }
+        }
+
         /// <summary>将当前设置写入数据库的 classification_profile 表（覆盖旧记录）。</summary>
         internal static void SaveSettings(string path, string settings)
         {
@@ -3318,7 +3854,7 @@ namespace NS_Parrot
         {
             return string.Join(";",
                 Enabled.Keys.OrderBy(x => x).Select(x =>
-                    x + "=" + Enabled[x] +
+                    x + "=" + (x == V5Criterion.Length || Enabled[x]) +
                     ",tol=" + Tolerances[x].ToString("R", CultureInfo.InvariantCulture) +
                     (IsRelativeTolerance[x] ? "%" : ""))) +
                 ";inertia_degen=" + InertiaDegenerateRatio.ToString("R", CultureInfo.InvariantCulture) +
@@ -3468,6 +4004,8 @@ namespace NS_Parrot
                     return false;
                 }
 
+                // Length 是核心匹配的必选判据，profile 中的 False 不应改变实际口径。
+                result.Enabled[V5Criterion.Length] = true;
                 return true;
             }
             catch

@@ -116,6 +116,7 @@
     </Reference>
     <Reference Include="RhinoCommon">
       <HintPath>$(Rhino8Dir)\System\RhinoCommon.dll</HintPath>
+      <Private>False</Private>
     </Reference>
     <Reference Include="System.Data.SQLite">
       <HintPath>$(Tekla2025Bin)\System.Data.SQLite.dll</HintPath>

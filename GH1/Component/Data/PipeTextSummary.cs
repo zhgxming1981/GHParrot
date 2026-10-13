@@ -1,4 +1,4 @@
-using CommonFunction;
+﻿using CommonFunction;
 using Grasshopper.Kernel;
 using System;
 using System.Collections.Generic;
@@ -74,7 +74,7 @@ namespace NS_Parrot
 
             foreach (string line in lines)
             {
-                if (line == null)
+                if (string.IsNullOrWhiteSpace(line))
                     continue;
 
                 string[] cells = line.Split('|');

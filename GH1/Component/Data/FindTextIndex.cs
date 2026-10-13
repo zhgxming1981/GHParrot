@@ -24,8 +24,8 @@ namespace NS_Parrot
 
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
-            pManager.AddIntegerParameter("全等索引", "全等", "FindIn 中与任一 Find 完全相同的索引。", GH_ParamAccess.list);
-            pManager.AddIntegerParameter("包含索引", "包含", "FindIn 中包含任一 Find 的索引。", GH_ParamAccess.list);
+            pManager.AddGenericParameter("全等索引", "全等", "FindIn 中最先与 Find 完全相同的索引；未找到时为 null。", GH_ParamAccess.list);
+            pManager.AddGenericParameter("包含索引", "包含", "FindIn 中最先包含 Find 的索引；未找到时为 null。", GH_ParamAccess.list);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
@@ -47,31 +47,35 @@ namespace NS_Parrot
             StringComparison comparison = caseSensitive
                 ? StringComparison.Ordinal
                 : StringComparison.OrdinalIgnoreCase;
-            List<int> equalIndices = new List<int>();
-            List<int> containsIndices = new List<int>();
+            List<object> equalIndices = new List<object>();
+            List<object> containsIndices = new List<object>();
 
-            for (int i = 0; i < findIn.Count; i++)
+            foreach (string target in find)
             {
-                string source = findIn[i] ?? string.Empty;
-                foreach (string target in find)
+                string keyword = target ?? string.Empty;
+                int equalIndex = -1;
+                for (int i = 0; i < findIn.Count; i++)
                 {
-                    string keyword = target ?? string.Empty;
+                    string source = findIn[i] ?? string.Empty;
                     if (string.Equals(source, keyword, comparison))
                     {
-                        equalIndices.Add(i);
+                        equalIndex = i;
                         break;
                     }
                 }
+                equalIndices.Add(equalIndex >= 0 ? (object)equalIndex : null);
 
-                foreach (string target in find)
+                int containsIndex = -1;
+                for (int i = 0; i < findIn.Count; i++)
                 {
-                    string keyword = target ?? string.Empty;
+                    string source = findIn[i] ?? string.Empty;
                     if (source.IndexOf(keyword, comparison) >= 0)
                     {
-                        containsIndices.Add(i);
+                        containsIndex = i;
                         break;
                     }
                 }
+                containsIndices.Add(containsIndex >= 0 ? (object)containsIndex : null);
             }
 
             DA.SetDataList(0, equalIndices);

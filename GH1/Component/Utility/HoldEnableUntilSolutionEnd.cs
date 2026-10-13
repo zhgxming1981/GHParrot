@@ -1,4 +1,4 @@
-using Grasshopper.Kernel;
+﻿using Grasshopper.Kernel;
 using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Types;
 using System;
@@ -27,7 +27,7 @@ namespace NS_Parrot
 
         public HoldEnableUntilSolutionEnd()
           : base("保持启用至解算结束", "保持启用",
-              "把 Data 作为闸门转发到 Control，并通过 Control 连线或 Name 昵称临时启用目标电池，等待指定数量的 Grasshopper 解算结束后自动禁用。",
+              "把 Data 作为闸门转发到 Control，并通过 Control 连线或 Name 昵称临时启用目标电池，等待指定数量的 Grasshopper 解算结束后，再延迟 1 秒自动禁用。",
               "Parrot", "Utility")
         {
         }
@@ -37,7 +37,7 @@ namespace NS_Parrot
             pManager.AddGenericParameter("数据", "Data", "需要转发给下游目标电池的任意数据。未运行时不会读取也不会输出。", GH_ParamAccess.tree);
             pManager.AddBooleanParameter("启动", "Start", "False 变 True 时启动。可以接 Button。", GH_ParamAccess.item, false);
             pManager.AddIntegerParameter("解算轮数", "Cycles", "保持启用几个完整 Solution。通常填 1。", GH_ParamAccess.item, 1);
-            pManager.AddBooleanParameter("结束禁用", "AutoOff", "完成后是否自动禁用目标。", GH_ParamAccess.item, true);
+            pManager.AddBooleanParameter("结束禁用", "AutoOff", "完成后是否延迟 1 秒自动禁用目标。", GH_ParamAccess.item, true);
             pManager.AddTextParameter("目标昵称", "Name", "Control 没有连线时，用这个昵称查找要控制的电池或电池包。", GH_ParamAccess.item);
 
             pManager[0].Optional = true;
@@ -169,7 +169,7 @@ namespace NS_Parrot
             _running = false;
             UnsubscribeDocument();
 
-            document.ScheduleSolution(1, doc =>
+            document.ScheduleSolution(_autoDisable ? 1000 : 1, doc =>
             {
                 List<IGH_DocumentObject> targets = FindTargetsById(doc, _targetIds);
                 if (_autoDisable)

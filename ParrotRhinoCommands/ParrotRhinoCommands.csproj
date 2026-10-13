@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>ParrotRhinoCommands</AssemblyName>
+    <TargetExt>.rhp</TargetExt>
+    <PlatformTarget>x64</PlatformTarget>
+    <BaseOutputPath>$(ParrotOutputDir)</BaseOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\GH1\parrot.csproj" />
+    <Reference Include="RhinoCommon">
+      <HintPath>$(Rhino8Dir)\System\RhinoCommon.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

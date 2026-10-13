@@ -1,4 +1,4 @@
-using CatiaFunction;
+﻿using CatiaFunction;
 using Grasshopper.Kernel;
 using INFITF;
 using System;
@@ -109,20 +109,21 @@ namespace NS_Parrot
                         throw new InvalidOperationException("源文件所在目录不能是根目录。");
                     string parentDir = parentDirectory.FullName;
                     string folderName = System.IO.Path.GetFileName(srcDir);
-                    if (folderName.IndexOf("_catia", StringComparison.OrdinalIgnoreCase) >= 0)
+                    if (folderName.StartsWith("Catia_", StringComparison.OrdinalIgnoreCase))
                         continue;
                     //============================ // 2️⃣ 目标目录 //============================ 
                 
                     if (string.IsNullOrEmpty(target))
                     {
-                        // 👉 每个目录生成 _catia
-                        dstDir = System.IO.Path.Combine(parentDir, folderName + "_catia");
+                        // 👉 每个目录生成 Catia_ 前缀的文件夹
+                        dstDir = System.IO.Path.Combine(parentDir, "Catia_" + folderName);
                     }
                     else
                     {
                         // 👉 指定目标目录（集中输出） 
                         string relative = srcDir.Substring(source.Length).TrimStart('\\');
-                        dstDir = System.IO.Path.Combine(target, relative + "_catia");
+                        string relativeParent = System.IO.Path.GetDirectoryName(relative) ?? "";
+                        dstDir = System.IO.Path.Combine(target, relativeParent, "Catia_" + System.IO.Path.GetFileName(relative));
                     }
                     if (!System.IO.Directory.Exists(dstDir)) 
                         System.IO.Directory.CreateDirectory(dstDir);

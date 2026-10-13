@@ -4,7 +4,6 @@ using CommonFunction;
 using GH_IO.Serialization;
 using Grasshopper.Kernel;
 using Rhino;
-using Rhino.Commands;
 using Rhino.DocObjects;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
@@ -13,11 +12,10 @@ namespace NS_Parrot
 {
     public class SelectRhinoObjectByLayer : GH_Component
     {
-        private bool _refreshScheduled = false;
-        private uint _lastDocumentSerialNumber = 0;
-        private string _lastDocumentPath = "";
-        private bool _includeHiddenObjects;
-        private bool _includeLockedObjects;
+        private bool _excludeHiddenObjects;
+        private bool _excludeLockedObjects;
+        private bool _refreshScheduled;
+        private uint _lastDocumentSerialNumber;
 
         /// <summary>
         /// Initializes a new instance of the SelectRhinoObjectByLayer class.
@@ -27,15 +25,8 @@ namespace NS_Parrot
               "按图层选中",
               "Parrot", "Rhino")
         {
-            RhinoDoc.AddRhinoObject += OnRhinoDocumentChanged;
-            RhinoDoc.DeleteRhinoObject += OnRhinoDocumentChanged;
-            RhinoDoc.UndeleteRhinoObject += OnRhinoDocumentChanged;
-            RhinoDoc.ReplaceRhinoObject += OnRhinoDocumentChanged;
-            RhinoDoc.ModifyObjectAttributes += OnRhinoObjectAttributesChanged;
-            RhinoDoc.LayerTableEvent += OnRhinoLayerTableEvent;
-            RhinoDoc.ActiveDocumentChanged += OnRhinoDocumentChanged;
-            RhinoDoc.EndOpenDocument += OnRhinoDocumentChanged;
-            Command.EndCommand += OnRhinoCommandEnded;
+            RhinoDoc.ActiveDocumentChanged += OnActiveDocumentChanged;
+            RhinoDoc.EndOpenDocument += OnDocumentOpened;
         }
 
         /// <summary>
@@ -77,7 +68,6 @@ namespace NS_Parrot
             }
 
             _lastDocumentSerialNumber = activeDoc.RuntimeSerialNumber;
-            _lastDocumentPath = activeDoc.Path ?? "";
 
             HashSet<int> layerIndices = new HashSet<int>();
             int count = layerName.Count;
@@ -103,10 +93,10 @@ namespace NS_Parrot
                 if (!layerIndices.Contains(item.Attributes.LayerIndex))
                     continue;
 
-                if (item.IsHidden && !_includeHiddenObjects)
+                if (item.IsHidden && _excludeHiddenObjects)
                     continue;
 
-                if (item.IsLocked && !_includeLockedObjects)
+                if (item.IsLocked && _excludeLockedObjects)
                     continue;
 
                 if (resultIdSet.Add(item.Id))
@@ -114,6 +104,41 @@ namespace NS_Parrot
             }
 
             DA.SetDataList(0, result_guid);
+        }
+
+        private void OnActiveDocumentChanged(object sender, EventArgs e)
+        {
+            RhinoDoc activeDoc = RhinoDoc.ActiveDoc;
+            uint documentSerialNumber = activeDoc?.RuntimeSerialNumber ?? 0;
+            if (documentSerialNumber == _lastDocumentSerialNumber)
+                return;
+
+            _lastDocumentSerialNumber = documentSerialNumber;
+            ScheduleRefresh();
+        }
+
+        private void OnDocumentOpened(object sender, EventArgs e)
+        {
+            RhinoDoc activeDoc = RhinoDoc.ActiveDoc;
+            _lastDocumentSerialNumber = activeDoc?.RuntimeSerialNumber ?? 0;
+            ScheduleRefresh();
+        }
+
+        private void ScheduleRefresh()
+        {
+            if (_refreshScheduled)
+                return;
+
+            GH_Document document = OnPingDocument();
+            if (document == null)
+                return;
+
+            _refreshScheduled = true;
+            document.ScheduleSolution(100, doc =>
+            {
+                _refreshScheduled = false;
+                ExpireSolution(false);
+            });
         }
 
         private static IEnumerable<int> FindLayerIndices(RhinoDoc doc, string rawLayerName)
@@ -157,145 +182,31 @@ namespace NS_Parrot
                 Regex.IsMatch(name, regexPattern, RegexOptions.IgnoreCase);
         }
 
-        private void OnRhinoDocumentChanged(object sender, EventArgs e)
-        {
-            RhinoDoc activeDoc = RhinoDoc.ActiveDoc;
-            uint currentSerialNumber = activeDoc?.RuntimeSerialNumber ?? 0;
-            string currentPath = activeDoc?.Path ?? "";
-
-            bool documentChanged = currentSerialNumber != _lastDocumentSerialNumber ||
-                !string.Equals(currentPath, _lastDocumentPath, StringComparison.OrdinalIgnoreCase);
-
-            if (!documentChanged && _refreshScheduled)
-                return;
-
-            _lastDocumentSerialNumber = currentSerialNumber;
-            _lastDocumentPath = currentPath;
-
-            ScheduleRefresh();
-        }
-
-        private void OnRhinoObjectAttributesChanged(object sender, Rhino.DocObjects.RhinoModifyObjectAttributesEventArgs e)
-        {
-            int oldLayerIndex = e?.OldAttributes?.LayerIndex ?? -1;
-            int newLayerIndex = e?.NewAttributes?.LayerIndex ?? -1;
-
-            if (oldLayerIndex == newLayerIndex)
-                return;
-
-            OnRhinoDocumentChanged(sender, e);
-        }
-
-        private void OnRhinoLayerTableEvent(object sender, Rhino.DocObjects.Tables.LayerTableEventArgs e)
-        {
-            if (!LayerTableChangeAffectsSelection(e))
-                return;
-
-            OnRhinoDocumentChanged(sender, e);
-        }
-
-        private void OnRhinoCommandEnded(object sender, CommandEventArgs e)
-        {
-            if (!CommandChangesObjectVisibilityOrLocking(e))
-                return;
-
-            OnRhinoDocumentChanged(sender, e);
-        }
-
-        private static bool CommandChangesObjectVisibilityOrLocking(CommandEventArgs e)
-        {
-            string commandName = e?.CommandEnglishName;
-            if (string.IsNullOrEmpty(commandName))
-                return false;
-
-            switch (commandName)
-            {
-                case "Hide":
-                case "Show":
-                case "HideSwap":
-                case "Lock":
-                case "Unlock":
-                case "UnlockAll":
-                case "LockSwap":
-                case "Isolate":
-                case "Unisolate":
-                    return true;
-
-                default:
-                    return false;
-            }
-        }
-
-        private static bool LayerTableChangeAffectsSelection(Rhino.DocObjects.Tables.LayerTableEventArgs e)
-        {
-            if (e == null)
-                return false;
-
-            switch (e.EventType)
-            {
-                case Rhino.DocObjects.Tables.LayerTableEventType.Added:
-                case Rhino.DocObjects.Tables.LayerTableEventType.Deleted:
-                case Rhino.DocObjects.Tables.LayerTableEventType.Undeleted:
-                    return true;
-
-                case Rhino.DocObjects.Tables.LayerTableEventType.Modified:
-                    Layer oldLayer = e.OldState;
-                    Layer newLayer = e.NewState;
-                    if (oldLayer == null || newLayer == null)
-                        return true;
-
-                    return !string.Equals(oldLayer.Name, newLayer.Name, StringComparison.OrdinalIgnoreCase) ||
-                        oldLayer.ParentLayerId != newLayer.ParentLayerId ||
-                        oldLayer.IsVisible != newLayer.IsVisible ||
-                        oldLayer.IsLocked != newLayer.IsLocked;
-
-                default:
-                    return false;
-            }
-        }
-
-        private void ScheduleRefresh()
-        {
-            if (_refreshScheduled)
-                return;
-
-            GH_Document document = OnPingDocument();
-            if (document == null)
-                return;
-
-            _refreshScheduled = true;
-            document.ScheduleSolution(100, doc =>
-            {
-                _refreshScheduled = false;
-                ExpireSolution(false);
-            });
-        }
-
         protected override void AppendAdditionalComponentMenuItems(ToolStripDropDown menu)
         {
             base.AppendAdditionalComponentMenuItems(menu);
             Menu_AppendSeparator(menu);
-            Menu_AppendItem(menu, "选中隐藏对象", (sender, args) => ToggleIncludeHiddenObjects(), true, _includeHiddenObjects);
-            Menu_AppendItem(menu, "选中锁定对象", (sender, args) => ToggleIncludeLockedObjects(), true, _includeLockedObjects);
+            Menu_AppendItem(menu, "不选中隐藏对象", (sender, args) => ToggleExcludeHiddenObjects(), true, _excludeHiddenObjects);
+            Menu_AppendItem(menu, "不选中锁定对象", (sender, args) => ToggleExcludeLockedObjects(), true, _excludeLockedObjects);
         }
 
-        private void ToggleIncludeHiddenObjects()
+        private void ToggleExcludeHiddenObjects()
         {
-            _includeHiddenObjects = !_includeHiddenObjects;
+            _excludeHiddenObjects = !_excludeHiddenObjects;
             ExpireSolution(true);
         }
 
-        private void ToggleIncludeLockedObjects()
+        private void ToggleExcludeLockedObjects()
         {
-            _includeLockedObjects = !_includeLockedObjects;
+            _excludeLockedObjects = !_excludeLockedObjects;
             ExpireSolution(true);
         }
 
         public override bool Write(GH_IWriter writer)
         {
             GH_IWriter chunk = writer.CreateChunk("SelectRhinoObjectByLayerSettings");
-            chunk.SetBoolean("IncludeHiddenObjects", _includeHiddenObjects);
-            chunk.SetBoolean("IncludeLockedObjects", _includeLockedObjects);
+            chunk.SetBoolean("ExcludeHiddenObjects", _excludeHiddenObjects);
+            chunk.SetBoolean("ExcludeLockedObjects", _excludeLockedObjects);
             return base.Write(writer);
         }
 
@@ -304,12 +215,18 @@ namespace NS_Parrot
             GH_IReader chunk = reader.FindChunk("SelectRhinoObjectByLayerSettings");
             if (chunk != null)
             {
-                bool includeHiddenObjects = _includeHiddenObjects;
-                bool includeLockedObjects = _includeLockedObjects;
-                if (chunk.TryGetBoolean("IncludeHiddenObjects", ref includeHiddenObjects))
-                    _includeHiddenObjects = includeHiddenObjects;
-                if (chunk.TryGetBoolean("IncludeLockedObjects", ref includeLockedObjects))
-                    _includeLockedObjects = includeLockedObjects;
+                if (!chunk.TryGetBoolean("ExcludeHiddenObjects", ref _excludeHiddenObjects))
+                {
+                    bool includeHiddenObjects = true;
+                    if (chunk.TryGetBoolean("IncludeHiddenObjects", ref includeHiddenObjects))
+                        _excludeHiddenObjects = !includeHiddenObjects;
+                }
+                if (!chunk.TryGetBoolean("ExcludeLockedObjects", ref _excludeLockedObjects))
+                {
+                    bool includeLockedObjects = true;
+                    if (chunk.TryGetBoolean("IncludeLockedObjects", ref includeLockedObjects))
+                        _excludeLockedObjects = !includeLockedObjects;
+                }
             }
 
             return base.Read(reader);
@@ -317,15 +234,8 @@ namespace NS_Parrot
 
         public override void RemovedFromDocument(GH_Document document)
         {
-            RhinoDoc.AddRhinoObject -= OnRhinoDocumentChanged;
-            RhinoDoc.DeleteRhinoObject -= OnRhinoDocumentChanged;
-            RhinoDoc.UndeleteRhinoObject -= OnRhinoDocumentChanged;
-            RhinoDoc.ReplaceRhinoObject -= OnRhinoDocumentChanged;
-            RhinoDoc.ModifyObjectAttributes -= OnRhinoObjectAttributesChanged;
-            RhinoDoc.LayerTableEvent -= OnRhinoLayerTableEvent;
-            RhinoDoc.ActiveDocumentChanged -= OnRhinoDocumentChanged;
-            RhinoDoc.EndOpenDocument -= OnRhinoDocumentChanged;
-            Command.EndCommand -= OnRhinoCommandEnded;
+            RhinoDoc.ActiveDocumentChanged -= OnActiveDocumentChanged;
+            RhinoDoc.EndOpenDocument -= OnDocumentOpened;
             base.RemovedFromDocument(document);
         }
 

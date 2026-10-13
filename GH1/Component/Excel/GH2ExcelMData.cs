@@ -1,4 +1,4 @@
-using Grasshopper.Kernel;
+﻿using Grasshopper.Kernel;
 using Rhino.Geometry;
 using System;
 using System.Collections.Generic;
@@ -197,17 +197,6 @@ namespace NS_Parrot
                 {
                     app.Visible = false;
                     app.ScreenUpdating = false;
-                    var result = System.Windows.Forms.MessageBox.Show(
-                        "写入已经完成，是否打开Excel？",
-                        "GH2ExcelMData",
-                        System.Windows.Forms.MessageBoxButtons.YesNo,
-                        System.Windows.Forms.MessageBoxIcon.Question);
-
-                    if (result == System.Windows.Forms.DialogResult.Yes)
-                    {
-                        ShowExcelAndActivateSheet(app, wb, sheetName);
-                        keepExcelOpen = true;
-                    }
                 }
 
                 DA.SetData(0, "写入完成");

@@ -54,10 +54,15 @@ namespace NS_Parrot
             if (!DA.GetData(1, ref value)) { return; }
             List<Guid> result_guid = new List<Guid>();
 
-            int count = Rhino.RhinoDoc.ActiveDoc.Objects.Count;
+            ObjectEnumeratorSettings objectSettings = new ObjectEnumeratorSettings
+            {
+                ActiveObjects = true,
+                NormalObjects = true,
+                LockedObjects = true,
+                HiddenObjects = true
+            };
 
-
-            foreach (var item in Rhino.RhinoDoc.ActiveDoc.Objects)
+            foreach (RhinoObject item in Rhino.RhinoDoc.ActiveDoc.Objects.GetObjectList(objectSettings))
             {
                 if (item.Attributes.GetUserString(key) == value)
                 {

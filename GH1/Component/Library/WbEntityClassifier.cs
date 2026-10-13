@@ -1,4 +1,4 @@
-using GH_IO.Serialization;
+﻿using GH_IO.Serialization;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
@@ -7,11 +7,11 @@ using Grasshopper.Kernel.Types;
 using Rhino.Geometry;
 using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace NS_Parrot
@@ -21,10 +21,9 @@ namespace NS_Parrot
     // 命中已有特征时复用旧编号，新件生成新编号。
     // 分类算法、容差、镜像保护等与"分类数据库迁移_WB"完全一致。
     // ========================================================================
-    public sealed class WbEntityClassifier : GH_Component
+    public class WbEntityClassifier : GH_Component
     {
         private const string SettingsChunk = "WbEntityClassifierSettings";
-
         // 分类准则设置（与 WbClassificationMigration 共享 WbClassificationSettings）
         private readonly WbClassificationSettings _settings = new WbClassificationSettings();
 
@@ -39,7 +38,13 @@ namespace NS_Parrot
 
         // 运行状态
         private bool _lastRunInput;
+        private bool _runButtonPulse;
         private bool _savePulse;
+        // 本次分类已有可写回模型的编号，但尚未点击“保存”。
+        // 保存不仅负责新件入库，也负责向下游发脉冲以写回所有编号。
+        private bool _saveActionPending;
+        private bool _isHandlingClosePrompt;
+        private bool _closePromptProcessed;
 
         // 分类结果缓存（供右键保存和非上升沿输出使用）
         private string _pendingDatabasePath = string.Empty;
@@ -47,12 +52,33 @@ namespace NS_Parrot
         private readonly List<string> _lastNumbers = new List<string>();
         private readonly List<string> _lastStatuses = new List<string>();
         private readonly List<string> _lastSummaries = new List<string>();
+        private readonly List<string> _lastFullFeatures = new List<string>();
         private string _lastSummary = string.Empty;
+        // 用于识别分类输入是否已变化。输入变化后，旧的编号结果不能继续作为当前数据输出。
+        private string _lastClassificationInputSignature = string.Empty;
+        private bool _hasClassificationInputSignature;
+
 
         public WbEntityClassifier()
-            : base("实体分类（WB）", "实体分类_WB",
-                  "基于 WB 分类库对 Brep 实体进行分类，命中已有特征时复用旧编号，新件生成新编号。右键\"保存/入库\"写入新件。",
-                  "Parrot", "Library") { }
+            : this("实体分类（WB）", "实体分类_WB",
+                  "基于 WB 分类库对 Brep 实体进行分类，命中已有特征时复用旧编号，新件生成新编号。点击底部\"运行\"分类，点击\"保存\"写入新件。",
+                  true)
+        {
+        }
+
+        // 批量电池继承同一实现，直接共享分类、编号、误差菜单和设置序列化。
+        // 批处理自行负责入库与保存，不注册手动分类的关闭提示。
+        protected WbEntityClassifier(string name, string nickname, string description, bool promptOnClose)
+            : base(name, nickname, description, "Parrot", "Library")
+        {
+            if (promptOnClose)
+                Rhino.RhinoDoc.CloseDocument += OnRhinoDocumentClosing;
+        }
+
+        protected IReadOnlyList<string> ClassificationNumbers => _lastNumbers;
+        protected IReadOnlyList<string> ClassificationStatuses => _lastStatuses;
+        protected string ClassificationSummary => _lastSummary;
+        protected string ClassificationSettingsText => _settings.SettingsText();
 
         public override Guid ComponentGuid => new Guid("8F2A5D73-4E6B-4C8E-A1F3-7D9B2E5C8A14");
 
@@ -84,13 +110,19 @@ namespace NS_Parrot
             p.AddTextParameter("编号", "编号",
                 "与输入实体一一对应。命中已有特征时复用旧完整编号；新件生成完整新编号。", GH_ParamAccess.list);
             p.AddTextParameter("命中状态", "状态",
-                "已复用 / 新建编号 / 镜像件独立新建 / 匹配歧义未入库 / 跳过。", GH_ParamAccess.list);
+                "已复用 / 已复用（最接近 A，也匹配 B）/ 新建编号 / 镜像件独立新建 / 匹配歧义未入库 / 跳过。", GH_ParamAccess.list);
             p.AddTextParameter("特征摘要", "摘要",
-                "便于核对分类依据。", GH_ParamAccess.list);
+                "完整特征，用于与数据库逐孔核对。", GH_ParamAccess.list);
             p.AddTextParameter("汇总状态", "汇总",
                 "本次复用数、新建数、歧义数、跳过数及数据库状态。", GH_ParamAccess.item);
-            p.AddBooleanParameter("存储完成脉冲", "入库",
-                "成功保存新件时输出 True，其余时候为 False。", GH_ParamAccess.item);
+            p.AddBooleanParameter("脉冲", "脉冲",
+                "用户点击保存且保存操作完成时输出 True（即使本次没有新件），其余时候为 False。", GH_ParamAccess.item);
+            p.AddTextParameter("误差设置", "设置",
+                "当前右键分类设置的完整快照。可连接到“核查差异_WB”的“误差设置”输入，使核查口径与分类一致。",
+                GH_ParamAccess.item);
+            p.AddTextParameter("完整特征", "特征",
+                "与数据库 part_features.feature_text 相同格式的 V9 完整特征串，包含外轮廓、镜像评分及退化孔数据。",
+                GH_ParamAccess.list);
         }
 
         protected override void SolveInstance(IGH_DataAccess da)
@@ -118,8 +150,20 @@ namespace NS_Parrot
             da.GetData(7, ref startSeq);
             da.GetData(8, ref run);
 
-            bool rising = run && !_lastRunInput;
+            bool runFromButton = _runButtonPulse;
+            _runButtonPulse = false;
+            bool rising = runFromButton || (run && !_lastRunInput);
             _lastRunInput = run;
+
+            string inputSignature = BuildClassificationInputSignature(
+                materials, colors, breps, database, prefixes, digitLength, connector, startSeq);
+            if (_hasClassificationInputSignature &&
+                !string.Equals(inputSignature, _lastClassificationInputSignature, StringComparison.Ordinal))
+            {
+                ClearResultsForInputChange();
+            }
+            _lastClassificationInputSignature = inputSignature;
+            _hasClassificationInputSignature = true;
 
             if (!rising)
             {
@@ -128,14 +172,35 @@ namespace NS_Parrot
                 da.SetDataList(2, _lastSummaries);
                 da.SetData(3, pulse ? _lastSummary + " 入库完成。" : _lastSummary);
                 da.SetData(4, pulse);
+                da.SetData(5, _settings.SettingsText());
+                da.SetDataList(6, _lastFullFeatures);
                 return;
             }
 
-            // 上升沿执行分类
+            ClassifyEntities(materials, colors, breps, database, prefixes, digitLength, connector, startSeq);
+            da.SetDataList(0, _lastNumbers);
+            da.SetDataList(1, _lastStatuses);
+            da.SetDataList(2, _lastSummaries);
+            da.SetData(3, _lastSummary);
+            da.SetData(4, pulse);
+            da.SetData(5, _settings.SettingsText());
+            da.SetDataList(6, _lastFullFeatures);
+        }
+
+        /// <summary>
+        /// 两种电池共用的完整分类入口：加载数据库设置、提取特征、匹配及分配编号。
+        /// 这里只生成待入库记录；调用方决定何时入库和写回 Rhino 对象。
+        /// </summary>
+        protected void ClassifyEntities(List<string> materials, List<string> colors, List<Brep> breps,
+            string database, List<string> prefixes, int digitLength, string connector, int startSeq)
+        {
             _lastNumbers.Clear();
             _lastStatuses.Clear();
             _lastSummaries.Clear();
+            _lastFullFeatures.Clear();
             _newRecords.Clear();
+            _saveActionPending = false;
+            _closePromptProcessed = false;
             _pendingDatabasePath = database ?? string.Empty;
 
             try
@@ -147,14 +212,16 @@ namespace NS_Parrot
                     throw new ArgumentException("数据库地址不能为空。");
                 if (!File.Exists(database))
                     throw new FileNotFoundException("数据库文件不存在：" + database);
+                if (!WbMigrationStore.TryValidateWbDatabase(database, out string databaseValidationMessage))
+                    throw new ArgumentException(databaseValidationMessage);
                 if (digitLength < 1) digitLength = 1;
                 if (startSeq < 1) startSeq = 1;
 
                 // DB 路径变化时读取 classification_profile，同步参数
                 if (!string.Equals(database, _lastDatabasePath, StringComparison.OrdinalIgnoreCase))
                 {
-                    _lastDatabasePath = database;
                     _settingsFromDb = false;
+                    _dbProfileWasLoaded = false;
 
                     string profileText = WbMigrationStore.LoadProfileSettings(database);
                     if (!string.IsNullOrWhiteSpace(profileText))
@@ -162,7 +229,8 @@ namespace NS_Parrot
                         if (WbClassificationSettings.TryParse(profileText, out WbClassificationSettings dbSettings))
                         {
                             // 用 DB 参数覆盖当前设置
-                            foreach (V5Criterion k in _settings.Enabled.Keys)
+                            // 覆盖字典值会使 .NET Framework 的 Keys 枚举器失效，先冻结键集合。
+                            foreach (V5Criterion k in _settings.Enabled.Keys.ToArray())
                             {
                                 _settings.Enabled[k] = dbSettings.Enabled[k];
                                 _settings.Tolerances[k] = dbSettings.Tolerances[k];
@@ -178,12 +246,13 @@ namespace NS_Parrot
                             _settings.EnableDegenerateMatching = dbSettings.EnableDegenerateMatching;
                             _settingsFromDb = true;
                             _dbProfileWasLoaded = true;
-                            Attributes?.ExpireLayout();
-                            OnDisplayExpired(true);
+                            ScheduleDisplayRefresh();
                         }
                     }
                     if (!_settingsFromDb)
                         AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "数据库无 classification_profile 或解析失败，使用本地参数。");
+                    // 仅在数据库访问完成后记录路径；异常时保留旧值，以便下次运行重试。
+                    _lastDatabasePath = database;
                 }
 
                 // 冻结参数快照：同一次分类、入库使用同一份参数
@@ -192,94 +261,148 @@ namespace NS_Parrot
                 // 加载数据库已有件
                 var existingParts = WbMigrationStore.LoadAllParts(database);
                 bool dbOk = existingParts != null;
+                var existingBuckets = WbCandidateBuckets.BuildCandidateBuckets(existingParts, _frozenSettings.StrictMaterialColor);
+                var sequenceMaxByPrefix = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
                 int reused = 0, newCount = 0, mirrorCount = 0, ambiguous = 0, skipped = 0;
-                string rhinoPath = Rhino.RhinoDoc.ActiveDoc?.Path ?? string.Empty;
+                // 在主线程冻结文档容差，并复制 Brep；后台线程只处理独立几何副本，
+                // 不访问 RhinoDoc 或 Grasshopper 数据结构。
+                Rhino.RhinoDoc activeDoc = Rhino.RhinoDoc.ActiveDoc;
+                double curveJoinTolerance = activeDoc == null
+                    ? _frozenSettings.FallbackTolerance
+                    : activeDoc.ModelAbsoluteTolerance;
+                bool curveJoinUsesFallback = activeDoc == null;
+                string rhinoPath = activeDoc?.Path ?? string.Empty;
+                int featureWorkerCount = ParallelWorkerCount.ForWorkItems(count);
+                var featureBreps = new Brep[count];
+                var features = new WbFeature[count];
+                var featureErrors = new string[count];
+                var featureMaterials = new string[count];
+                var featureColors = new string[count];
+                for (int i = 0; i < count; i++)
+                {
+                    featureMaterials[i] = TextAt(materials, i);
+                    featureColors[i] = TextAt(colors, i);
+                    featureBreps[i] = breps[i] == null ? null : breps[i].DuplicateBrep();
+                }
+
+                try
+                {
+                    Parallel.For(0, count,
+                        new ParallelOptions { MaxDegreeOfParallelism = featureWorkerCount }, i =>
+                        {
+                            try
+                            {
+                                features[i] = WbFeature.Create(
+                                    featureMaterials[i], featureColors[i], featureBreps[i],
+                                    _frozenSettings.InertiaDegenerateRatio,
+                                    _frozenSettings.FallbackTolerance, i,
+                                    curveJoinTolerance, curveJoinUsesFallback);
+                            }
+                            catch (Exception ex)
+                            {
+                                featureErrors[i] = ex.Message;
+                            }
+                            finally
+                            {
+                                featureBreps[i]?.Dispose();
+                            }
+                        });
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException("并行提取实体特征失败：" + ex.Message, ex);
+                }
 
                 for (int i = 0; i < count; i++)
                 {
                     try
                     {
-                        Brep brep = breps[i];
-                        string mat = TextAt(materials, i);
-                        string col = TextAt(colors, i);
-
-                        WbFeature feature = WbFeature.Create(
-                            mat, col, brep, _frozenSettings.InertiaDegenerateRatio, _frozenSettings.FallbackTolerance, i);
+                        if (!string.IsNullOrWhiteSpace(featureErrors[i]))
+                            throw new InvalidOperationException(featureErrors[i]);
+                        WbFeature feature = features[i];
+                        if (feature == null)
+                            throw new InvalidOperationException("未能提取实体特征。");
+                        _lastFullFeatures.Add(feature.Serialize());
 
                         // 与库中件比较
-                        int matchCount = 0;
-                        string matchedNumber = null;
+                        var matchedScores = new Dictionary<string, double>(StringComparer.Ordinal);
                         bool isMirror = false;
 
-                        if (dbOk)
+                        if (dbOk && existingBuckets.TryGetValue(
+                                WbCandidateBuckets.CreateCandidateBucketKey(feature, _frozenSettings.StrictMaterialColor),
+                                out List<WbMigrationRecord> candidates))
                         {
-                            foreach (var existing in existingParts)
+                            foreach (var existing in candidates)
                             {
                                 if (!WbMigrationAudit.CanAutoMatch(feature, existing.Feature,
                                         _frozenSettings.EnableDegenerateMatching))
                                     continue;
 
-                                if (CallMatches(feature, existing.Feature, false))
-                                {
-                                    matchCount++;
-                                    matchedNumber = existing.Number;
-                                }
-
-                                if (matchCount > 1)
-                                    break;                  // 已歧义，后续比较不再改变结果
+                                if (CallMatchScore(feature, existing.Feature, out double score))
+                                    AddMatchedScore(matchedScores, existing.Number, score);
 
                                 // 仅尚未发现精确匹配时再检查镜像
-                                if (matchCount == 0 && CallMatches(feature, existing.Feature, true))
+                                if (matchedScores.Count == 0 && CallMatches(feature, existing.Feature, true))
                                     isMirror = true;
                             }
                         }
 
-                        // 与本轮已生成的新记录比较（防止同批次相同件分配不同编号）
-                        if (matchCount == 0)
+                        // 与本轮已生成的新记录比较。即使已命中数据库也继续收集，
+                        // 以便多候选时显示“最接近”及其它同样匹配的编号。
+                        foreach (var nr in _newRecords)
                         {
-                            foreach (var nr in _newRecords)
-                            {
-                                if (!WbMigrationAudit.CanAutoMatch(feature, nr.Feature,
-                                        _frozenSettings.EnableDegenerateMatching))
-                                    continue;
+                            if (!WbMigrationAudit.CanAutoMatch(feature, nr.Feature,
+                                    _frozenSettings.EnableDegenerateMatching))
+                                continue;
 
-                                if (CallMatches(feature, nr.Feature, false))
-                                {
-                                    matchCount++;
-                                    matchedNumber = nr.Number;
-                                    break;              // 同批次找到相同件，无需继续
-                                }
+                            if (CallMatchScore(feature, nr.Feature, out double score))
+                                AddMatchedScore(matchedScores, nr.Number, score);
 
-                                // 仅未匹配时再检查镜像
-                                if (CallMatches(feature, nr.Feature, true))
-                                    isMirror = true;
-                            }
+                            // 仅未匹配时再检查镜像
+                            if (matchedScores.Count == 0 && CallMatches(feature, nr.Feature, true))
+                                isMirror = true;
                         }
 
-                        if (matchCount == 1)
+                        var orderedMatches = matchedScores
+                            .OrderBy(x => x.Value)
+                            .ThenBy(x => x.Key, StringComparer.Ordinal)
+                            .ToList();
+                        if (orderedMatches.Count == 1)
                         {
+                            string matchedNumber = orderedMatches[0].Key;
                             _lastNumbers.Add(matchedNumber);
                             _lastStatuses.Add("已复用");
-                            _lastSummaries.Add(feature.ToSummary());
+                            _lastSummaries.Add(feature.ToDatabaseSummary(matchedNumber));
                             reused++;
                         }
-                        else if (matchCount > 1)
+                        else if (orderedMatches.Count > 1 &&
+                                 IsScoreTie(orderedMatches[0].Value, orderedMatches[1].Value))
                         {
                             _lastNumbers.Add(string.Empty);
-                            _lastStatuses.Add("匹配歧义未入库");
-                            _lastSummaries.Add(feature.ToSummary());
+                            _lastStatuses.Add("匹配歧义未入库（同时匹配：" +
+                                string.Join("、", orderedMatches.Select(x => x.Key)) + "）");
+                            _lastSummaries.Add(feature.ToDatabaseSummary(string.Empty));
                             ambiguous++;
+                        }
+                        else if (orderedMatches.Count > 1)
+                        {
+                            string matchedNumber = orderedMatches[0].Key;
+                            _lastNumbers.Add(matchedNumber);
+                            _lastStatuses.Add("已复用（最接近 " + matchedNumber + "，也匹配 " +
+                                string.Join("、", orderedMatches.Skip(1).Select(x => x.Key)) + "）");
+                            _lastSummaries.Add(feature.ToDatabaseSummary(matchedNumber));
+                            reused++;
                         }
                         else if (isMirror)
                         {
                             string prefix = TextAt(prefixes, i);
                             string newNumber = GenerateNewNumber(
                                 prefix, connector, digitLength, startSeq,
-                                existingParts, _lastNumbers);
+                                existingParts, _lastNumbers, sequenceMaxByPrefix);
                             _lastNumbers.Add(newNumber);
                             _lastStatuses.Add("镜像件独立新建");
-                            _lastSummaries.Add(feature.ToSummary());
+                            _lastSummaries.Add(feature.ToDatabaseSummary(newNumber));
                             _newRecords.Add(new WbMigrationRecord(
                                 i, newNumber, feature, rhinoPath));
                             mirrorCount++;
@@ -289,10 +412,10 @@ namespace NS_Parrot
                             string prefix = TextAt(prefixes, i);
                             string newNumber = GenerateNewNumber(
                                 prefix, connector, digitLength, startSeq,
-                                existingParts, _lastNumbers);
+                                existingParts, _lastNumbers, sequenceMaxByPrefix);
                             _lastNumbers.Add(newNumber);
                             _lastStatuses.Add("新建编号");
-                            _lastSummaries.Add(feature.ToSummary());
+                            _lastSummaries.Add(feature.ToDatabaseSummary(newNumber));
                             _newRecords.Add(new WbMigrationRecord(
                                 i, newNumber, feature, rhinoPath));
                             newCount++;
@@ -303,14 +426,16 @@ namespace NS_Parrot
                         _lastNumbers.Add(string.Empty);
                         _lastStatuses.Add("跳过：" + ex.Message);
                         _lastSummaries.Add(string.Empty);
+                        _lastFullFeatures.Add(string.Empty);
                         skipped++;
                     }
                 }
 
                 _lastSummary = string.Format(CultureInfo.InvariantCulture,
-                    "复用 {0}，新建 {1}，镜像 {2}，歧义 {3}，跳过 {4}，共 {5} 件。" +
+                    "特征计算使用 {6} 个并行线程。复用 {0}，新建 {1}，镜像 {2}，歧义 {3}，跳过 {4}，共 {5} 件。" +
                     (dbOk ? "数据库正常。" : "数据库加载失败。"),
-                    reused, newCount, mirrorCount, ambiguous, skipped, count);
+                    reused, newCount, mirrorCount, ambiguous, skipped, count, featureWorkerCount);
+                _saveActionPending = _lastNumbers.Any(number => !string.IsNullOrWhiteSpace(number));
             }
             catch (Exception ex)
             {
@@ -318,35 +443,187 @@ namespace NS_Parrot
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
             }
 
-            da.SetDataList(0, _lastNumbers);
-            da.SetDataList(1, _lastStatuses);
-            da.SetDataList(2, _lastSummaries);
-            da.SetData(3, _lastSummary);
-            da.SetData(4, pulse);
+        }
+
+        /// <summary>共享入库入口，不触发 GH 重算，供批处理在一次文件操作内调用。</summary>
+        protected void PersistClassification()
+        {
+            if (_newRecords.Count > 0)
+                WbMigrationStore.InsertPartsBatch(_pendingDatabasePath, _newRecords, _frozenSettings?.SettingsText());
+            _newRecords.Clear();
+            _saveActionPending = false;
+        }
+
+        /// <summary>
+        /// 仅用于判断上次分类结果是否仍对应当前输入；不参与任何分类或匹配计算。
+        /// 输入端连接的数据源 GUID、Brep 拓扑与包围盒同时纳入。不能使用 Brep 对象标识，
+        /// 因为 Grasshopper 重算时可能为同一实体重新创建 Brep 包装对象。
+        /// </summary>
+        private string BuildClassificationInputSignature(
+            IList<string> materials, IList<string> colors, IList<Brep> breps,
+            string database, IList<string> prefixes, int digitLength, string connector, int startSeq)
+        {
+            var parts = new List<string>
+            {
+                database ?? string.Empty,
+                digitLength.ToString(CultureInfo.InvariantCulture),
+                connector ?? string.Empty,
+                startSeq.ToString(CultureInfo.InvariantCulture),
+                BuildInputSourceSignature(),
+                JoinSignatureValues(materials),
+                JoinSignatureValues(colors),
+                JoinSignatureValues(prefixes)
+            };
+
+            foreach (Brep brep in breps)
+            {
+                if (brep == null)
+                {
+                    parts.Add("<null>");
+                    continue;
+                }
+
+                BoundingBox box = brep.GetBoundingBox(true);
+                parts.Add(brep.Faces.Count.ToString(CultureInfo.InvariantCulture) + "," +
+                    brep.Edges.Count.ToString(CultureInfo.InvariantCulture) + "," +
+                    brep.Vertices.Count.ToString(CultureInfo.InvariantCulture) + ":" +
+                    box.Min.X.ToString("R", CultureInfo.InvariantCulture) + "," +
+                    box.Min.Y.ToString("R", CultureInfo.InvariantCulture) + "," +
+                    box.Min.Z.ToString("R", CultureInfo.InvariantCulture) + "," +
+                    box.Max.X.ToString("R", CultureInfo.InvariantCulture) + "," +
+                    box.Max.Y.ToString("R", CultureInfo.InvariantCulture) + "," +
+                    box.Max.Z.ToString("R", CultureInfo.InvariantCulture));
+            }
+
+            return string.Join("\u001F", parts);
+        }
+
+        private string BuildInputSourceSignature()
+        {
+            return string.Join("\u001E", Params.Input.Select(input =>
+                string.Join(",", input.Sources.Select(source => source.InstanceGuid.ToString("N")))));
+        }
+
+        private static string JoinSignatureValues(IList<string> values)
+        {
+            return values == null ? string.Empty : string.Join("\u001E", values.Select(value => value ?? string.Empty));
+        }
+
+        private void ClearResultsForInputChange()
+        {
+            _lastNumbers.Clear();
+            _lastStatuses.Clear();
+            _lastSummaries.Clear();
+            _lastFullFeatures.Clear();
+            _newRecords.Clear();
+            _pendingDatabasePath = string.Empty;
+            _saveActionPending = false;
+            _closePromptProcessed = false;
+            _lastSummary = "数据源已变化，请重新运行分类。";
         }
 
         // ================================================================
         // 右键保存 / 入库
         // ================================================================
-        public void SaveToDatabase()
+        public bool SaveToDatabase()
         {
-            if (_newRecords.Count == 0 || string.IsNullOrWhiteSpace(_pendingDatabasePath))
+            if (_newRecords.Count == 0)
             {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "没有待保存的新件。");
-                return;
+                // 保存脉冲表示用户已完成本次保存操作；即使没有待入库记录（包括分类未产生新件），
+                // 也向下游发送一次脉冲，避免后续流程区分“有新件”和“无新件”两种正常情况。
+                _savePulse = true;
+                _saveActionPending = false;
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "没有待保存的新件，已发送入库完成脉冲。");
+                ExpireSolution(true);
+                return true;
+            }
+
+            if (string.IsNullOrWhiteSpace(_pendingDatabasePath))
+            {
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "没有可用的数据库路径，无法保存新件。");
+                return false;
             }
 
             try
             {
-                WbMigrationStore.InsertPartsBatch(_pendingDatabasePath, _newRecords, _frozenSettings?.SettingsText());
+                PersistClassification();
 
                 _savePulse = true;
                 _newRecords.Clear();
+                _saveActionPending = false;
                 ExpireSolution(true);
+                return true;
             }
             catch (Exception ex)
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "保存失败：" + ex.Message);
+                return false;
+            }
+        }
+
+        public void RunClassification()
+        {
+            _runButtonPulse = true;
+            ExpireSolution(true);
+        }
+
+        public override void RemovedFromDocument(GH_Document document)
+        {
+            Rhino.RhinoDoc.CloseDocument -= OnRhinoDocumentClosing;
+            base.RemovedFromDocument(document);
+        }
+
+        public override void DocumentContextChanged(GH_Document document, GH_DocumentContext context)
+        {
+            // 关闭当前 Grasshopper 文件时，组件仍在文档中，可在卸载前完成入库提示。
+            if (context == GH_DocumentContext.Close)
+                OnRhinoDocumentClosing(this, EventArgs.Empty);
+            base.DocumentContextChanged(document, context);
+        }
+
+        /// <summary>关闭 Rhino 文档前提示执行保存：新件入库并向下游发送编号写回脉冲。</summary>
+        private void OnRhinoDocumentClosing(object sender, EventArgs e)
+        {
+            if (!_saveActionPending || _isHandlingClosePrompt || _closePromptProcessed)
+                return;
+
+            _isHandlingClosePrompt = true;
+            try
+            {
+                DialogResult result = MessageBox.Show(
+                    "实体分类_WB 本次分类的编号尚未执行“保存”。" +
+                    (_newRecords.Count > 0
+                        ? "其中 " + _newRecords.Count.ToString(CultureInfo.InvariantCulture) + " 个新编号将入库。"
+                        : "本次没有需要入库的新编号。") +
+                    "\n\n“是”：执行保存（入库并发送编号写回脉冲）后继续关闭。\n“否”：不入库、不发送脉冲，直接关闭。",
+                    "存在未保存分类结果",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button1);
+
+                if (result != DialogResult.Yes)
+                {
+                    _closePromptProcessed = true;
+                    return;
+                }
+
+                if (!SaveToDatabase())
+                {
+                    // 关闭流程可能继续触发另一条关闭事件；本次已提示失败，不再重复询问。
+                    _closePromptProcessed = true;
+                    MessageBox.Show("关闭前保存失败，未发送编号写回脉冲。请检查运行消息后重试。",
+                        "保存失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+            catch (Exception ex)
+            {
+                _closePromptProcessed = true;
+                MessageBox.Show("关闭前保存新编号失败：" + ex.Message,
+                    "保存失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                _isHandlingClosePrompt = false;
             }
         }
 
@@ -394,9 +671,15 @@ namespace NS_Parrot
                     WbClassificationMigration.CriterionDisplayName(criterion) + " 容差不能为 NaN 或无穷大：" + text);
                 return;
             }
-            _settings.Tolerances[criterion] = Math.Abs(value);
+            double normalized = Math.Abs(value);
+            bool isRelative = !useAbsolute;
+            if (_settings.Tolerances[criterion] == normalized &&
+                (WbClassificationMigration.IsAbsoluteOnlyCriterion(criterion) ||
+                 _settings.IsRelativeTolerance[criterion] == isRelative))
+                return;
+            _settings.Tolerances[criterion] = normalized;
             if (!WbClassificationMigration.IsAbsoluteOnlyCriterion(criterion))
-                _settings.IsRelativeTolerance[criterion] = !useAbsolute;
+                _settings.IsRelativeTolerance[criterion] = isRelative;
             MarkSettingsChanged();
         }
 
@@ -407,7 +690,9 @@ namespace NS_Parrot
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "回退容差无法识别：" + text);
                 return;
             }
-            _settings.FallbackTolerance = Math.Max(0, value);
+            double normalized = Math.Max(0, value);
+            if (_settings.FallbackTolerance == normalized) return;
+            _settings.FallbackTolerance = normalized;
             MarkSettingsChanged();
         }
 
@@ -418,7 +703,9 @@ namespace NS_Parrot
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "退化判定阈值无法识别：" + text);
                 return;
             }
-            _settings.InertiaDegenerateRatio = Math.Max(0.5, Math.Min(1.0, value));
+            double normalized = Math.Max(0.5, Math.Min(1.0, value));
+            if (_settings.InertiaDegenerateRatio == normalized) return;
+            _settings.InertiaDegenerateRatio = normalized;
             MarkSettingsChanged();
         }
 
@@ -436,7 +723,9 @@ namespace NS_Parrot
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "法向兼容阈值无法识别：" + text);
                 return;
             }
-            _settings.HoleNormalTolerance = Math.Max(0.0, Math.Min(1.0, value));
+            double normalized = Math.Max(0.0, Math.Min(1.0, value));
+            if (_settings.HoleNormalTolerance == normalized) return;
+            _settings.HoleNormalTolerance = normalized;
             MarkSettingsChanged();
         }
 
@@ -447,7 +736,9 @@ namespace NS_Parrot
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "外轮廓面积容差无法识别：" + text);
                 return;
             }
-            _settings.OuterProfileAreaRatio = Math.Max(0, value);
+            double normalized = Math.Max(0, value);
+            if (_settings.OuterProfileAreaRatio == normalized) return;
+            _settings.OuterProfileAreaRatio = normalized;
             MarkSettingsChanged();
         }
 
@@ -458,7 +749,9 @@ namespace NS_Parrot
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "外轮廓周长最小容差无法识别：" + text);
                 return;
             }
-            _settings.OuterProfilePerimeterMin = Math.Max(0, value);
+            double normalized = Math.Max(0, value);
+            if (_settings.OuterProfilePerimeterMin == normalized) return;
+            _settings.OuterProfilePerimeterMin = normalized;
             MarkSettingsChanged();
         }
 
@@ -469,7 +762,9 @@ namespace NS_Parrot
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "退化孔容差倍数无法识别：" + text);
                 return;
             }
-            _settings.DegeneratePositionMultiplier = Math.Max(1.0, value);
+            double normalized = Math.Max(1.0, value);
+            if (_settings.DegeneratePositionMultiplier == normalized) return;
+            _settings.DegeneratePositionMultiplier = normalized;
             MarkSettingsChanged();
         }
 
@@ -495,6 +790,18 @@ namespace NS_Parrot
             OnDisplayExpired(true);
         }
 
+        /// <summary>将解算期间的显示刷新推迟到下一次 GH 调度，避免重入布局。</summary>
+        private void ScheduleDisplayRefresh()
+        {
+            GH_Document document = OnPingDocument();
+            if (document == null) return;
+            document.ScheduleSolution(1, _ =>
+            {
+                Attributes?.ExpireLayout();
+                OnDisplayExpired(true);
+            });
+        }
+
         // ================================================================
         // 辅助方法
         // ================================================================
@@ -513,8 +820,31 @@ namespace NS_Parrot
                 fallbackTolerance: _frozenSettings.FallbackTolerance);
         }
 
+        /// <summary>取得与实际非镜像匹配完全相同口径的接近度；失败时不产生候选。</summary>
+        private bool CallMatchScore(WbFeature a, WbFeature b, out double score)
+        {
+            return WbMigrationAudit.TryGetMatchScore(a, b,
+                _frozenSettings.Enabled, _frozenSettings.Tolerances, _frozenSettings.IsRelativeTolerance,
+                _frozenSettings.StrictMaterialColor, _frozenSettings.HoleNormalTolerance,
+                _frozenSettings.OuterProfileAreaRatio, _frozenSettings.OuterProfilePerimeterMin,
+                _frozenSettings.DegeneratePositionMultiplier, _frozenSettings.EnableDegenerateMatching,
+                _frozenSettings.FallbackTolerance, out score);
+        }
+
+        private static void AddMatchedScore(Dictionary<string, double> scores, string number, double score)
+        {
+            if (scores.TryGetValue(number, out double oldScore) && oldScore <= score)
+                return;
+            scores[number] = score;
+        }
+
+        // 浮点计算只把数值上不可区分的候选视为并列，避免因枚举顺序任意选编号。
+        private static bool IsScoreTie(double a, double b) =>
+            Math.Abs(a - b) <= 1e-12 * Math.Max(1.0, Math.Max(Math.Abs(a), Math.Abs(b)));
+
         private static string TextAt(List<string> values, int index) =>
             (values != null && index >= 0 && index < values.Count) ? (values[index] ?? string.Empty) : string.Empty;
+
 
         private static string BuildPrefixPart(string prefix, string connector)
         {
@@ -532,29 +862,48 @@ namespace NS_Parrot
 
         private static string GenerateNewNumber(
             string prefix, string connector, int digitLength, int startSeq,
-            List<WbMigrationRecord> existingParts, List<string> currentNumbers)
+            List<WbMigrationRecord> existingParts, List<string> currentNumbers,
+            Dictionary<string, int> sequenceMaxByPrefix)
         {
             string prefixPart = BuildPrefixPart(prefix, connector);
-            int maxSeq = startSeq - 1;
-
-            if (existingParts != null)
+            if (!sequenceMaxByPrefix.TryGetValue(prefixPart, out int maxSeq))
             {
-                foreach (var part in existingParts)
+                maxSeq = startSeq - 1;
+                if (existingParts != null)
                 {
-                    int seq = ParseSequence(part.Number, prefixPart);
+                    foreach (var part in existingParts)
+                    {
+                        int seq = ParseSequence(part.Number, prefixPart);
+                        if (seq > maxSeq) maxSeq = seq;
+                    }
+                }
+
+                foreach (var num in currentNumbers)
+                {
+                    if (string.IsNullOrEmpty(num)) continue;
+                    int seq = ParseSequence(num, prefixPart);
                     if (seq > maxSeq) maxSeq = seq;
                 }
             }
 
-            foreach (var num in currentNumbers)
-            {
-                if (string.IsNullOrEmpty(num)) continue;
-                int seq = ParseSequence(num, prefixPart);
-                if (seq > maxSeq) maxSeq = seq;
-            }
-
-            return prefixPart + (maxSeq + 1).ToString(
+            maxSeq = Math.Max(maxSeq, startSeq - 1);
+            int nextSeq = maxSeq + 1;
+            sequenceMaxByPrefix[prefixPart] = nextSeq;
+            string number = prefixPart + nextSeq.ToString(
                 "D" + digitLength.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+            UpdateSequenceMaxima(sequenceMaxByPrefix, number);
+            return number;
+        }
+
+        // 已发编号可能同时满足另一已缓存前缀（如 A 与 A00），必须同步更新。
+        private static void UpdateSequenceMaxima(Dictionary<string, int> sequenceMaxByPrefix, string number)
+        {
+            foreach (string prefixPart in sequenceMaxByPrefix.Keys.ToArray())
+            {
+                int sequence = ParseSequence(number, prefixPart);
+                if (sequence > sequenceMaxByPrefix[prefixPart])
+                    sequenceMaxByPrefix[prefixPart] = sequence;
+            }
         }
 
         // ================================================================
@@ -811,7 +1160,7 @@ namespace NS_Parrot
                 if (_owner._settingsFromDb)
                     baseText += " 当前参数来自数据库 classification_profile，分类和入库均使用此快照。";
                 else if (_owner._dbProfileWasLoaded)
-                    baseText += " 本地参数已修改，下一次入库将更新数据库参数。";
+                    baseText += " 本地参数已修改；重新运行分类后保存，才会更新数据库参数。";
 
                 Label help = CreateBodyLabel(baseText);
                 help.ForeColor = Color.DimGray;
@@ -885,7 +1234,7 @@ namespace NS_Parrot
     }
 
     // ========================================================================
-    // 自定义渲染（保存 / 入库按钮）
+    // 自定义渲染（运行、保存按钮）
     // ========================================================================
     internal sealed class WbEntityClassifierAttributes : GH_ComponentAttributes
     {
@@ -895,7 +1244,7 @@ namespace NS_Parrot
         protected override void Layout()
         {
             base.Layout();
-            Bounds = new RectangleF(Bounds.X, Bounds.Y, Bounds.Width, Bounds.Height + 24f);
+            Bounds = new RectangleF(Bounds.X, Bounds.Y, Bounds.Width, Bounds.Height + 28f);
         }
 
         protected override void Render(GH_Canvas canvas, Graphics graphics, GH_CanvasChannel channel)
@@ -903,29 +1252,50 @@ namespace NS_Parrot
             base.Render(canvas, graphics, channel);
             if (channel != GH_CanvasChannel.Objects) return;
 
-            RectangleF rect = new RectangleF(
-                Bounds.X, Bounds.Bottom - 24f, Bounds.Width, 20f);
-            rect.Inflate(-5f, -2f);
-            using (GH_Capsule cap = GH_Capsule.CreateCapsule(rect, GH_Palette.Black))
+            GetButtonRects(out RectangleF runRect, out RectangleF saveRect);
+            using (GH_Capsule cap = GH_Capsule.CreateCapsule(runRect, GH_Palette.Black))
+                cap.Render(graphics, Selected, Owner.Locked, Owner.Hidden);
+            using (GH_Capsule cap = GH_Capsule.CreateCapsule(saveRect, GH_Palette.Black))
                 cap.Render(graphics, Selected, Owner.Locked, Owner.Hidden);
             using (Font f = new Font(GH_FontServer.Small, FontStyle.Bold))
             using (StringFormat s = new StringFormat
             { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
-                graphics.DrawString("保存 / 入库", f, Brushes.White, rect, s);
+            {
+                graphics.DrawString("运行", f, Brushes.White, runRect, s);
+                graphics.DrawString("保存", f, Brushes.White, saveRect, s);
+            }
         }
 
         public override GH_ObjectResponse RespondToMouseDown(
             GH_Canvas sender, GH_CanvasMouseEvent e)
         {
-            RectangleF rect = new RectangleF(
-                Bounds.X, Bounds.Bottom - 24f, Bounds.Width, 20f);
+            if (Owner.Locked || Owner.Hidden)
+                return base.RespondToMouseDown(sender, e);
 
-            if (e.Button == MouseButtons.Left && rect.Contains(e.CanvasLocation))
+            GetButtonRects(out RectangleF runRect, out RectangleF saveRect);
+
+            if (e.Button == MouseButtons.Left && runRect.Contains(e.CanvasLocation))
+            {
+                ((WbEntityClassifier)Owner).RunClassification();
+                return GH_ObjectResponse.Handled;
+            }
+
+            if (e.Button == MouseButtons.Left && saveRect.Contains(e.CanvasLocation))
             {
                 ((WbEntityClassifier)Owner).SaveToDatabase();
                 return GH_ObjectResponse.Handled;
             }
             return base.RespondToMouseDown(sender, e);
+        }
+
+        private void GetButtonRects(out RectangleF runRect, out RectangleF saveRect)
+        {
+            const float sideMargin = 5f;
+            const float gap = 3f;
+            float buttonWidth = (Bounds.Width - sideMargin * 2f - gap) / 2f;
+            float top = Bounds.Bottom - 24f;
+            runRect = new RectangleF(Bounds.X + sideMargin, top, buttonWidth, 20f);
+            saveRect = new RectangleF(runRect.Right + gap, top, buttonWidth, 20f);
         }
     }
 }
