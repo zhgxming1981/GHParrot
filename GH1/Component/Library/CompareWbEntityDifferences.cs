@@ -29,9 +29,11 @@ namespace NS_Parrot
             p.AddTextParameter("对比编号或特征数据", "对比", "数据库编号，或电池“特征摘要”输出的一项完整文本。", GH_ParamAccess.item);
             p.AddBrepParameter("待标记模型", "模型", "可选。对应对比对象的 Brep；提供后在该模型上圈出未配对孔。", GH_ParamAccess.item);
             p.AddTextParameter("误差设置", "设置", "可选。连接“实体分类_WB”的“误差设置”输出后，优先按该设置核查；未连接时读取数据库保存的设置。", GH_ParamAccess.item);
+            p.AddBrepParameter("基准模型", "基准模型", "可选。仅用于“拓扑诊断”输出；连接数据库编号对应的原始 Brep 后，可逐面比较两侧环和边的连接状态。", GH_ParamAccess.item);
             p[2].Optional = true;
             p[3].Optional = true;
             p[4].Optional = true;
+            p[5].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager p)
@@ -39,6 +41,7 @@ namespace NS_Parrot
             p.AddTextParameter("对比", "对比", "整体特征及孔的完整对比说明。", GH_ParamAccess.list);
             p.AddTextParameter("差异", "差异", "超过当前误差限度、会影响编号复用的指标。", GH_ParamAccess.list);
             p.AddCurveParameter("差异圈", "圈", "模型上未配对或超出数据库容差孔的标记圆圈；可直接预览。", GH_ParamAccess.list);
+            p.AddTextParameter("拓扑诊断", "拓扑", "基准/对比 Brep 的逐面环、边及曲线连接状态；数据库只保存特征，需连接“基准模型”才能诊断基准侧原始拓扑。", GH_ParamAccess.list);
         }
 
         protected override void SolveInstance(IGH_DataAccess da)
@@ -46,19 +49,23 @@ namespace NS_Parrot
             string database = string.Empty, baselineNumber = string.Empty, comparison = string.Empty;
             Brep markerBrep = null;
             string settingsText = string.Empty;
+            Brep baselineBrep = null;
             if (!da.GetData(0, ref database) || !da.GetData(1, ref baselineNumber)) return;
             da.GetData(2, ref comparison);
             da.GetData(3, ref markerBrep);
             da.GetData(4, ref settingsText);
+            da.GetData(5, ref baselineBrep);
 
             var messages = new List<string>();
             var influentialDifferences = new List<string>();
             var circles = new List<Curve>();
+            var topologyDiagnostics = new List<string>();
             try
             {
                 if (!File.Exists(database)) throw new FileNotFoundException("数据库文件不存在：" + database);
                 WbClassificationSettings settings = LoadEffectiveSettings(database, settingsText);
                 WbFeature a = FindDatabaseFeature(database, baselineNumber);
+                topologyDiagnostics.AddRange(BuildTopologyDiagnostics(baselineBrep, markerBrep, settings.FallbackTolerance));
                 WbFeature b;
                 if (markerBrep != null)
                 {
@@ -105,6 +112,7 @@ namespace NS_Parrot
             {
                 messages.Add("核查失败：" + ex.Message);
                 influentialDifferences.Add("核查失败：" + ex.Message);
+                topologyDiagnostics.Add("拓扑诊断未完成：" + ex.Message);
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
             }
             if (!_fullOutput)
@@ -112,6 +120,82 @@ namespace NS_Parrot
             da.SetDataList(0, messages);
             da.SetDataList(1, influentialDifferences);
             da.SetDataList(2, circles);
+            da.SetDataList(3, topologyDiagnostics);
+        }
+
+        private static IEnumerable<string> BuildTopologyDiagnostics(
+            Brep baselineBrep, Brep comparisonBrep, double fallbackTolerance)
+        {
+            double tolerance = Rhino.RhinoDoc.ActiveDoc == null
+                ? fallbackTolerance
+                : Rhino.RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
+            string toleranceText = tolerance.ToString("G17", CultureInfo.InvariantCulture);
+
+            if (baselineBrep == null)
+                yield return "基准侧：未连接“基准模型”。数据库仅保存分类特征，无法从编号还原原始面环拓扑。";
+            else
+            {
+                foreach (string line in DescribeTopology("基准侧", baselineBrep, tolerance, toleranceText))
+                    yield return line;
+            }
+
+            if (comparisonBrep == null)
+                yield return "对比侧：未连接“待标记模型”，无法输出原始面环拓扑。";
+            else
+            {
+                foreach (string line in DescribeTopology("对比侧", comparisonBrep, tolerance, toleranceText))
+                    yield return line;
+            }
+        }
+
+        private static IEnumerable<string> DescribeTopology(
+            string side, Brep brep, double tolerance, string toleranceText)
+        {
+            yield return side + "：面数=" + brep.Faces.Count + "；边数=" + brep.Edges.Count +
+                "；顶点数=" + brep.Vertices.Count + "；有效=" + brep.IsValid +
+                "；曲线连接容差=" + toleranceText + "。";
+
+            for (int faceIndex = 0; faceIndex < brep.Faces.Count; faceIndex++)
+            {
+                BrepFace face = brep.Faces[faceIndex];
+                yield return side + " 面[" + faceIndex + "]：环数=" + face.Loops.Count + "。";
+
+                for (int loopIndex = 0; loopIndex < face.Loops.Count; loopIndex++)
+                {
+                    BrepLoop loop = face.Loops[loopIndex];
+                    var curves = new List<Curve>();
+                    try
+                    {
+                        foreach (BrepTrim trim in loop.Trims)
+                        {
+                            if (trim.Edge != null)
+                            {
+                                Curve curve = trim.Edge.DuplicateCurve();
+                                if (curve != null)
+                                    curves.Add(curve);
+                            }
+                        }
+
+                        Curve[] joined = curves.Count == 0 ? null : Curve.JoinCurves(curves, tolerance);
+                        int joinedCount = joined == null ? 0 : joined.Length;
+                        int closedCount = joined == null ? 0 : joined.Count(curve => curve != null && curve.IsClosed);
+                        bool singleClosed = joinedCount == 1 && closedCount == 1;
+                        yield return side + " 面[" + faceIndex + "] 环[" + loopIndex + "]：类型=" +
+                            loop.LoopType + "；修剪数=" + loop.Trims.Count + "；有效边数=" + curves.Count +
+                            "；连接后曲线数=" + joinedCount + "；闭合曲线数=" + closedCount +
+                            "；单一闭合=" + singleClosed + "。";
+
+                        if (joined != null)
+                            foreach (Curve curve in joined)
+                                curve?.Dispose();
+                    }
+                    finally
+                    {
+                        foreach (Curve curve in curves)
+                            curve.Dispose();
+                    }
+                }
+            }
         }
 
         private static IEnumerable<string> CollectInfluentialDifferences(
@@ -342,6 +426,8 @@ namespace NS_Parrot
 
         private static string FormatHoleTransform(WbHoleAssignment assignment)
         {
+            if (!string.IsNullOrEmpty(assignment.AlignmentDescription))
+                return "分类器采用局部坐标变换：" + assignment.AlignmentDescription + "。";
             string[] axes = { "U", "V", "W" };
             string[] terms = new string[3];
             for (int i = 0; i < terms.Length; i++)

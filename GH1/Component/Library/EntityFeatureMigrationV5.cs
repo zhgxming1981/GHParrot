@@ -1,4 +1,4 @@
-using GH_IO.Serialization;
+﻿using GH_IO.Serialization;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
@@ -176,7 +176,7 @@ namespace NS_Parrot
         protected override void AppendAdditionalComponentMenuItems(ToolStripDropDown menu)
         {
             base.AppendAdditionalComponentMenuItems(menu); Menu_AppendSeparator(menu);
-            foreach (V5Criterion criterion in Enum.GetValues(typeof(V5Criterion)).Cast<V5Criterion>().Where(x => x != V5Criterion.Mirror)) AddToleranceItem(menu, criterion);
+            foreach (V5Criterion criterion in _enabled.Keys.Where(x => x != V5Criterion.Mirror)) AddToleranceItem(menu, criterion);
             ToolStripMenuItem mirror = new ToolStripMenuItem("镜像区分容差：" + _mirrorTolerance.ToString("G6", CultureInfo.InvariantCulture));
             mirror.Click += (s, e) => EditDouble("镜像区分容差", _mirrorTolerance, value => _mirrorTolerance = Math.Abs(value)); menu.Items.Add(mirror);
             Menu_AppendSeparator(menu);
@@ -214,7 +214,7 @@ namespace NS_Parrot
         public override Guid ComponentGuid => new Guid("B1D97B02-3A4A-4F3C-91F0-4AC1D59EE802");
     }
 
-    internal enum V5Criterion { Length, Inertia, Area, Volume, EdgeSum, HolePosition, Mirror, HoleArea }
+    internal enum V5Criterion { Length, Inertia, Area, Volume, EdgeSum, HolePosition, Mirror, HoleArea, DegenerateCircularity, DegenerateAspectRatio }
     // 分类库迁移V8 已移除
 
     internal sealed class V5Hole

@@ -3,7 +3,7 @@
 //
 // 包含类：WbUtil, WbHole, WbFeature, WbMigrationRecord,
 //        WbMigrationAudit, WbMigrationStore, WbClassificationSettings
-// ========================================================================
+﻿// ========================================================================
 using System;
 using System.Collections.Generic;
 using System.Data.SQLite;
@@ -832,6 +832,11 @@ namespace NS_Parrot
                             normal.Unitize();
                             centerMode = "平面面积质心";
                         }
+                        else if (TryNearPlanarHole(boundary.ClosedCurve, curveJoinTolerance,
+                            out holeCenter, out holeArea, out normal))
+                        {
+                            centerMode = "近似平面投影面积质心";
+                        }
                         else
                         {
                             holeCenter = DeterministicLengthCentroid(
@@ -916,6 +921,48 @@ namespace NS_Parrot
 
             profiles = profiles.OrderBy(p => p.Area)
                 .ThenBy(p => p.Perimeter).ToList();
+        }
+
+        // 仅有效闭合曲线可回退；采样点和 NURBS 控制点均须位于文档容差内。
+        // 正权重 NURBS 位于控制点凸包中，因此控制点检查为整条曲线提供保守界限。
+        private static bool TryNearPlanarHole(Curve boundary, double tolerance,
+            out Point3d center, out double area, out Vector3d normal)
+        {
+            center = Point3d.Unset;
+            area = 0;
+            normal = Vector3d.Zero;
+            if (boundary == null || !boundary.IsValid || !boundary.IsClosed ||
+                double.IsNaN(tolerance) || double.IsInfinity(tolerance) || tolerance <= 0)
+                return false;
+            var points = new List<Point3d>();
+            for (int i = 0; i < 256; i++)
+                points.Add(boundary.PointAtNormalizedLength(i / 256.0));
+            Plane plane;
+            if (Plane.FitPlaneToPoints(points, out plane) != PlaneFitResult.Success || !plane.IsValid)
+                return false;
+            if (points.Any(p => !p.IsValid || Math.Abs(plane.DistanceTo(p)) > tolerance))
+                return false;
+            using (NurbsCurve nurbs = boundary.ToNurbsCurve())
+            {
+                if (nurbs == null) return false;
+                foreach (ControlPoint point in nurbs.Points)
+                    if (point.Weight <= 0 || !point.Location.IsValid ||
+                        Math.Abs(plane.DistanceTo(point.Location)) > tolerance)
+                        return false;
+            }
+            using (Curve projected = boundary.DuplicateCurve())
+            {
+                if (projected == null || !projected.Transform(Transform.PlanarProjection(plane))) return false;
+                using (AreaMassProperties props = AreaMassProperties.Compute(projected))
+                {
+                    if (props == null || !props.Centroid.IsValid || props.Area <= RhinoMath.ZeroTolerance)
+                        return false;
+                    center = props.Centroid;
+                    area = props.Area;
+                    normal = plane.Normal;
+                    return normal.Unitize();
+                }
+            }
         }
 
         private static WbLoopBoundary ReadLoopBoundary(BrepLoop loop, double curveJoinTolerance,
@@ -1105,6 +1152,8 @@ namespace NS_Parrot
         public List<WbHole> TransformedComparisonHoles;
         public int[] Permutation;
         public double[] Sign;
+        public string AlignmentDescription;
+        public double[,] LocalTransform;
     }
 
     internal sealed class WbMigrationAudit
@@ -1140,6 +1189,187 @@ namespace NS_Parrot
 
         // 恒等符号：退化路径已将排列+符号烤进重映射坐标，用此数组避免二次乘符号
         private static readonly double[] IdentitySign = { 1.0, 1.0, 1.0 };
+
+        // 提取后的孔坐标不再修改；缓存连续旋转候选，避免求误差的二分过程中重复构造。
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<WbFeature,
+            System.Runtime.CompilerServices.ConditionalWeakTable<WbFeature, HoleAlignmentCache>> AlignmentCaches =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<WbFeature,
+                System.Runtime.CompilerServices.ConditionalWeakTable<WbFeature, HoleAlignmentCache>>();
+
+        private sealed class HoleAlignmentCache
+        {
+            public List<WbHoleAssignment> Proper;
+            public List<WbHoleAssignment> Reflection;
+        }
+
+        private static double[][] SignsForPermutation(int[] permutation, bool reflection)
+        {
+            int inversions = 0;
+            for (int i = 0; i < 3; i++)
+            for (int j = i + 1; j < 3; j++)
+                if (permutation[i] > permutation[j]) inversions++;
+            // det(排列) × 三个符号乘积：普通变换须为+1，镜像须为-1。
+            bool useOddSigns = reflection ^ ((inversions & 1) != 0);
+            return useOddSigns ? ReflectionSigns : NonReflectionSigns;
+        }
+
+        private static IEnumerable<WbHoleAssignment> HoleAlignments(WbFeature a, WbFeature b, bool reflection)
+        {
+            int[][] permutations = a.IsDegenerate || b.IsDegenerate
+                ? AxisPermutations : new[] { new[] { 0, 1, 2 } };
+            foreach (int[] permutation in permutations)
+            foreach (double[] sign in SignsForPermutation(permutation, reflection))
+                yield return new WbHoleAssignment
+                {
+                    TransformedComparisonHoles = RemapHoles(b.Holes, permutation, sign),
+                    Permutation = permutation,
+                    Sign = sign,
+                    LocalTransform = PermutationMatrix(permutation, sign),
+                    AlignmentDescription = "轴排列=" + string.Join(",", permutation) + "；翻转=" + string.Join(",", sign)
+                };
+            if ((!a.IsDegenerate && !b.IsDegenerate) || a.Holes.Count == 0 || b.Holes.Count == 0)
+                yield break;
+            var cache = AlignmentCaches.GetValue(a, _ =>
+                new System.Runtime.CompilerServices.ConditionalWeakTable<WbFeature, HoleAlignmentCache>())
+                .GetValue(b, _ => new HoleAlignmentCache());
+            List<WbHoleAssignment> continuous;
+            lock (cache)
+            {
+                continuous = reflection ? cache.Reflection : cache.Proper;
+                if (continuous == null)
+                {
+                    continuous = BuildContinuousAlignments(a, b, reflection);
+                    if (reflection) cache.Reflection = continuous;
+                    else cache.Proper = continuous;
+                }
+            }
+            foreach (WbHoleAssignment alignment in continuous) yield return alignment;
+        }
+
+        private static List<WbHoleAssignment> BuildContinuousAlignments(WbFeature a, WbFeature b, bool reflection)
+        {
+            var result = new List<WbHoleAssignment>();
+            bool allAxesAmbiguous = a.Inertia[0] > 0 && b.Inertia[0] > 0 &&
+                a.Inertia[2] / a.Inertia[0] > 0.99 && b.Inertia[2] / b.Inertia[0] > 0.99;
+            if (allAxesAmbiguous)
+            {
+                // 三轴均退化：两个不共线的质心径向向量确定一个右手标架。
+                WbHole anchor = a.Holes.OrderByDescending(h => HoleVector(h).SquareLength).First();
+                WbHole second = a.Holes.OrderByDescending(h =>
+                    Vector3d.CrossProduct(HoleVector(anchor), HoleVector(h)).SquareLength).First();
+                if (!TryHoleFrame(HoleVector(anchor), HoleVector(second), out Vector3d[] frameA)) return result;
+                double[] sign = reflection ? ReflectionSigns[0] : IdentitySign;
+                var reflected = RemapHoles(b.Holes, new[] { 0, 1, 2 }, sign);
+                for (int i = 0; i < reflected.Count; i++)
+                for (int j = 0; j < reflected.Count; j++)
+                {
+                    if (!TryHoleFrame(HoleVector(reflected[i]), HoleVector(reflected[j]), out Vector3d[] frameB)) continue;
+                    var matrix = new double[3, 3];
+                    for (int row = 0; row < 3; row++)
+                    for (int col = 0; col < 3; col++)
+                    for (int k = 0; k < 3; k++) matrix[row, col] += frameA[k][row] * frameB[k][col];
+                    result.Add(RotatedAlignment(reflected, matrix, new[] { 0, 1, 2 }, sign,
+                        "三轴退化：质心径向标架刚体对齐；B锚孔=" + i + "," + j));
+                }
+                return result;
+            }
+
+            // 两轴退化：仅绕剩余主轴旋转，保持实体质心和非退化主轴约束。
+            int p = a.Inertia[0] > 0 && a.Inertia[1] / a.Inertia[0] >=
+                (a.Inertia[1] > 0 ? a.Inertia[2] / a.Inertia[1] : 0) ? 0 : 1;
+            int q = p + 1;
+            WbHole reference = a.Holes.OrderByDescending(h =>
+                HoleVector(h)[p] * HoleVector(h)[p] + HoleVector(h)[q] * HoleVector(h)[q]).First();
+            Vector3d av = HoleVector(reference);
+            if (Math.Sqrt(av[p] * av[p] + av[q] * av[q]) <= RhinoMath.ZeroTolerance) return result;
+            foreach (int[] permutation in AxisPermutations)
+            foreach (double[] sign in SignsForPermutation(permutation, reflection))
+            {
+                var remapped = RemapHoles(b.Holes, permutation, sign);
+                var angles = new HashSet<long>();
+                for (int i = 0; i < remapped.Count; i++)
+                {
+                    Vector3d bv = HoleVector(remapped[i]);
+                    if (Math.Sqrt(bv[p] * bv[p] + bv[q] * bv[q]) <= RhinoMath.ZeroTolerance) continue;
+                    double angle = Math.Atan2(av[q], av[p]) - Math.Atan2(bv[q], bv[p]);
+                    if (!angles.Add((long)Math.Round(Math.IEEERemainder(angle, 2 * Math.PI) * 1e12))) continue;
+                    double c = Math.Cos(angle), s = Math.Sin(angle);
+                    var matrix = new double[,] { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
+                    matrix[p, p] = c; matrix[p, q] = -s;
+                    matrix[q, p] = s; matrix[q, q] = c;
+                    result.Add(RotatedAlignment(remapped, matrix, permutation, sign,
+                        "退化平面轴=" + p + "," + q + "；旋转角=" +
+                        (angle * 180 / Math.PI).ToString("G9", CultureInfo.InvariantCulture) + "°；B锚孔=" + i));
+                }
+            }
+            return result;
+        }
+
+        private static Vector3d HoleVector(WbHole hole) => new Vector3d(hole.U, hole.V, hole.W);
+
+        private static double[,] PermutationMatrix(int[] permutation, double[] sign)
+        {
+            var matrix = new double[3, 3];
+            for (int i = 0; i < 3; i++) matrix[i, permutation[i]] = sign[i];
+            return matrix;
+        }
+
+        private static bool TryHoleFrame(Vector3d first, Vector3d second, out Vector3d[] frame)
+        {
+            frame = null;
+            if (!NormalizeAlignmentVector(ref first)) return false;
+            second -= first * (second * first);
+            if (!NormalizeAlignmentVector(ref second)) return false;
+            Vector3d third = Vector3d.CrossProduct(first, second);
+            if (!NormalizeAlignmentVector(ref third)) return false;
+            frame = new[] { first, second, third };
+            return true;
+        }
+
+        private static bool NormalizeAlignmentVector(ref Vector3d vector)
+        {
+            double scale = Math.Max(Math.Abs(vector.X), Math.Max(Math.Abs(vector.Y), Math.Abs(vector.Z)));
+            if (double.IsNaN(scale) || double.IsInfinity(scale) || scale <= RhinoMath.ZeroTolerance) return false;
+            vector /= scale;
+            double length = Math.Sqrt(vector.SquareLength);
+            vector /= length;
+            return true;
+        }
+
+        private static WbHoleAssignment RotatedAlignment(List<WbHole> remapped, double[,] matrix,
+            int[] permutation, double[] sign, string description)
+        {
+            var holes = RemapHoles(remapped, new[] { 0, 1, 2 }, IdentitySign);
+            foreach (WbHole hole in holes)
+            {
+                Vector3d position = RotateLocal(matrix, HoleVector(hole));
+                Vector3d normal = RotateLocal(matrix, new Vector3d(hole.NU, hole.NV, hole.NW));
+                Vector3d degenerateNormal = RotateLocal(matrix, new Vector3d(hole.DegenerateNormalU,
+                    hole.DegenerateNormalV, hole.DegenerateNormalW));
+                hole.U = position.X; hole.V = position.Y; hole.W = position.Z;
+                hole.NU = normal.X; hole.NV = normal.Y; hole.NW = normal.Z;
+                hole.DegenerateNormalU = degenerateNormal.X;
+                hole.DegenerateNormalV = degenerateNormal.Y;
+                hole.DegenerateNormalW = degenerateNormal.Z;
+            }
+            var combined = new double[3, 3];
+            double[,] original = PermutationMatrix(permutation, sign);
+            for (int row = 0; row < 3; row++)
+            for (int col = 0; col < 3; col++)
+            for (int k = 0; k < 3; k++) combined[row, col] += matrix[row, k] * original[k, col];
+            return new WbHoleAssignment
+            {
+                TransformedComparisonHoles = holes, Permutation = permutation, Sign = sign,
+                LocalTransform = combined,
+                AlignmentDescription = description + "；轴排列=" + string.Join(",", permutation) +
+                    "；翻转=" + string.Join(",", sign)
+            };
+        }
+
+        private static Vector3d RotateLocal(double[,] matrix, Vector3d vector) => new Vector3d(
+            matrix[0, 0] * vector.X + matrix[0, 1] * vector.Y + matrix[0, 2] * vector.Z,
+            matrix[1, 0] * vector.X + matrix[1, 1] * vector.Y + matrix[1, 2] * vector.Z,
+            matrix[2, 0] * vector.X + matrix[2, 1] * vector.Y + matrix[2, 2] * vector.Z);
 
         public List<List<WbMigrationRecord>> Classes = new List<List<WbMigrationRecord>>();
         public List<List<WbMigrationRecord>> AmbiguityGroups = new List<List<WbMigrationRecord>>();
@@ -1335,6 +1565,8 @@ namespace NS_Parrot
                             : "未形成已确认类别");
                     if (ambiguityDetails.Count > 0)
                         detail += "；歧义待复核：" + string.Join(" ", ambiguityDetails);
+                    var otherDifferences = new HashSet<string>(StringComparer.Ordinal);
+                    var mismatchReasons = new HashSet<string>(StringComparer.Ordinal);
 
                     // 同号记录组内误差诊断：计算各判据偏差 vs 容差设置
                     var sameNumberRecords = mismatchedClasses
@@ -1351,13 +1583,12 @@ namespace NS_Parrot
                         var errLines = DiagnoseSameNumberGroup(
                             sameNumberRecords, enabled, tolerances, isRel);
                         foreach (string line in errLines)
-                            detail += "；" + line;
+                            otherDifferences.Add(line);
                     }
 
-                    // 诊断失败判据：从各分类取代表记录，两两比较收集未确认原因
+                    // 诊断导致分类拆分的失败判据：从各分类取代表记录两两比较。
                     if (mismatchedClasses.Count > 1)
                     {
-                        var mismatchReasons = new HashSet<string>(StringComparer.Ordinal);
                         for (int ci = 0; ci < mismatchedClasses.Count; ci++)
                         for (int cj = ci + 1; cj < mismatchedClasses.Count; cj++)
                         {
@@ -1371,8 +1602,6 @@ namespace NS_Parrot
                                 mismatchReasons.Add(reason);
                             }
                         }
-                        foreach (string reason in mismatchReasons)
-                            detail += "；" + reason;
                     }
 
                     // 歧义组内逐孔诊断：同号记录全部在歧义组时（classCount==0），
@@ -1384,7 +1613,6 @@ namespace NS_Parrot
                         for (int i = 0; i < n; i++)
                             recordToIdx[normalRecords[i]] = i;
 
-                        var ambigReasons = new HashSet<string>(StringComparer.Ordinal);
                         int diagnosed = 0;
                         int maxPairs = 3;
                         for (int i = 0; i < sameNumberRecords.Count && diagnosed < maxPairs; i++)
@@ -1400,16 +1628,29 @@ namespace NS_Parrot
                                     enabled, tolerances, isRel, strictMaterialColor, holeNormalTolerance,
                                     degeneratePositionMultiplier, enableDegenerateMatching))
                                 {
-                                    ambigReasons.Add(reason);
+                                    mismatchReasons.Add(reason);
                                 }
                                 diagnosed++;
                             }
                         }
-                        foreach (string reason in ambigReasons)
-                            detail += "；" + reason;
                     }
 
-                    audit.DifferentPartsSameNumber.Add(detail);
+                    // 外轮廓不参与分类判定，故作为其它区别列出，不混入导致异件的原因。
+                    foreach (string reason in mismatchReasons
+                        .Where(x => x.StartsWith("外轮廓数 ", StringComparison.Ordinal))
+                        .ToList())
+                    {
+                        mismatchReasons.Remove(reason);
+                        otherDifferences.Add(reason);
+                    }
+
+                    var detailLines = new List<string> { detail };
+                    detailLines.Add("导致异件：" + (mismatchReasons.Count > 0
+                        ? string.Join("；", mismatchReasons)
+                        : "未取得具体超差判据（请复核分类明细和歧义组）。"));
+                    if (otherDifferences.Count > 0)
+                        detailLines.Add("其它区别：" + string.Join("；", otherDifferences));
+                    audit.DifferentPartsSameNumber.Add(string.Join(Environment.NewLine, detailLines));
                 }
             }
 
@@ -1505,7 +1746,19 @@ namespace NS_Parrot
             else foreach (string x in SamePartDifferentNumbers) yield return x;
             if (DifferentPartsSameNumber.Count == 0)
                 yield return "未发现编号相同但实际不同的零件。";
-            else foreach (string x in DifferentPartsSameNumber) yield return x;
+            else
+            {
+                for (int i = 0; i < DifferentPartsSameNumber.Count; i++)
+                {
+                    yield return DifferentPartsSameNumber[i];
+                    if (i < DifferentPartsSameNumber.Count - 1)
+                    {
+                        // 日志文件和摘要端口中，相邻异件同号记录之间保留两个空行。
+                        yield return string.Empty;
+                        yield return string.Empty;
+                    }
+                }
+            }
             foreach (string x in MirrorParts) yield return x;
             foreach (string x in ExcludedNumberConflicts) yield return x;
             if (EmptyFiles.Count > 0)
@@ -1565,41 +1818,23 @@ namespace NS_Parrot
                         a.Feature.Holes.Count.ToString(CultureInfo.InvariantCulture) +
                         "/" + b.Feature.Holes.Count.ToString(CultureInfo.InvariantCulture);
 
-                    double[] bestSign = NonReflectionSigns[0];
-                    double bestMax = double.PositiveInfinity, bestAvg = double.PositiveInfinity;
-                    foreach (double[] sign in NonReflectionSigns)
+                    WbHoleAssignment diagnosticAssignment;
+                    bool hasAssignment = TryGetHoleAssignment(a.Feature, b.Feature,
+                        _enabled, _tolerances, _isRel, _holeNormalTolerance,
+                        _degeneratePositionMultiplier, _enableDegenerateMatching, out diagnosticAssignment);
+                    yield return "完整匹配=" + hasAssignment;
+                    if (hasAssignment)
                     {
-                        var minima = a.Feature.Holes.Select(h =>
-                            b.Feature.Holes.Count == 0
-                                ? double.PositiveInfinity
-                                : b.Feature.Holes.Min(x => Distance(h, x, sign))).ToList();
-                        double maximum = minima.Count == 0 ? 0 : minima.Max();
-                        double average = minima.Count == 0 ? 0 : minima.Average();
-                        bool assignment = PerfectAssignment(
-                            a.Feature.Holes, b.Feature.Holes, sign, _enabled, _tolerances, _isRel, _holeNormalTolerance,
-                            _degeneratePositionMultiplier, _enableDegenerateMatching);
-                        yield return "变换(" + string.Join(",", sign.Select(WbUtil.FD)) +
-                            ")：逐孔最近距离 最大=" + WbUtil.FD(maximum) +
-                            "，平均=" + WbUtil.FD(average) +
-                            "，完整匹配=" + assignment.ToString();
-                        if (maximum < bestMax ||
-                            (Math.Abs(maximum - bestMax) <= 1e-12 && average < bestAvg))
-                        { bestMax = maximum; bestAvg = average; bestSign = sign; }
-                    }
-                    yield return "最佳变换=(" + string.Join(",", bestSign.Select(WbUtil.FD)) + ")";
-                    for (int h = 0; h < a.Feature.Holes.Count; h++)
-                    {
-                        if (b.Feature.Holes.Count == 0)
-                        { yield return "A孔[" + h.ToString(CultureInfo.InvariantCulture) + "]：B 中无孔。"; continue; }
-                        int target = Enumerable.Range(0, b.Feature.Holes.Count)
-                            .OrderBy(x => Distance(a.Feature.Holes[h], b.Feature.Holes[x], bestSign))
-                            .First();
-                        yield return "A孔[" + h.ToString(CultureInfo.InvariantCulture) +
-                            "] \u2192 B孔[" + target.ToString(CultureInfo.InvariantCulture) +
-                            "]：合成距离=" + WbUtil.FD(Distance(
-                                a.Feature.Holes[h], b.Feature.Holes[target], bestSign)) +
-                            "；A局部=" + HolePoint(a.Feature.Holes[h], new[] { 1.0, 1.0, 1.0 }) +
-                            "；B变换后=" + HolePoint(b.Feature.Holes[target], bestSign);
+                        yield return "采用对齐：" + diagnosticAssignment.AlignmentDescription;
+                        for (int h = 0; h < a.Feature.Holes.Count; h++)
+                        {
+                            int target = diagnosticAssignment.ComparisonIndexByBaseline[h];
+                            WbHole transformed = diagnosticAssignment.TransformedComparisonHoles[target];
+                            yield return "A孔[" + h + "] → B孔[" + target +
+                                "]：对齐距离=" + WbUtil.FD(Distance(a.Feature.Holes[h], transformed, IdentitySign)) +
+                                "；A局部=" + HolePoint(a.Feature.Holes[h], IdentitySign) +
+                                "；B变换后=" + HolePoint(transformed, IdentitySign);
+                        }
                     }
                     // 外轮廓对比诊断（外轮廓已不参与匹配，以下仅作参考。
                     // 注意：按提取顺序逐项配对，不同模型的面遍历顺序可能错位；
@@ -1609,10 +1844,12 @@ namespace NS_Parrot
                     {
                         WbOuterProfile pa = a.Feature.OuterProfiles[pi];
                         WbOuterProfile pb = b.Feature.OuterProfiles[pi];
-                        double dot = Math.Abs(pa.NU * pb.NU * bestSign[0] +
-                                              pa.NV * pb.NV * bestSign[1] +
-                                              pa.NW * pb.NW * bestSign[2]);
-                        bool compatible = OuterProfileCompatible(pa, pb, bestSign,
+                        Vector3d profileNormal = new Vector3d(pb.NU, pb.NV, pb.NW);
+                        if (hasAssignment) profileNormal = RotateLocal(diagnosticAssignment.LocalTransform, profileNormal);
+                        double dot = Math.Abs(pa.NU * profileNormal.X + pa.NV * profileNormal.Y + pa.NW * profileNormal.Z);
+                        var alignedProfile = new WbOuterProfile { Area = pb.Area, Perimeter = pb.Perimeter,
+                            NU = profileNormal.X, NV = profileNormal.Y, NW = profileNormal.Z };
+                        bool compatible = hasAssignment && OuterProfileCompatible(pa, alignedProfile, IdentitySign,
                             _tolerances[V5Criterion.HolePosition], _holeNormalTolerance,
                             _outerProfileAreaRatio, _outerProfilePerimeterMin, _fallbackTolerance);
                         yield return "外轮廓[" + pi.ToString(CultureInfo.InvariantCulture) +
@@ -1793,7 +2030,7 @@ namespace NS_Parrot
         /// 判据按尺寸→几何→诊断的顺序输出。
         /// 若两特征实际匹配则返回空列表。
         /// </summary>
-        private static List<string> DiagnoseFeatureMismatch(
+        internal static List<string> DiagnoseFeatureMismatch(
             WbFeature a, WbFeature b,
             Dictionary<V5Criterion, bool> enabled,
             Dictionary<V5Criterion, double> tolerances,
@@ -1855,6 +2092,10 @@ namespace NS_Parrot
             if (aDeg != bDeg)
             {
                 reasons.Add("原因：退化孔状态不一致");
+                FindUnmatchedHoles(a, b, enabled, tolerances, isRel, holeNormalTolerance,
+                    degenMult, enableDegenMatch, out List<int> stateLeft, out List<int> stateRight,
+                    out List<string> stateDetails);
+                reasons.AddRange(stateDetails);
             }
 
             if (a.Holes.Count != b.Holes.Count)
@@ -1862,35 +2103,18 @@ namespace NS_Parrot
                 reasons.Add("原因：孔数不同（" +
                     a.Holes.Count.ToString(CultureInfo.InvariantCulture) + " vs " +
                     b.Holes.Count.ToString(CultureInfo.InvariantCulture) + "）");
+                if (aDeg == bDeg)
+                {
+                    FindUnmatchedHoles(a, b, enabled, tolerances, isRel, holeNormalTolerance,
+                        degenMult, enableDegenMatch, out List<int> countLeft, out List<int> countRight,
+                        out List<string> countDetails);
+                    reasons.AddRange(countDetails);
+                }
             }
             else if (aDeg == bDeg)
             {
-                bool holeMatch = false;
-                if (a.IsDegenerate || b.IsDegenerate)
-                {
-                    foreach (int[] perm in AxisPermutations)
-                    {
-                        if (holeMatch) break;
-                        foreach (double[] sign in NonReflectionSigns)
-                        {
-                            var bRemapped = RemapHoles(b.Holes, perm, sign);
-                            if (PerfectAssignment(a.Holes, bRemapped, IdentitySign,
-                                enabled, tolerances, isRel, holeNormalTolerance,
-                                degenMult, enableDegenMatch))
-                            { holeMatch = true; break; }
-                        }
-                    }
-                }
-                if (!holeMatch)
-                {
-                    foreach (double[] sign in NonReflectionSigns)
-                    {
-                        if (PerfectAssignment(a.Holes, b.Holes, sign,
-                            enabled, tolerances, isRel, holeNormalTolerance,
-                            degenMult, enableDegenMatch))
-                        { holeMatch = true; break; }
-                    }
-                }
+                bool holeMatch = TryGetHoleAssignment(a, b, enabled, tolerances, isRel,
+                    holeNormalTolerance, degenMult, enableDegenMatch, out _);
                 if (!holeMatch)
                 {
                     reasons.Add("原因：孔特征无法完整匹配");
@@ -1907,10 +2131,6 @@ namespace NS_Parrot
                     b.OuterProfiles.Count.ToString(CultureInfo.InvariantCulture) +
                     "（仅诊断，不参与同件判定）");
             }
-
-            // 兜底：各项判据均通过但不在一类（歧义组导致）
-            if (reasons.Count == 0)
-                reasons.Add("原因：容差不传递（详见诊断日志）");
 
             return reasons;
         }
@@ -2122,30 +2342,9 @@ namespace NS_Parrot
                 return false;
 
             if (a.Holes.Count != b.Holes.Count) return false;
-            double[][] signs = reflection ? ReflectionSigns : NonReflectionSigns;
-
-            // 退化路径（惯量退化）：遍历全部 6 种轴排列 × N 种符号
-            if (a.IsDegenerate || b.IsDegenerate)
-            {
-                foreach (int[] perm in AxisPermutations)
-                foreach (double[] sign in signs)
-                {
-                    var bHolesRemapped = RemapHoles(b.Holes, perm, sign);
-
-                    if (!PerfectAssignment(a.Holes, bHolesRemapped, IdentitySign, e, t, isRel, normalTol, degenMult, enableDegenMatch))
-                        continue;
-                    return true;
-                }
-                return false;
-            }
-
-            // 正常路径：非退化零件只遍历符号
-            foreach (double[] sign in signs)
-            {
-                if (!PerfectAssignment(a.Holes, b.Holes, sign, e, t, isRel, normalTol, degenMult, enableDegenMatch))
-                    continue;
-                return true;
-            }
+            foreach (WbHoleAssignment candidate in HoleAlignments(a, b, reflection))
+                if (PerfectAssignment(a.Holes, candidate.TransformedComparisonHoles, IdentitySign,
+                    e, t, isRel, normalTol, degenMult, enableDegenMatch)) return true;
             return false;
         }
 
@@ -2163,44 +2362,81 @@ namespace NS_Parrot
             if (!CanAutoMatch(a, b, enableDegenMatch) || a.Holes.Count != b.Holes.Count)
                 return false;
 
-            if (a.IsDegenerate || b.IsDegenerate)
+            foreach (WbHoleAssignment candidate in HoleAlignments(a, b, false))
             {
-                foreach (int[] perm in AxisPermutations)
-                foreach (double[] sign in NonReflectionSigns)
-                {
-                    List<WbHole> remapped = RemapHoles(b.Holes, perm, sign);
-                    if (!WbUtil.TryBipartiteMatch(a.Holes, remapped,
-                        (left, right) => HoleCompatible(left, right, IdentitySign, e, t, isRel,
-                            normalTol, degenMult, enableDegenMatch), out int[] rightByLeft))
-                        continue;
-                    assignment = new WbHoleAssignment
-                    {
-                        ComparisonIndexByBaseline = rightByLeft,
-                        TransformedComparisonHoles = remapped,
-                        Permutation = (int[])perm.Clone(),
-                        Sign = (double[])sign.Clone()
-                    };
-                    return true;
-                }
-                return false;
-            }
-
-            foreach (double[] sign in NonReflectionSigns)
-            {
-                if (!WbUtil.TryBipartiteMatch(a.Holes, b.Holes,
-                    (left, right) => HoleCompatible(left, right, sign, e, t, isRel,
+                if (!WbUtil.TryBipartiteMatch(a.Holes, candidate.TransformedComparisonHoles,
+                    (left, right) => HoleCompatible(left, right, IdentitySign, e, t, isRel,
                         normalTol, degenMult, enableDegenMatch), out int[] rightByLeft))
                     continue;
                 assignment = new WbHoleAssignment
                 {
                     ComparisonIndexByBaseline = rightByLeft,
-                    TransformedComparisonHoles = b.Holes,
-                    Permutation = new[] { 0, 1, 2 },
-                    Sign = (double[])sign.Clone()
+                    TransformedComparisonHoles = candidate.TransformedComparisonHoles,
+                    Permutation = candidate.Permutation,
+                    Sign = candidate.Sign,
+                    AlignmentDescription = candidate.AlignmentDescription,
+                    LocalTransform = candidate.LocalTransform
                 };
                 return true;
             }
             return false;
+        }
+
+        // 诊断使用最小最大距离的完整配对，避免普通DFS在宽容差下选择远处等尺寸孔。
+        internal static bool TryGetClosestHoleAssignment(WbFeature a, WbFeature b,
+            WbClassificationSettings settings, out WbHoleAssignment assignment)
+        {
+            assignment = null;
+            if (!CanAutoMatch(a, b, settings.EnableDegenerateMatching) || a.Holes.Count != b.Holes.Count)
+                return false;
+            double best = double.PositiveInfinity;
+            foreach (WbHoleAssignment candidate in HoleAlignments(a, b, false))
+            {
+                var holes = candidate.TransformedComparisonHoles;
+                bool[,] compatible = new bool[a.Holes.Count, holes.Count];
+                double[,] distances = new double[a.Holes.Count, holes.Count];
+                var thresholds = new List<double>();
+                for (int i = 0; i < a.Holes.Count; i++)
+                for (int j = 0; j < holes.Count; j++)
+                {
+                    double distance = Distance(a.Holes[i], holes[j], IdentitySign);
+                    distances[i, j] = distance;
+                    compatible[i, j] = distance < best && HoleCompatible(a.Holes[i], holes[j], IdentitySign,
+                        settings.Enabled, settings.Tolerances, settings.IsRelativeTolerance,
+                        settings.HoleNormalTolerance, settings.DegeneratePositionMultiplier, settings.EnableDegenerateMatching);
+                    if (compatible[i, j]) thresholds.Add(distance);
+                }
+                var indices = Enumerable.Range(0, a.Holes.Count).ToList();
+                if (indices.Count == 0)
+                {
+                    candidate.ComparisonIndexByBaseline = Array.Empty<int>();
+                    assignment = candidate;
+                    return true;
+                }
+                double[] ordered = thresholds.Distinct().OrderBy(x => x).ToArray();
+                if (ordered.Length == 0 || !WbUtil.TryBipartiteMatch(indices, indices,
+                    (i, j) => compatible[i, j], out int[] map)) continue;
+                int low = 0, high = ordered.Length - 1;
+                while (low < high)
+                {
+                    int middle = (low + high) / 2;
+                    if (WbUtil.TryBipartiteMatch(indices, indices,
+                        (i, j) => compatible[i, j] && distances[i, j] <= ordered[middle])) high = middle;
+                    else low = middle + 1;
+                }
+                WbUtil.TryBipartiteMatch(indices, indices,
+                    (i, j) => compatible[i, j] && distances[i, j] <= ordered[low], out map);
+                best = ordered[low];
+                assignment = new WbHoleAssignment
+                {
+                    ComparisonIndexByBaseline = map, TransformedComparisonHoles = holes,
+                    Permutation = candidate.Permutation, Sign = candidate.Sign,
+                    AlignmentDescription = candidate.AlignmentDescription,
+                    LocalTransform = candidate.LocalTransform
+                };
+                if (best <= 1e-10) return true;
+            }
+            return assignment != null;
         }
 
         /// <summary>
@@ -2305,10 +2541,11 @@ namespace NS_Parrot
             // 退化孔匹配：形状约束（圆形度 + 纵横比）
             if (bothDegenerate)
             {
-                double shapeTol = relax ? 0.15 * degenMult : 0.15;
-                if (Math.Abs(a.DegenerateCircularity - b.DegenerateCircularity) > shapeTol)
+                double circularityTol = DegenerateShapeTolerance(V5Criterion.DegenerateCircularity, e, t, relax, degenMult);
+                double aspectTol = DegenerateShapeTolerance(V5Criterion.DegenerateAspectRatio, e, t, relax, degenMult);
+                if (Math.Abs(a.DegenerateCircularity - b.DegenerateCircularity) > circularityTol)
                     return false;
-                if (Math.Abs(a.DegenerateAspectRatio - b.DegenerateAspectRatio) > shapeTol)
+                if (Math.Abs(a.DegenerateAspectRatio - b.DegenerateAspectRatio) > aspectTol)
                     return false;
 
                 // 退化孔匹配：使用拟合平面法向
@@ -2341,6 +2578,16 @@ namespace NS_Parrot
         /// 同 HoleCompatible 逻辑，但返回 null 表示兼容、非 null 字符串表示失败原因。
         /// 用于诊断输出，揭示具体哪个判据在哪个孔上失败。
         /// </summary>
+        private static double DegenerateShapeTolerance(V5Criterion criterion,
+            Dictionary<V5Criterion, bool> enabled, Dictionary<V5Criterion, double> tolerances,
+            bool relax, double multiplier)
+        {
+            if (enabled.TryGetValue(criterion, out bool active) && !active)
+                return double.PositiveInfinity;
+            double value = tolerances.TryGetValue(criterion, out double configured) ? configured : 0.15;
+            return relax ? value * multiplier : value;
+        }
+
         private static string HoleCompatibleReason(
             WbHole a, WbHole b, double[] s,
             Dictionary<V5Criterion, bool> e, Dictionary<V5Criterion, double> t,
@@ -2417,17 +2664,18 @@ namespace NS_Parrot
             // 退化孔匹配：形状约束（圆形度 + 纵横比）
             if (bothDegenerate)
             {
-                double shapeTol = relax ? 0.15 * degenMult : 0.15;
+                double circularityTol = DegenerateShapeTolerance(V5Criterion.DegenerateCircularity, e, t, relax, degenMult);
+                double aspectTol = DegenerateShapeTolerance(V5Criterion.DegenerateAspectRatio, e, t, relax, degenMult);
                 double circDiff = Math.Abs(a.DegenerateCircularity - b.DegenerateCircularity);
-                if (circDiff > shapeTol)
+                if (circDiff > circularityTol)
                     return string.Format(CultureInfo.InvariantCulture,
                         "圆形度差={0:F4}（{1:F4} vs {2:F4}），容差={3:F4}",
-                        circDiff, a.DegenerateCircularity, b.DegenerateCircularity, shapeTol);
+                        circDiff, a.DegenerateCircularity, b.DegenerateCircularity, circularityTol);
                 double arDiff = Math.Abs(a.DegenerateAspectRatio - b.DegenerateAspectRatio);
-                if (arDiff > shapeTol)
+                if (arDiff > aspectTol)
                     return string.Format(CultureInfo.InvariantCulture,
                         "纵横比差={0:F4}（{1:F4} vs {2:F4}），容差={3:F4}",
-                        arDiff, a.DegenerateAspectRatio, b.DegenerateAspectRatio, shapeTol);
+                        arDiff, a.DegenerateAspectRatio, b.DegenerateAspectRatio, aspectTol);
 
                 // 退化孔匹配：使用拟合平面法向
                 double aLen = Math.Sqrt(a.DegenerateNormalU * a.DegenerateNormalU +
@@ -2462,36 +2710,7 @@ namespace NS_Parrot
             return null;
         }
 
-        /// <summary>
-        /// 统计 A 侧有多少孔至少有一个兼容的 B 侧孔（不计二分图指派冲突）。
-        /// </summary>
-        private static int CountMatchableHoles(
-            List<WbHole> a, List<WbHole> b, double[] s,
-            Dictionary<V5Criterion, bool> enabled,
-            Dictionary<V5Criterion, double> tolerances,
-            Dictionary<V5Criterion, bool> isRel,
-            double normalTol, double degenMult, bool enableDegenMatch)
-        {
-            int count = 0;
-            for (int i = 0; i < a.Count; i++)
-            {
-                for (int j = 0; j < b.Count; j++)
-                {
-                    if (HoleCompatibleReason(a[i], b[j], s, enabled, tolerances, isRel,
-                        normalTol, degenMult, enableDegenMatch) == null)
-                    {
-                        count++;
-                        break;
-                    }
-                }
-            }
-            return count;
-        }
-
-        /// <summary>
-        /// 孔匹配失败后的诊断：遍历所有排列/符号组合，找出最优排列下
-        /// 无兼容B侧孔的A侧孔，报告每个失败孔的具体判据和数值。
-        /// </summary>
+        /// <summary>使用与分类器相同的完整对齐候选报告最大匹配冲突。</summary>
         private static List<string> DiagnoseHoleMatchingFailure(
             WbFeature a, WbFeature b,
             Dictionary<V5Criterion, bool> enabled,
@@ -2499,103 +2718,91 @@ namespace NS_Parrot
             Dictionary<V5Criterion, bool> isRel,
             double normalTol, double degenMult, bool enableDegenMatch)
         {
-            var result = new List<string>();
+            FindUnmatchedHoles(a, b, enabled, tolerances, isRel, normalTol,
+                degenMult, enableDegenMatch, out _, out _, out List<string> details);
+            return details;
+        }
 
-            // 第一阶段：遍历所有可能排列/符号，找到最优（最多可匹配孔数）的组合
-            int bestMatchable = -1;
-            List<WbHole> bestRemapped = null;
-            double[] effectiveSign = null;
-
-            // 退化路径：尝试全部 6 种轴排列 × 4 种非反射符号
-            if (a.IsDegenerate || b.IsDegenerate)
+        internal static void FindUnmatchedHoles(WbFeature a, WbFeature b,
+            Dictionary<V5Criterion, bool> enabled, Dictionary<V5Criterion, double> tolerances,
+            Dictionary<V5Criterion, bool> isRel, double normalTol, double degenMult,
+            bool enableDegenMatch, out List<int> unmatchedA, out List<int> unmatchedB,
+            out List<string> details)
+        {
+            int bestCount = -1;
+            int[] bestAssigned = null;
+            List<WbHole> bestHoles = null;
+            double[] bestSign = null;
+            string bestDescription = string.Empty;
+            foreach (WbHoleAssignment candidate in HoleAlignments(a, b, false))
             {
-                foreach (int[] perm in AxisPermutations)
-                foreach (double[] sign in NonReflectionSigns)
+                var transformed = candidate.TransformedComparisonHoles;
+                int[] assigned = Enumerable.Repeat(-1, b.Holes.Count).ToArray();
+                int count = 0;
+                for (int i = 0; i < a.Holes.Count; i++)
+                    if (AssignPartialHole(i, a.Holes, transformed, enabled, tolerances, isRel,
+                        normalTol, degenMult, enableDegenMatch, assigned, new bool[b.Holes.Count]))
+                        count++;
+                if (count <= bestCount) continue;
+                bestCount = count;
+                bestAssigned = assigned;
+                bestHoles = transformed;
+                bestSign = IdentitySign;
+                bestDescription = candidate.AlignmentDescription;
+            }
+            unmatchedA = Enumerable.Range(0, a.Holes.Count)
+                .Where(i => bestAssigned == null || !bestAssigned.Contains(i)).ToList();
+            unmatchedB = Enumerable.Range(0, b.Holes.Count)
+                .Where(i => bestAssigned == null || bestAssigned[i] < 0).ToList();
+            details = new List<string>
+            {
+                "  最大匹配采用对齐：" + bestDescription,
+                "  A侧正常/退化内环=" + a.Holes.Count(h => !h.IsDegenerate) + "/" + a.Holes.Count(h => h.IsDegenerate) +
+                "；B侧正常/退化内环=" + b.Holes.Count(h => !h.IsDegenerate) + "/" + b.Holes.Count(h => h.IsDegenerate),
+                "  最多配齐 " + Math.Max(0, bestCount) + " 对；未配齐孔编号（从0开始）：A=[" +
+                string.Join(",", unmatchedA) + "]，B=[" + string.Join(",", unmatchedB) + "]"
+            };
+            foreach (int i in unmatchedA)
+            {
+                WbHole hole = a.Holes[i];
+                int nearest = -1;
+                double distance = double.PositiveInfinity;
+                var candidates = new List<int>();
+                for (int j = 0; bestHoles != null && j < bestHoles.Count; j++)
                 {
-                    var remapped = RemapHoles(b.Holes, perm, sign);
-                    int matchable = CountMatchableHoles(a.Holes, remapped, IdentitySign,
-                        enabled, tolerances, isRel, normalTol, degenMult, enableDegenMatch);
-                    if (matchable > bestMatchable)
-                    {
-                        bestMatchable = matchable;
-                        bestRemapped = remapped;
-                        effectiveSign = IdentitySign;
-                    }
+                    if (HoleCompatible(hole, bestHoles[j], bestSign, enabled, tolerances, isRel,
+                        normalTol, degenMult, enableDegenMatch)) candidates.Add(j);
+                    double d = Distance(hole, bestHoles[j], bestSign);
+                    if (d < distance) { distance = d; nearest = j; }
                 }
+                details.Add("  A孔[" + i + "]：" + (hole.IsDegenerate ? hole.DegenerateType : "正常孔") +
+                    "；世界坐标=" + WbUtil.PointText(new Point3d(hole.X, hole.Y, hole.Z)) +
+                    "；圆形度=" + WbUtil.FR(hole.DegenerateCircularity) + "；纵横比=" + WbUtil.FR(hole.DegenerateAspectRatio) +
+                    "；" + (candidates.Count > 0 ? "兼容B孔=[" + string.Join(",", candidates) + "]，被其它孔占用" :
+                    "最近B孔[" + nearest + "]：" + (nearest < 0 ? "无候选" : HoleCompatibleReason(hole, bestHoles[nearest],
+                        bestSign, enabled, tolerances, isRel, normalTol, degenMult, enableDegenMatch))));
             }
+            foreach (int j in unmatchedB)
+                details.Add("  B孔[" + j + "]：" + (b.Holes[j].IsDegenerate ? b.Holes[j].DegenerateType : "正常孔") +
+                    "；世界坐标=" + WbUtil.PointText(new Point3d(b.Holes[j].X, b.Holes[j].Y, b.Holes[j].Z)) +
+                    "；圆形度=" + WbUtil.FR(b.Holes[j].DegenerateCircularity) + "；纵横比=" + WbUtil.FR(b.Holes[j].DegenerateAspectRatio));
+        }
 
-            // 正常路径：仅尝试 4 种非反射符号，不排列轴
-            foreach (double[] sign in NonReflectionSigns)
+        private static bool AssignPartialHole(int index, List<WbHole> a, List<WbHole> b,
+            Dictionary<V5Criterion, bool> enabled, Dictionary<V5Criterion, double> tolerances,
+            Dictionary<V5Criterion, bool> isRel, double normalTol, double degenMult,
+            bool enableDegenMatch, int[] assigned, bool[] visited)
+        {
+            for (int j = 0; j < b.Count; j++)
             {
-                int matchable = CountMatchableHoles(a.Holes, b.Holes, sign,
-                    enabled, tolerances, isRel, normalTol, degenMult, enableDegenMatch);
-                if (matchable > bestMatchable)
-                {
-                    bestMatchable = matchable;
-                    bestRemapped = b.Holes;
-                    effectiveSign = sign;
-                }
+                if (visited[j] || !HoleCompatible(a[index], b[j], IdentitySign,
+                    enabled, tolerances, isRel, normalTol, degenMult, enableDegenMatch)) continue;
+                visited[j] = true;
+                if (assigned[j] < 0 || AssignPartialHole(assigned[j], a, b, enabled, tolerances,
+                    isRel, normalTol, degenMult, enableDegenMatch, assigned, visited))
+                { assigned[j] = index; return true; }
             }
-
-            if (bestRemapped == null || effectiveSign == null)
-            {
-                result.Add("  （无法执行孔诊断：无有效排列/符号）");
-                return result;
-            }
-
-            // 第二阶段：在最优排列下，找出无一兼容B侧孔的A侧孔
-            var incompatibleReasons = new List<string>();
-            for (int i = 0; i < a.Holes.Count; i++)
-            {
-                bool hasAny = false;
-                string bestReason = null;
-                double bestDist = double.MaxValue;
-
-                for (int j = 0; j < bestRemapped.Count; j++)
-                {
-                    string reason = HoleCompatibleReason(a.Holes[i], bestRemapped[j], effectiveSign,
-                        enabled, tolerances, isRel, normalTol, degenMult, enableDegenMatch);
-                    if (reason == null)
-                    {
-                        hasAny = true;
-                        break;
-                    }
-                    double dist = Distance(a.Holes[i], bestRemapped[j], effectiveSign);
-                    if (dist < bestDist)
-                    {
-                        bestDist = dist;
-                        bestReason = reason;
-                    }
-                }
-
-                if (!hasAny)
-                {
-                    string degLabel = a.Holes[i].IsDegenerate ? "（退化）" : "";
-                    incompatibleReasons.Add(string.Format(CultureInfo.InvariantCulture,
-                        "  孔[{0}]{1}: 无一兼容B侧孔；最近候选 {2}",
-                        i, degLabel, bestReason ?? "未知"));
-                }
-            }
-
-            // 第三阶段：汇总输出
-            if (incompatibleReasons.Count == 0)
-            {
-                result.Add(string.Format(CultureInfo.InvariantCulture,
-                    "  所有 {0} 孔均有兼容B侧候选，但二分图指派冲突（孔间竞争同一目标孔）",
-                    a.Holes.Count));
-            }
-            else
-            {
-                int show = Math.Min(incompatibleReasons.Count, 8);
-                for (int k = 0; k < show; k++)
-                    result.Add(incompatibleReasons[k]);
-                if (incompatibleReasons.Count > show)
-                    result.Add(string.Format(CultureInfo.InvariantCulture,
-                        "  ...（共 {0} 个孔无兼容B侧孔，仅显示前 {1} 个）",
-                        incompatibleReasons.Count, show));
-            }
-
-            return result;
+            return false;
         }
 
         private static double Distance(WbHole a, WbHole b, double[] sign)
@@ -3756,21 +3963,24 @@ namespace NS_Parrot
         {
             { V5Criterion.Length, true }, { V5Criterion.Inertia, true },
             { V5Criterion.Volume, true }, { V5Criterion.EdgeSum, true },
-            { V5Criterion.HoleArea, true }, { V5Criterion.HolePosition, false }
+            { V5Criterion.HoleArea, true }, { V5Criterion.HolePosition, false },
+            { V5Criterion.DegenerateCircularity, false }, { V5Criterion.DegenerateAspectRatio, false }
         };
 
         public Dictionary<V5Criterion, bool> Enabled { get; } = new Dictionary<V5Criterion, bool>
         {
             { V5Criterion.Length, true }, { V5Criterion.Inertia, true },
             { V5Criterion.Volume, true }, { V5Criterion.EdgeSum, true },
-            { V5Criterion.HoleArea, true }, { V5Criterion.HolePosition, true }
+            { V5Criterion.HoleArea, true }, { V5Criterion.HolePosition, true },
+            { V5Criterion.DegenerateCircularity, true }, { V5Criterion.DegenerateAspectRatio, true }
         };
 
         public Dictionary<V5Criterion, double> Tolerances { get; } = new Dictionary<V5Criterion, double>
         {
             { V5Criterion.Length, 0.5 }, { V5Criterion.Inertia, 0.2 },
             { V5Criterion.Volume, 0.5 }, { V5Criterion.EdgeSum, 1 },
-            { V5Criterion.HoleArea, 1 }, { V5Criterion.HolePosition, 0.5 }
+            { V5Criterion.HoleArea, 1 }, { V5Criterion.HolePosition, 0.5 },
+            { V5Criterion.DegenerateCircularity, 0.15 }, { V5Criterion.DegenerateAspectRatio, 0.15 }
         };
 
         public double FallbackTolerance = 0.001;
@@ -3816,6 +4026,8 @@ namespace NS_Parrot
                     IsRelativeTolerance[c] = isRel;
             }
             Enabled[V5Criterion.Length] = true;
+            IsRelativeTolerance[V5Criterion.DegenerateCircularity] = false;
+            IsRelativeTolerance[V5Criterion.DegenerateAspectRatio] = false;
 
             double v = FallbackTolerance;
             if (reader.TryGetDouble(chunk + "FallbackTolerance", ref v))
@@ -3904,7 +4116,9 @@ namespace NS_Parrot
                     { "HolePosition", V5Criterion.HolePosition },
                     { "Inertia", V5Criterion.Inertia },
                     { "Length", V5Criterion.Length },
-                    { "Volume", V5Criterion.Volume }
+                    { "Volume", V5Criterion.Volume },
+                    { "DegenerateCircularity", V5Criterion.DegenerateCircularity },
+                    { "DegenerateAspectRatio", V5Criterion.DegenerateAspectRatio }
                 };
 
                 // 六项必选分类准则，缺任一项即解析失败
@@ -4006,6 +4220,8 @@ namespace NS_Parrot
 
                 // Length 是核心匹配的必选判据，profile 中的 False 不应改变实际口径。
                 result.Enabled[V5Criterion.Length] = true;
+                result.IsRelativeTolerance[V5Criterion.DegenerateCircularity] = false;
+                result.IsRelativeTolerance[V5Criterion.DegenerateAspectRatio] = false;
                 return true;
             }
             catch

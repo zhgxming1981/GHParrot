@@ -1,4 +1,4 @@
-using GH_IO.Serialization;
+﻿using GH_IO.Serialization;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
@@ -4357,6 +4357,8 @@ namespace NS_Parrot
                 case V5Criterion.EdgeSum: return "孔周长和";
                 case V5Criterion.HoleArea: return "孔面积";
                 case V5Criterion.HolePosition: return "孔位";
+                case V5Criterion.DegenerateCircularity: return "退化孔圆形度差";
+                case V5Criterion.DegenerateAspectRatio: return "退化孔纵横比差";
                 default: return criterion.ToString();
             }
         }
@@ -4383,6 +4385,10 @@ namespace NS_Parrot
                 case V5Criterion.HolePosition:
                     return "内环重心的空间坐标偏差。只能使用绝对误差，因为位置偏差与内环自身大小无关。单位为当前 Rhino 文档单位。\n" +
                            "建议：0.1~5.0，默认 0.5。精密件用 0.1~0.3，粗分类用 1.0~3.0。";
+                case V5Criterion.DegenerateCircularity:
+                    return "双方均为退化孔时，比较圆形度（4π×投影面积/周长²）的绝对差；默认0.15。开启退化孔容差放宽时乘以倍数。";
+                case V5Criterion.DegenerateAspectRatio:
+                    return "双方均为退化孔时，比较拟合平面投影包围盒纵横比的绝对差；默认0.15。开启退化孔容差放宽时乘以倍数。";
                 default:
                     return "带 % 表示相对误差，例如 0.5%；不带 % 表示绝对误差，例如 100。";
             }
@@ -4396,7 +4402,8 @@ namespace NS_Parrot
         /// </summary>
         internal static bool IsAbsoluteOnlyCriterion(V5Criterion criterion)
         {
-            return criterion == V5Criterion.HolePosition;
+            return criterion == V5Criterion.HolePosition || criterion == V5Criterion.DegenerateCircularity ||
+                criterion == V5Criterion.DegenerateAspectRatio;
         }
 
         private void MarkSettingsChanged()
@@ -4414,7 +4421,9 @@ namespace NS_Parrot
                 V5Criterion.Volume,
                 V5Criterion.EdgeSum,
                 V5Criterion.HoleArea,
-                V5Criterion.HolePosition
+                V5Criterion.HolePosition,
+                V5Criterion.DegenerateCircularity,
+                V5Criterion.DegenerateAspectRatio
             };
 
             private readonly WbClassificationMigration _owner;
@@ -4428,7 +4437,7 @@ namespace NS_Parrot
                 BackColor = SystemColors.Control;
                 Margin = Padding.Empty;
                 Padding = new Padding(8, 6, 8, 8);
-                Size = new Size(256, 544);
+                Size = new Size(256, 600);
 
                 TableLayoutPanel layout = new TableLayoutPanel
                 {
